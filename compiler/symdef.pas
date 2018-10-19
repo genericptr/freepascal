@@ -271,6 +271,9 @@ interface
        tabstractrecorddef= class(tstoreddef)
        private
           rttistring     : string;
+          // note: ryan
+          type tsearch_default_enumerator_callback = function(struct:tabstractrecorddef):tobject;
+          function search_default_enumerator(callback:tsearch_default_enumerator_callback):tobject;
        public
           objname,
           objrealname    : PShortString;
@@ -284,6 +287,10 @@ interface
           { for targets that initialise typed constants via explicit assignments
             instead of by generating an initialised data sectino }
           tcinitcode     : tnode;
+          // note: ryan
+          { default properties }
+          default_write_prop: tsym;
+          default_props: array of tsym;
           constructor create(const n:string; dt:tdeftyp;doregister:boolean);
           constructor ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -4154,6 +4161,53 @@ implementation
         result:=rttistring;
       end;
 
+    // note: ryan
+    // note: adding objects unit from rtl gave errors so using callbacks instead
+    function search_enumerator_get_callback(struct:tabstractrecorddef): tobject;
+    begin
+      result := struct.search_enumerator_get;
+    end;
+
+    function search_enumerator_move_callback(struct:tabstractrecorddef): tobject;
+    begin
+      result := struct.search_enumerator_move;
+    end;
+
+    function search_enumerator_current_callback(struct:tabstractrecorddef): tobject;
+    begin
+      result := struct.search_enumerator_current;
+    end;
+
+    function tabstractrecorddef.search_default_enumerator(callback:tsearch_default_enumerator_callback):tobject;
+      var
+        i : integer;
+        pd : tprocdef;
+        hashedid : THashedIDString;
+        propsym : tpropertysym;
+        propdef : tabstractrecorddef;
+        res : tobject;
+      begin
+        result := nil;
+        if oo_has_default_property in objectoptions then
+          for i := high(default_props) downto 0 do
+            begin
+              propsym := tpropertysym(default_props[i]);
+              propdef := tabstractrecorddef(propsym.propdef);
+              { property is not default }
+              if not (ppo_defaultproperty in propsym.propoptions) then
+                continue;
+              { property doesn't have read access }
+              if propsym.propaccesslist[palt_read].firstsym = nil then
+                continue;
+              if propdef.typ in [recorddef, objectdef] then
+                begin
+                  res := callback(propdef);
+                  if assigned(res) then
+                    exit(res);
+                end;
+            end;        
+      end;
+
     function tabstractrecorddef.search_enumerator_get: tprocdef;
       var
         sym : tsym;
@@ -4178,6 +4232,11 @@ implementation
               end;
             end;
           end;
+        // note: ryan
+        { search default properties }
+        pd := tprocdef(search_default_enumerator(@search_enumerator_get_callback));
+        if assigned(pd) then
+          exit(pd);
       end;
 
     function tabstractrecorddef.search_enumerator_move: tprocdef;
@@ -4220,6 +4279,11 @@ implementation
               end;
             end;
           end;
+        // note: ryan
+        { search default properties }
+        pd := tprocdef(search_default_enumerator(@search_enumerator_move_callback));
+        if assigned(pd) then
+          exit(pd);
       end;
 
     function tabstractrecorddef.search_enumerator_current: tsym;
@@ -4248,6 +4312,11 @@ implementation
             result:=sym;
             exit;
           end;
+        // note: ryan
+        { search default properties }
+        sym := tsym(search_default_enumerator(@search_enumerator_current_callback));
+        if assigned(sym) then
+          exit(sym);
       end;
 
 

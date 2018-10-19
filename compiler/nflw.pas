@@ -245,7 +245,7 @@ implementation
       cutils,verbose,globals,
       symconst,symtable,paramgr,defcmp,defutil,htypechk,pass_1,
       ncal,nadd,ncon,nmem,nld,ncnv,nbas,nutils,ninl,nset,ngenutil,
-      pdecsub,
+      pdecsub,pexpr,
     {$ifdef state_tracking}
       nstate,
     {$endif}
@@ -843,6 +843,9 @@ implementation
         helperdef: tobjectdef;
         current: tpropertysym;
         storefilepos: tfileposinfo;
+        propsym: tpropertysym;
+        structh: tabstractrecorddef;
+        i: integer;
       begin
         storefilepos:=current_filepos;
         current_filepos:=hloopvar.fileinfo;
@@ -925,6 +928,29 @@ implementation
                   end
                 else
                   begin
+                    // note: ryan
+                    { search default properties for compiler type that supports enumeration }
+                    if (expr.resultdef.typ in [objectdef,recorddef]) then
+                      begin
+                        structh := tabstractrecorddef(expr.resultdef);
+                        if (oo_has_default_property in structh.objectoptions) then
+                          for i := high(structh.default_props) downto 0 do
+                            begin
+                              propsym := tpropertysym(structh.default_props[i]);
+                              { property is not default }
+                              if not (ppo_defaultproperty in propsym.propoptions) then
+                                continue;
+                              { property doesn't have read access }
+                              if propsym.propaccesslist[palt_read].firstsym = nil then
+                                continue;
+                              { property doesn't support enumeration }
+                              if not (propsym.propdef.typ in [stringdef,arraydef,setdef]) then
+                                continue;
+                              do_property_read(propsym,structh.symtable,expr);
+                              if expr.resultdef = nil then
+                                do_typecheckpass(expr);
+                            end;
+                      end;
                     { prefer set if loop var could be a set var and the loop
                       expression can indeed be a set }
                     if (expr.nodetype=arrayconstructorn) and

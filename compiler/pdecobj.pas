@@ -175,12 +175,39 @@ implementation
         consume(_SEMICOLON);
         if try_to_consume(_DEFAULT) then
           begin
-            if oo_has_default_property in current_structdef.objectoptions then
-              message(parser_e_only_one_default_property);
-            include(current_structdef.objectoptions,oo_has_default_property);
-            include(p.propoptions,ppo_defaultproperty);
-            if not(ppo_hasparameters in p.propoptions) then
-              message(parser_e_property_need_paras);
+            // note: removed for now
+            //if oo_has_default_property in current_structdef.objectoptions then
+            //  message(parser_e_only_one_default_property);
+
+            { default [] property }
+            if ppo_hasparameters in p.propoptions then
+              begin
+                include(current_structdef.objectoptions,oo_has_default_property);
+                include(p.propoptions,ppo_defaultproperty);
+              end
+            else 
+              { other default properties }
+              begin
+                include(current_structdef.objectoptions,oo_has_default_property);
+                include(p.propoptions,ppo_defaultproperty);
+
+                // note: ryan
+                if p.propaccesslist[palt_write].firstsym <> nil then
+                  begin
+                    { only one write default allowed }
+                    if current_structdef.default_write_prop <> nil then
+                      message(parser_e_only_one_default_property)
+                    else
+                      current_structdef.default_write_prop := p;
+                  end;
+
+                SetLength(current_structdef.default_props, Length(current_structdef.default_props) + 1);
+                current_structdef.default_props[High(current_structdef.default_props)] := p;
+              end;
+            
+            // note: removed for now
+            //if not(ppo_hasparameters in p.propoptions) then
+            //  message(parser_e_property_need_paras);
             if (token=_COLON) then
               begin
                 Message(parser_e_field_not_allowed_here);

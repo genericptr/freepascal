@@ -54,6 +54,10 @@ interface
 
     { the ID token has to be consumed before calling this function }
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
+    
+    // note: ryan
+    { convert property symbol into read node }
+    procedure do_property_read(propsym : tsym;st : TSymtable;var p1 : tnode);
 
     function get_intconst:TConstExprInt;
     function get_stringconst:string;
@@ -79,7 +83,9 @@ implementation
        nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,
        { parser }
        scanner,
-       pbase,pinline,ptype,pgenutil,procinfo,cpuinfo
+       pbase,pinline,ptype,pgenutil,procinfo,cpuinfo,
+       { other }
+       htypechk
        ;
 
     function sub_expr(pred_level:Toperator_precedence;flags:texprflags;factornode:tnode):tnode;forward;
@@ -962,6 +968,184 @@ implementation
          end;
       end;
 
+    // note: ryan
+    function find_best_candidate_for_proc(para:tnode; var procsym: tprocsym; symtable: tsymtable; callnodeflags: tcallnodeflags; spezcontext: tspecializationcontext; var obj: tabstractrecorddef; var foundprop: tpropertysym): boolean;
+      function find_best_candidate(para:tnode; var procsym: tprocsym; structh: tabstractrecorddef; callnodeflags: tcallnodeflags; spezcontext: tspecializationcontext): boolean;
+        var
+          candidates : tcallcandidates;
+          ignorevisibility : boolean;
+          bestpd:tabstractprocdef;
+          srsym:tsym;
+          srsymtable:tsymtable;
+        begin
+          result := false;
+          // todo: in class also but doesn't this search defaults again?
+          if searchsym_in_record(structh,procsym.name,srsym,srsymtable) and (srsym.typ = tsymtyp.procsym) then
+            begin
+              { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
+              ignorevisibility:=((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
+                                (cnf_ignore_visibility in callnodeflags);
+              candidates:=tcallcandidates.create(tprocsym(srsym),srsymtable,para,ignorevisibility,
+                {allowdefaultparas}true,cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
+                callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,spezcontext);
+              if candidates.count > 0 then
+                begin
+                  candidates.get_information;
+                  result := candidates.choose_best(bestpd, false) > 0;
+                  if result then
+                    procsym := tprocsym(srsym);
+                end;
+              candidates.free;
+            end;
+        end;
+      var
+        propsym: tpropertysym;
+        i: integer;
+        structh: tabstractrecorddef;
+      begin
+        result := false;
+        { search base first and if there's a matching operator then stop }
+        if find_best_candidate(para, procsym, obj, callnodeflags, spezcontext) then
+          exit;
+        for i := high(obj.default_props) downto 0 do
+          begin
+            propsym := tpropertysym(obj.default_props[i]);
+            { property is not default }
+            if not (ppo_defaultproperty in propsym.propoptions) then
+              continue;
+            { property is write only }
+            if propsym.propaccesslist[palt_read].firstsym = nil then
+              continue;
+            structh := tabstractrecorddef(propsym.propdef);
+            if (structh.typ in [recorddef, objectdef]) and find_best_candidate(para, procsym, structh, callnodeflags, spezcontext) then
+              begin
+                obj := structh;
+                foundprop := propsym;
+                exit(true);
+              end;
+          end;
+      end;
+
+    function find_best_candidate_for_operator(p1, p2: tnode; optoken: ttoken; access: tpropaccesslisttypes; var obj: tabstractrecorddef; out propsym: tpropertysym): boolean;
+      function find_operator(fromdef: tabstractrecorddef; optoken: ttoken; right:tnode): boolean;
+        var
+          candidates : tcallcandidates;
+          ppn : tcallparanode;
+          bestpd: tabstractprocdef;
+        begin
+          result := false;
+          // todo: _ASSIGNMENT, _OP_EXPLICIT aren't searchable!
+          ppn:=ccallparanode.create(right.getcopy,ccallparanode.create(ttypenode.create(fromdef),nil));
+          ppn.get_paratype;
+          candidates:=tcallcandidates.create_operator(optoken,ppn);
+          if candidates.count > 0 then
+            begin
+              candidates.get_information;
+              result := candidates.choose_best(bestpd,false) > 0;
+            end;
+          ppn.free;
+          candidates.free;
+        end;
+      var
+        i: integer;
+        structh: tabstractrecorddef;
+      begin
+        result := false;
+        { search base first and if there's a matching operator then stop }
+        if find_operator(obj, optoken, p2) then
+          exit;
+        { search default properties }
+        for i := high(obj.default_props) downto 0 do
+          begin
+            propsym := tpropertysym(obj.default_props[i]);
+            { property is not default }
+            if not (ppo_defaultproperty in propsym.propoptions) then
+              continue;
+            { property doesn't have required access }
+            if propsym.propaccesslist[access].firstsym = nil then
+              continue;
+            structh := tabstractrecorddef(propsym.propdef);
+            if (structh.typ in [recorddef, objectdef]) and find_operator(structh, optoken, p2) then
+              begin
+                obj := structh;
+                exit(true);
+              end;
+            { compare property def with right node result def }
+            if (compare_defs(structh,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+              begin
+                obj := structh;
+                exit(true);
+              end;
+          end;
+      end;
+
+    procedure do_property_read(propsym : tsym;st : TSymtable;var p1 : tnode);
+      var
+        membercall : boolean;
+        callflags  : tcallnodeflags;
+        propaccesslist : tpropaccesslist;
+        sym: tsym;
+      begin
+        if tpropertysym(propsym).getpropaccesslist(palt_read,propaccesslist) then
+          begin
+             sym := propaccesslist.firstsym^.sym;
+             case sym.typ of
+               fieldvarsym :
+                 begin
+                   { generate access code }
+                   if not handle_staticfield_access(sym,p1) then
+                     propaccesslist_to_node(p1,st,propaccesslist);
+                   //include(p1.flags,nf_isproperty);
+                   { catch expressions like "(propx):=1;" }
+                   //include(p1.flags,nf_no_lvalue);
+                 end;
+               procsym :
+                 begin
+                    callflags:=[];
+                    { generate the method call }
+                    membercall:=maybe_load_methodpointer(st,p1);
+                    if membercall then
+                      include(callflags,cnf_member_call);
+                    p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                    //include(p1.flags,nf_isproperty);
+                    //include(p1.flags,nf_no_lvalue);
+                 end
+               else
+                 begin
+                    p1:=cerrornode.create;
+                    Message(type_e_mismatch);
+                 end;
+            end;
+          end
+        else
+          begin
+             { error, no function to read property }
+             p1:=cerrornode.create;
+             Message(parser_e_no_procedure_to_access_property);
+          end;
+      end;
+
+    procedure handle_default_operator (var p1: tnode; p2: tnode; access: tpropaccesslisttypes; optoken: ttoken);
+      var
+        operdef: tabstractrecorddef;
+        propsym: tpropertysym;
+      begin
+        if (p1 = nil) or (p1.resultdef = nil) then
+          exit;
+        if (p1.resultdef.typ in [objectdef, recorddef]) and (oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions) then
+          begin
+            if p2.resultdef = nil then
+              do_typecheckpass(p2);
+            operdef := tabstractrecorddef(p1.resultdef);
+            if find_best_candidate_for_operator(p1, p2, optoken, access, operdef, propsym) and not equal_defs(tabstractrecorddef(p1.resultdef), operdef) then
+              begin
+                { c style operators can't use defaults }
+                //if (optoken in [_PLUS, _MINUS, _STAR, _SLASH]) then
+                //  exit;
+                do_property_read(propsym,operdef.symtable,p1);
+              end;
+          end;
+      end;
 
     { reads the parameter for a subroutine call }
     procedure do_proc_call(sym:tsym;st:TSymtable;obj:tabstractrecorddef;getaddr:boolean;var again : boolean;var p1:tnode;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
@@ -972,6 +1156,7 @@ implementation
          para,p2  : tnode;
          currpara : tparavarsym;
          aprocdef : tprocdef;
+         propsym : tpropertysym;
       begin
          prevafterassn:=afterassignment;
          afterassignment:=false;
@@ -1099,6 +1284,17 @@ implementation
                begin
                  if not (st.symtabletype in [ObjectSymtable,recordsymtable]) then
                    internalerror(200310031);
+                 // note: ryan
+                 { now that we have params parsed if the struct has default properties 
+                  then search for best proc candidate }
+                 if assigned(st) and (st.defowner.typ in [objectdef,recorddef]) and (oo_has_default_property in tabstractrecorddef(st.defowner).objectoptions) then
+                   begin
+                     if assigned(para) and not assigned(para.resultdef) then
+                       tcallparanode(para).get_paratype;
+                     obj := tabstractrecorddef(st.defowner);
+                     if find_best_candidate_for_proc(para,tprocsym(sym),st,callflags,spezcontext,obj,propsym) then
+                       do_property_read(propsym,obj.symtable, p1);
+                   end;
                  p1:=ccallnode.create(para,tprocsym(sym),obj.symtable,p1,callflags,spezcontext);
                end
              else
@@ -1146,6 +1342,83 @@ implementation
          end;
       end;
 
+    // note: ryan
+    procedure handle_default_assign(var p1 : tnode);
+      var
+        p2 : tnode;
+        def : tabstractrecorddef;
+        st : tsymtable;
+        membercall : boolean;
+        callflags  : tcallnodeflags;
+        propaccesslist : tpropaccesslist;
+        propsym : tpropertysym;
+        sym : tsym;
+      begin
+        if (token = _ASSIGNMENT) and (p1.resultdef.typ in [objectdef, recorddef]) and (oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions) then 
+          begin
+            def := tabstractrecorddef(p1.resultdef);
+            st := def.symtable;
+            propsym := tpropertysym(def.default_write_prop);
+            { no default write property }
+            if propsym = nil then
+              exit;
+            if propsym.getpropaccesslist(palt_write,propaccesslist) then
+              begin
+                sym:=propaccesslist.firstsym^.sym;
+                case sym.typ of
+                  procsym :
+                    begin
+                      callflags:=[];
+                      { generate the method call }
+                      membercall:=maybe_load_methodpointer(st,p1);
+                      if membercall then
+                        include(callflags,cnf_member_call);
+                      addsymref(sym);
+                      consume(_ASSIGNMENT);
+                      { read the expression }
+                      if propsym.propdef.typ=procvardef then
+                        getprocvardef:=tprocvardef(propsym.propdef);
+                      p2:=comp_expr([ef_accept_equal]);
+                      if assigned(getprocvardef) then
+                        handle_procvar(getprocvardef,p2);
+                      getprocvardef:=nil;
+                      { test if comp_expr result matches property def }
+                      if (compare_defs(propsym.propdef,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+                        begin
+                          p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                          tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
+                          { mark as property, both the tcallnode and the real call block }
+                          include(p1.flags,nf_isproperty);
+                        end
+                      else
+                        begin
+                          p1:=cassignmentnode.create(p1,p2);
+                        end;
+                    end;
+                  fieldvarsym :
+                    begin
+                      consume(_ASSIGNMENT);
+                      { read the expression }
+                      p2:=comp_expr([ef_accept_equal]);
+                      { test if comp_expr result matches property def }
+                      if (compare_defs(propsym.propdef,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+                        begin
+                          { generate access code }
+                          if not handle_staticfield_access(sym,p1) then
+                            propaccesslist_to_node(p1,st,propaccesslist);
+                          include(p1.flags,nf_isproperty);
+                        end;
+                      p1:=cassignmentnode.create(p1,p2);
+                    end
+                  else
+                    begin
+                      p1:=cerrornode.create;
+                      Message(parser_e_no_procedure_to_access_property);
+                    end;
+                end;
+              end;
+          end;
+      end;
 
     { the following procedure handles the access to a property symbol }
     procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;var p1 : tnode);
@@ -2369,6 +2642,14 @@ implementation
                                  consume(_ID);
                                end;
                            end;
+                         // note: ryan
+                         { sym was found in default property so handle default read property }
+                         if assigned(searchsym_found_default) then
+                           begin
+                             do_property_read(searchsym_found_default,srsymtable,p1);
+                             structh := tabstractrecorddef(searchsym_found_default.propdef);
+                             searchsym_found_default := nil;
+                           end;
                          if erroroutp1 then
                            begin
                              p1.free;
@@ -2579,6 +2860,14 @@ implementation
                                    consume(_ID);
                                 end;
                             end;
+                          // note: ryan
+                          { sym was found in default property so handle default read property }
+                          if assigned(searchsym_found_default) then
+                            begin
+                              do_property_read(searchsym_found_default,srsymtable,p1);
+                              structh := tabstractrecorddef(searchsym_found_default.propdef);
+                              searchsym_found_default := nil;
+                            end;
                           if erroroutp1 then
                             begin
                               p1.free;
@@ -2684,7 +2973,11 @@ implementation
                     end;
                 end
               else
-                again:=false;
+                begin
+                  // note: ryan
+                  handle_default_assign(p1);                  
+                  again:=false;
+                end;
              end;
         end;
 
@@ -4199,6 +4492,9 @@ implementation
                p2:=factor(false,[])
              else
                p2:=sub_expr(succ(pred_level),flags+[ef_accept_equal],nil);
+             // note: ryan
+             if oldt <> NOTOKEN then
+               handle_default_operator(p1, p2, palt_read, oldt);
              case oldt of
                _PLUS :
                  p1:=caddnode.create(addn,p1,p2);
@@ -4451,24 +4747,32 @@ implementation
              begin
                consume(_PLUSASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
+               // note: ryan
+               handle_default_operator(p1, p2, palt_write, _PLUS);
                p1:=gen_c_style_operator(addn,p1,p2);
             end;
           _MINUSASN :
             begin
                consume(_MINUSASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
+               // note: ryan
+               handle_default_operator(p1, p2, palt_write, _MINUS);
                p1:=gen_c_style_operator(subn,p1,p2);
             end;
           _STARASN :
             begin
-               consume(_STARASN  );
+               consume(_STARASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
+               // note: ryan
+               handle_default_operator(p1, p2, palt_write, _STAR);
                p1:=gen_c_style_operator(muln,p1,p2);
             end;
           _SLASHASN :
             begin
-               consume(_SLASHASN  );
+               consume(_SLASHASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
+               // note: ryan
+               handle_default_operator(p1, p2, palt_write, _SLASH);
                p1:=gen_c_style_operator(slashn,p1,p2);
             end;
           else

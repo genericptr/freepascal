@@ -1,0 +1,6 @@
+*.sublime-project
+*.sublime-workspace
+compiler/i386/lazbuild
+compiler/i386/pp
+compiler/i386/pp.app
+rtl/

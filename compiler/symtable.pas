@@ -298,10 +298,16 @@ interface
          ssf_search_option,
          ssf_search_helper,
          ssf_has_inherited,
-         ssf_no_addsymref
+         ssf_no_addsymref,
+         // note: ryan
+         ssf_no_defaults
        );
        tsymbol_search_flags = set of tsymbol_search_flag;
 
+    // note: ryan
+    // todo: using a global  here because i'm not sure if I can change the params to searchsym_in_xxx functions
+    var
+      searchsym_found_default: tpropertysym;
 
 {****************************************************************************
                              Functions
@@ -3503,6 +3509,66 @@ implementation
         result:=pd;
       end;
 
+    // note: ryan
+    function searchsym_in_defaults (structh:tabstractrecorddef;contextstructh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags): boolean;
+      var
+        hashedid : THashedIDString;
+        i        : longint;
+        propsym  : tpropertysym;
+        propdef  : tabstractrecorddef;
+      begin
+        result := false;
+        while assigned(structh) do
+          begin
+            if oo_has_default_property in structh.objectoptions then
+              for i := high(structh.default_props) downto 0 do
+                begin
+                  propsym := tpropertysym(structh.default_props[i]);
+                  propdef := tabstractrecorddef(propsym.propdef);
+                  { property is not default }
+                  if not (ppo_defaultproperty in propsym.propoptions) then
+                    continue;
+                  { property is not a struct }
+                  if not (propdef.typ in [objectdef,recorddef]) then
+                    continue;
+                  { property is write only }
+                  if propsym.propaccesslist[palt_read].firstsym = nil then
+                    continue;
+                  if propdef.typ = objectdef then
+                    begin
+                      if searchsym_in_class(tobjectdef(propdef),propdef,s,srsym,srsymtable,flags+[ssf_no_defaults]) then
+                        begin
+                          searchsym_found_default := propsym;
+                          exit(true);
+                        end;
+                    end
+                  else if propdef.typ = recorddef then
+                    begin
+                      hashedid.id:=s;
+                      { search for a record helper method first }
+                      result:=search_objectpascal_helper(propdef,propdef,s,srsym,srsymtable);
+                      if result then
+                        { an eventual overload inside the extended type's hierarchy
+                          will be found by tcallcandidates }
+                        exit;
+                      srsymtable:=propdef.symtable;
+                      srsym:=tsym(srsymtable.FindWithHash(hashedid));
+                      if assigned(srsym) and is_visible_for_object(srsym,propdef) then
+                        begin
+                          if not (ssf_no_addsymref in flags) then
+                            addsymref(srsym);
+                          searchsym_found_default := propsym;
+                          exit(true);
+                        end;
+                    end;
+                end;
+            { search up hierarchy for objects }
+            if structh.typ = objectdef then
+              structh:=tobjectdef(structh).childof
+            else
+              break;
+          end;
+      end;
 
     function searchsym_in_class(classh: tobjectdef;contextclassh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;
       var
@@ -3587,6 +3653,10 @@ implementation
                   end;
                 classh:=classh.childof;
               end;
+            // note: ryan
+            { search default after entire base class hierarchy has been searched }
+            if not (ssf_no_defaults in flags) and searchsym_in_defaults(orgclass,contextclassh,s,srsym,srsymtable,flags) then
+              exit(true);
           end;
         if is_objcclass(orgclass) then
           result:=search_objc_helper(orgclass,s,srsym,srsymtable)
@@ -3617,6 +3687,10 @@ implementation
             result:=true;
             exit;
           end;
+        // note: ryan
+        { search default after base has been searched }
+        if searchsym_in_defaults(recordh,recordh,s,srsym,srsymtable,[]) then
+          exit(true);
         srsym:=nil;
         srsymtable:=nil;
       end;
