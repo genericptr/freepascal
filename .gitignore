@@ -1,6 +1,14 @@
 *.sublime-project
 *.sublime-workspace
+*.code-workspace
+*. lpi
+compiler/ppcx64.lpi
 compiler/i386/lazbuild
 compiler/i386/pp
 compiler/i386/pp.app
+compiler/x86_64/lazbuild
+compiler/x86_64/pp
+compiler/x86_64/pp.app
 rtl/
+packages/
+compiler/.vscode

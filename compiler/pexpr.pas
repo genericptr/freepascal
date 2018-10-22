@@ -1132,7 +1132,7 @@ implementation
       begin
         if (p1 = nil) or (p1.resultdef = nil) then
           exit;
-        if (p1.resultdef.typ in [objectdef, recorddef]) and (oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions) then
+        if (p1.resultdef.typ in [objectdef, recorddef]) and tabstractrecorddef(p1.resultdef).has_default_property_access then
           begin
             if p2.resultdef = nil then
               do_typecheckpass(p2);
@@ -1287,7 +1287,7 @@ implementation
                  // note: ryan
                  { now that we have params parsed if the struct has default properties 
                   then search for best proc candidate }
-                 if assigned(st) and (st.defowner.typ in [objectdef,recorddef]) and (oo_has_default_property in tabstractrecorddef(st.defowner).objectoptions) then
+                 if assigned(st) and (st.defowner.typ in [objectdef,recorddef]) and tabstractrecorddef(st.defowner).has_default_property_access then
                    begin
                      if assigned(para) and not assigned(para.resultdef) then
                        tcallparanode(para).get_paratype;
@@ -1354,7 +1354,7 @@ implementation
         propsym : tpropertysym;
         sym : tsym;
       begin
-        if (token = _ASSIGNMENT) and (p1.resultdef.typ in [objectdef, recorddef]) and (oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions) then 
+        if (token = _ASSIGNMENT) and (p1.resultdef.typ in [objectdef, recorddef]) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
           begin
             def := tabstractrecorddef(p1.resultdef);
             st := def.symtable;

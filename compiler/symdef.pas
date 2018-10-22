@@ -302,6 +302,8 @@ interface
           function GetSymtable(t:tGetSymtable):TSymtable;override;
           function is_packed:boolean;
           function RttiName: string;
+          function has_default_property_access: boolean;
+
           { enumerator support }
           function search_enumerator_get: tprocdef; virtual;
           function search_enumerator_move: tprocdef; virtual;
@@ -4060,6 +4062,11 @@ implementation
         result:=tabstractrecordsymtable(symtable).is_packed;
       end;
 
+    function tabstractrecorddef.has_default_property_access: boolean;
+      begin
+        result := Length(default_props) > 0;
+      end;
+
     function tabstractrecorddef.RttiName: string;
 
         function generate_full_paramname(maxlength:longint):string;
@@ -4188,7 +4195,7 @@ implementation
         res : tobject;
       begin
         result := nil;
-        if oo_has_default_property in objectoptions then
+        if has_default_property_access then
           for i := high(default_props) downto 0 do
             begin
               propsym := tpropertysym(default_props[i]);

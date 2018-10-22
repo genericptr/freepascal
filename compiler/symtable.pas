@@ -307,7 +307,7 @@ interface
     // note: ryan
     // todo: using a global  here because i'm not sure if I can change the params to searchsym_in_xxx functions
     var
-      searchsym_found_default: tpropertysym;
+      searchsym_found_default: tpropertysym = nil;
 
 {****************************************************************************
                              Functions
@@ -3520,7 +3520,7 @@ implementation
         result := false;
         while assigned(structh) do
           begin
-            if oo_has_default_property in structh.objectoptions then
+            if structh.has_default_property_access then
               for i := high(structh.default_props) downto 0 do
                 begin
                   propsym := tpropertysym(structh.default_props[i]);

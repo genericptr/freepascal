@@ -933,7 +933,7 @@ implementation
                     if (expr.resultdef.typ in [objectdef,recorddef]) then
                       begin
                         structh := tabstractrecorddef(expr.resultdef);
-                        if (oo_has_default_property in structh.objectoptions) then
+                        if structh.has_default_property_access then
                           for i := high(structh.default_props) downto 0 do
                             begin
                               propsym := tpropertysym(structh.default_props[i]);

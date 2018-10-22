@@ -178,18 +178,12 @@ implementation
             // note: removed for now
             //if oo_has_default_property in current_structdef.objectoptions then
             //  message(parser_e_only_one_default_property);
+            include(current_structdef.objectoptions,oo_has_default_property);
+            include(p.propoptions,ppo_defaultproperty);
 
-            { default [] property }
-            if ppo_hasparameters in p.propoptions then
+            { default property without parameters }
+            if not (ppo_hasparameters in p.propoptions) then
               begin
-                include(current_structdef.objectoptions,oo_has_default_property);
-                include(p.propoptions,ppo_defaultproperty);
-              end
-            else 
-              { other default properties }
-              begin
-                include(current_structdef.objectoptions,oo_has_default_property);
-                include(p.propoptions,ppo_defaultproperty);
 
                 // note: ryan
                 if p.propaccesslist[palt_write].firstsym <> nil then
