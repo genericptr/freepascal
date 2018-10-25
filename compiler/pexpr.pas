@@ -3101,6 +3101,7 @@ implementation
                  searchsym_type(pattern,srsym,srsymtable)
                else
                  searchsym(pattern,srsym,srsymtable);
+
                { handle unit specification like System.Writeln }
                if not isspecialize then
                  unit_found:=try_consume_unitsym(srsym,srsymtable,t,true,allowspecialize,isspecialize,pattern)
@@ -3362,6 +3363,15 @@ implementation
                               else
                                 p1:=load_self_node;
                             end;
+                         // note: ryan
+                         { sym was found in default property so handle default read property }
+                         if assigned(searchsym_found_default) then
+                           begin
+                             do_property_read(searchsym_found_default,srsymtable,p1);
+                             hdef := tabstractrecorddef(searchsym_found_default.propdef);
+                             searchsym_found_default := nil;
+                           end;
+
                         { now, if the field itself is part of an objectsymtab }
                         { (it can be even if it was found in a withsymtable,  }
                         {  e.g., "with classinstance do field := 5"), then    }

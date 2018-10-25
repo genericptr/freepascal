@@ -3218,6 +3218,15 @@ implementation
                     exit;
                   end;
               end
+            // note: ryan
+            else if (srsymtable.symtabletype=recordsymtable) then
+              begin
+                if searchsym_in_record(tobjectdef(srsymtable.defowner),s,srsym,srsymtable) then
+                  begin
+                    result:=true;
+                    exit;
+                  end;
+              end
             else if not((srsymtable.symtabletype=withsymtable) and assigned(srsymtable.defowner) and
               (srsymtable.defowner.typ=undefineddef)) then
               begin
