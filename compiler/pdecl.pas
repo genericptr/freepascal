@@ -503,6 +503,7 @@ implementation
                consume(_LSHARPBRACKET);
                generictypelist:=parse_generic_parameters(true);
                consume(_RSHARPBRACKET);
+               current_scanner.parsing_generic_type += 1;
 
                { we are not freeing the type parameters, so register them }
                for i:=0 to generictypelist.count-1 do
@@ -928,6 +929,7 @@ implementation
                { Generic is never a type renaming }
                hdef.typesym:=newtype;
                generictypelist.free;
+               current_scanner.parsing_generic_type -= 1;
              end;
 
            if not (m_delphi in current_settings.modeswitches) and

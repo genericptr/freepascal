@@ -188,7 +188,9 @@ uses
             paradef:=tstoreddef(paradeflist[i]);
             // note: ryan
             { check const'ness of param def and generic type sym }
-            if (m_objfpc in current_settings.modeswitches) and tgenericparamdef(paradef).is_const <> tgenerictypesym(genericdef.genericparas[i]).is_const then
+            if (m_objfpc in current_settings.modeswitches) and 
+               (current_scanner.parsing_generic_type = 0) and 
+               (tgenericparamdef(paradef).is_const <> tgenerictypesym(genericdef.genericparas[i]).is_const) then
               begin
                 result := false;
                 continue;
