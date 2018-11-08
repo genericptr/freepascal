@@ -75,6 +75,63 @@ uses
   scanner,
   pbase,pexpr,pdecsub,ptype,psub;
 
+  // note: ryan
+  type
+
+    { specialized generic param def }
+    tgenericparamdef = class(tdef)
+      fromdef: tdef;
+      is_const: boolean;
+      constructor create (_fromdef:tdef); overload;
+      constructor create_ordconst (_fromdef:tdef;constref value:Tconstexprint);
+    end;
+
+    { declared generic type sym }
+    tgenerictypesym = class (ttypesym)
+      is_const: boolean;
+    end;
+
+    { specialized generic param sym }
+    tgenericparamsym = class (ttypesym)
+      function make_type_sym(newname: string): tsym; virtual;
+    end;
+
+    tgeneric_constint_paramsym = class (tgenericparamsym)
+       value: Tconstexprint;
+       function make_type_sym(newname: string): tsym; override;
+    end;
+
+    function tgenericparamsym.make_type_sym(newname: string): tsym;
+    begin
+      result:=ctypesym.create(newname,typedef,true);
+    end;
+
+    function tgeneric_constint_paramsym.make_type_sym(newname: string): tsym;
+    begin
+      result:=cconstsym.create_ord(newname,constord,value,typedef);
+    end;
+
+    constructor tgenericparamdef.create (_fromdef:tdef);
+    begin
+      fromdef := _fromdef;
+      is_const := false;
+      create(abstractdef);
+      typesym := tgenericparamsym.create(fromdef.typesym.realname,fromdef,false);
+      typesym.owner := fromdef.typesym.owner;
+    end;
+
+    constructor tgenericparamdef.create_ordconst (_fromdef:tdef;constref value:Tconstexprint);
+    var
+      sym: tgeneric_constint_paramsym;
+    begin
+      fromdef := _fromdef;
+      is_const := true;
+      create(abstractdef);
+      sym := tgeneric_constint_paramsym.create(fromdef.typesym.realname,fromdef,false);
+      sym.owner := fromdef.typesym.owner;
+      sym.value := value;
+      typesym := sym;
+    end;
 
     procedure maybe_add_waiting_unit(tt:tdef);
       var
@@ -128,6 +185,14 @@ uses
         for i:=0 to genericdef.genericparas.count-1 do
           begin
             filepos:=pfileposinfo(poslist[i])^;
+            paradef:=tstoreddef(paradeflist[i]);
+            // note: ryan
+            { check const'ness of param def and generic type sym }
+            if (m_objfpc in current_settings.modeswitches) and tgenericparamdef(paradef).is_const <> tgenerictypesym(genericdef.genericparas[i]).is_const then
+              begin
+                result := false;
+                continue;
+              end;
             formaldef:=tstoreddef(ttypesym(genericdef.genericparas[i]).typedef);
             if formaldef.typ=undefineddef then
               { the parameter is of unspecified type, so no need to check }
@@ -299,51 +364,6 @@ uses
           end;
       end;
 
-    // note: ryan
-    type
-      tgenericdef = class(tdef)
-        fromdef: tdef;
-        constructor create (_fromdef:tdef); overload;
-        constructor create_ordconst (_fromdef:tdef;constref value:Tconstexprint);
-      end;
-      tgenerictypesym = class (ttypesym)
-        function make_type_sym(newname: string): tsym; virtual;
-      end;
-      tgeneric_constint_typesym = class (tgenerictypesym)
-         value: Tconstexprint;
-         function make_type_sym(newname: string): tsym; override;
-      end;
-
-    function tgenerictypesym.make_type_sym(newname: string): tsym;
-    begin
-      result:=ctypesym.create(newname,typedef,true);
-    end;
-
-    function tgeneric_constint_typesym.make_type_sym(newname: string): tsym;
-    begin
-      result:=cconstsym.create_ord(newname,constord,value,typedef);
-    end;
-
-    constructor tgenericdef.create (_fromdef:tdef);
-    begin
-      fromdef := _fromdef;
-      create(abstractdef);
-      typesym := tgenerictypesym.create(fromdef.typesym.realname,fromdef,false);
-      typesym.owner := fromdef.typesym.owner;
-    end;
-
-    constructor tgenericdef.create_ordconst (_fromdef:tdef;constref value:Tconstexprint);
-    var
-      sym: tgeneric_constint_typesym;
-    begin
-      fromdef := _fromdef;
-      create(abstractdef);
-      sym := tgeneric_constint_typesym.create(fromdef.typesym.realname,fromdef,false);
-      sym.owner := fromdef.typesym.owner;
-      sym.value := value;
-      typesym := sym;
-    end;
-
     function parse_generic_specialization_types_internal(genericdeflist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring;parsedtype:tdef;parsedpos:tfileposinfo):boolean;
       var
         old_block_type : tblock_type;
@@ -354,8 +374,9 @@ uses
         namepart : string;
         prettynamepart : ansistring;
         module : tmodule;
-        paramdef : tgenericdef;
+        paramdef : tgenericparamdef;
         constexprpart : string;
+        validparam : boolean;
       begin
         result:=true;
         if genericdeflist=nil then
@@ -397,7 +418,11 @@ uses
             block_type:=bt_type;
             tmpparampos:=current_filepos;
             typeparam:=factor(false,[ef_type_only]);
-            if typeparam.nodetype in [typen, ordconstn] then
+            if m_delphi in current_settings.modeswitches then
+              validparam := typeparam.nodetype = typen
+            else
+              validparam := typeparam.nodetype in [typen, ordconstn];
+            if validparam then
               begin
                 if tstoreddef(typeparam.resultdef).is_generic and
                     (
@@ -420,7 +445,7 @@ uses
                         // note: ryan
                         if typeparam.nodetype = ordconstn  then
                           begin
-                            paramdef := tgenericdef.create_ordconst(typeparam.resultdef, tordconstnode(typeparam).value);
+                            paramdef := tgenericparamdef.create_ordconst(typeparam.resultdef, tordconstnode(typeparam).value);
                             constexprpart:= inttostr(tordconstnode(typeparam).value.svalue);
                             //writeln('ordconstn value:',tordconstnode(typeparam).value.svalue);
                             genericdeflist.Add(paramdef);
@@ -428,7 +453,7 @@ uses
                         else
                           begin
                             constexprpart := '';
-                            paramdef := tgenericdef.create(typeparam.resultdef);
+                            paramdef := tgenericparamdef.create(typeparam.resultdef);
                             genericdeflist.Add(paramdef);
                           end;
                         module:=find_module_from_symtable(typeparam.resultdef.owner);
@@ -719,7 +744,7 @@ uses
             result:=generrordef;
             exit;
           end;
-
+        
         { we've found the correct def }
         if context.sym.typ=typesym then
           result:=tstoreddef(ttypesym(context.sym).typedef)
@@ -834,7 +859,6 @@ uses
         else
           prettyname:=genericdef.typesym.prettyname;
         prettyname:=prettyname+'<'+context.prettyname+'>';
-        writeln('specialize: ',prettyname);
         generictypelist:=tfphashobjectlist.create(false);
 
         { build the list containing the types for the generic params }
@@ -1259,7 +1283,7 @@ uses
 
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
       var
-        generictype : ttypesym;
+        generictype : tgenerictypesym;
         i,firstidx : longint;
         srsymtable : tsymtable;
         basedef,def : tdef;
@@ -1268,15 +1292,25 @@ uses
         doconsume : boolean;
         constraintdata : tgenericconstraintdata;
         old_block_type : tblock_type;
+        is_const : boolean;
       begin
         result:=tfphashobjectlist.create(false);
         firstidx:=0;
         old_block_type:=block_type;
         block_type:=bt_type;
         repeat
+          // note: ryan
+          if token=_CONST then
+            begin
+              is_const := true;
+              consume(_CONST);
+            end
+          else
+            is_const := false;
           if token=_ID then
             begin
-              generictype:=ctypesym.create(orgpattern,cundefinedtype,false);
+              generictype:=tgenerictypesym.create(orgpattern,cundefinedtype,false);
+              generictype.is_const := is_const;
               { type parameters need to be added as strict private }
               generictype.visibility:=vis_strictprivate;
               include(generictype.symoptions,sp_generic_para);
@@ -1445,7 +1479,7 @@ uses
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
       var
         i : longint;
-        generictype : tgenerictypesym;
+        generictype : tgenericparamsym;
         sym : tsym;
         st : tsymtable;
       begin
@@ -1471,14 +1505,26 @@ uses
           def.genericparas:=tfphashobjectlist.create(false);
         for i:=0 to genericlist.count-1 do
           begin
-            generictype:=tgenerictypesym(genericlist[i]);
+            generictype:=tgenericparamsym(genericlist[i]);
             if assigned(generictype.owner) then
               begin
                 // note: ryan
-                sym:=generictype.make_type_sym(genericlist.nameofindex(i));
-                sym.visibility:=vis_strictprivate;
-                st.insert(sym);
-                include(sym.symoptions,sp_generic_para);
+                if m_delphi in current_settings.modeswitches then
+                  begin
+                    sym:=ctypesym.create(genericlist.nameofindex(i),generictype.typedef,true);
+                    { type parameters need to be added as strict private }
+                    sym.visibility:=vis_strictprivate;
+                    st.insert(sym);
+                    include(sym.symoptions,sp_generic_para);
+                  end
+                else
+                  begin
+                    sym:=generictype.make_type_sym(genericlist.nameofindex(i));
+                    { type parameters need to be added as strict private }
+                    sym.visibility:=vis_strictprivate;
+                    st.insert(sym);
+                    include(sym.symoptions,sp_generic_para);
+                  end;
               end
             else
               begin
