@@ -187,14 +187,20 @@ uses
             filepos:=pfileposinfo(poslist[i])^;
             paradef:=tstoreddef(paradeflist[i]);
             // note: ryan
-            { check const'ness of param def and generic type sym }
-            if (m_objfpc in current_settings.modeswitches) and 
-               (current_scanner.parsing_generic_type = 0) and 
-               (tgenericparamdef(paradef).is_const <> tgenerictypesym(genericdef.genericparas[i]).is_const) then
+            { valid const params }
+            if (m_objfpc in current_settings.modeswitches) then
               begin
-                result := false;
-                continue;
+                { parsing nested generic type const params don't match }
+                if (current_scanner.parsing_generic_type > 0) and 
+                    assigned(current_structdef) and
+                    (tgenerictypesym(current_structdef.genericparas[i]).is_const <> tgenerictypesym(tstoreddef(genericdef).genericparas[i]).is_const) then
+                  exit(false)
+                { const param doesn't match specialized type }
+                else if (current_scanner.parsing_generic_type = 0) and 
+                        (tgenericparamdef(paradef).is_const <> tgenerictypesym(genericdef.genericparas[i]).is_const) then
+                  exit(false);
               end;
+
             formaldef:=tstoreddef(ttypesym(genericdef.genericparas[i]).typedef);
             if formaldef.typ=undefineddef then
               { the parameter is of unspecified type, so no need to check }
