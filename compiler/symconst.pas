@@ -651,7 +651,7 @@ type
     arraydef,recorddef,pointerdef,orddef,
     stringdef,enumdef,procdef,objectdef,errordef,
     filedef,formaldef,setdef,procvardef,floatdef,
-    classrefdef,forwarddef,variantdef,undefineddef
+    classrefdef,forwarddef,variantdef,genericconstdef,undefineddef
   );
 
   { possible types for symtable entries }
@@ -831,7 +831,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
        'abstractdef','arraydef','recorddef','pointerdef','orddef',
        'stringdef','enumdef','procdef','objectdef','errordef',
        'filedef','formaldef','setdef','procvardef','floatdef',
-       'classrefdef','forwarddef','variantdef','undefineddef'
+       'classrefdef','forwarddef','variantdef','genericconstdef','undefineddef'
      );
 
      EqualTypeName : array[tequaltype] of string[16] = (

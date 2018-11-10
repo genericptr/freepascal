@@ -129,6 +129,8 @@ interface
           function is_generic:boolean;inline;
           { same as above for specializations }
           function is_specialization:boolean;inline;
+          // note: ryan
+          function is_generic_param_const(index:integer):boolean;inline;
           { registers this def in the unit's deflist; no-op if already registered }
           procedure register_def; override;
           { add the def to the top of the symtable stack if it's not yet owned
@@ -2204,6 +2206,10 @@ implementation
            end;
      end;
 
+   function tstoreddef.is_generic_param_const(index:integer):boolean;
+     begin
+       result := tgenerictypesym(genericparas[index]).is_const;
+     end;  
 
    function tstoreddef.is_specialization: boolean;
      var

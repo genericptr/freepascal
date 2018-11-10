@@ -164,8 +164,17 @@ interface
           procedure buildderef;override;
           procedure deref;override;
           function prettyname : string;override;
+          // note: ryan
+          { generic support }
+          function make_generic_parameter_sym(newname: string) : tsym; virtual;
        end;
        ttypesymclass = class of ttypesym;
+
+       // note: ryan
+       { declared generic type sym }
+       tgenerictypesym = class (ttypesym)
+         is_const: boolean;
+       end;
 
        tabstractvarsym = class(tstoredsym)
           varoptions    : tvaroptions;
@@ -2627,6 +2636,10 @@ implementation
           result:=inherited prettyname;
       end;
 
+    function ttypesym.make_generic_parameter_sym(newname: string) : tsym;
+      begin
+        result:=nil;
+      end;
 
 {****************************************************************************
                                   TSYSSYM
