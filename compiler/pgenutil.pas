@@ -75,7 +75,6 @@ uses
   scanner,
   pbase,pexpr,pdecsub,ptype,psub;
 
-  // note: ryan
   type
 
     { specialized generic param def }
@@ -294,6 +293,7 @@ uses
         formalobjdef : tobjectdef;
         intffound : boolean;
         filepos : tfileposinfo;
+        paratype : tdeftyp;
       begin
         { check whether the given specialization parameters fit to the eventual
           constraints of the generic }
@@ -308,11 +308,15 @@ uses
           begin
             filepos:=pfileposinfo(poslist[i])^;
             paradef:=tstoreddef(paradeflist[i]);
+            paratype:=ttypesym(paradef.typesym).typedef.typ;
             // note: ryan
-            { valid const params }
-            //writeln('check_constraints:',i,' ',paradef.classname{is_generic_param_const(paradef)},' - ',{tsym(genericdef.genericparas[i]).classname}genericdef.is_generic_param_const(i));
+            { validate const params }
+            //writeln('check_constraints:',i,' ',paradef.classname,' - ',genericdef.is_generic_param_const(i), ' type:', paratype);
             if (m_objfpc in current_settings.modeswitches) then
               begin
+                { type constrained param doesn't match type }
+                if (genericdef.get_generic_param_type(i) <> undefineddef) and genericdef.is_generic_param_const(i) and (genericdef.get_generic_param_type(i) <> paratype) then
+                  Message(type_e_type_id_expected);
                 { parsing nested generic type const params don't match }
                 if (current_scanner.parsing_generic_type > 0) and 
                     assigned(current_structdef) and
@@ -624,7 +628,6 @@ uses
             typeparam.free;
             first:=false;
           end;
-        writeln('spez:',prettyname);
         block_type:=old_block_type;
       end;
 
@@ -1435,13 +1438,31 @@ uses
             begin
               generictype:=ttypesym.create(orgpattern,cundefinedtype,false);
               generictype.is_const := is_const;
+              generictype.const_type := undefineddef;
               { type parameters need to be added as strict private }
               generictype.visibility:=vis_strictprivate;
               include(generictype.symoptions,sp_generic_para);
               result.add(orgpattern,generictype);
             end;
           consume(_ID);
-          if try_to_consume(_COLON) then
+          // note: ryan
+          { const type restriction }
+          if generictype.is_const then
+            begin
+              if try_to_consume(_COLON) then
+                begin
+                  def := nil;
+                  //basedef:=generrordef;
+                  single_type(def, []);
+                  if assigned(def) and (def.typ in [orddef,stringdef,floatdef,setdef]) then
+                    begin
+                      generictype.const_type := def.typ;
+                    end
+                  else
+                    Message(parser_e_illegal_expression);
+                end;
+            end
+          else if try_to_consume(_COLON) then
             begin
               if not allowconstraints then
                 { TODO }
@@ -1556,6 +1577,7 @@ uses
                     basedef:=cobjectdef.create(tobjectdef(def).objecttype,defname,tobjectdef(def),false);
                     constraintdata.interfaces.delete(0);
                   end;
+
               if basedef.typ<>errordef then
                 with tstoreddef(basedef) do
                   begin

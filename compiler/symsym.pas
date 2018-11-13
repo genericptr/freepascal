@@ -156,6 +156,7 @@ interface
           typedefderef : tderef;
           fprettyname : ansistring;
           is_const: boolean;
+          const_type: tdeftyp;
           constructor create(const n : string;def:tdef;doregister:boolean);virtual;
           destructor destroy;override;
           constructor ppuload(ppufile:tcompilerppufile);virtual;
@@ -2607,6 +2608,7 @@ implementation
          ppufile.getderef(typedefderef);
          fprettyname:=ppufile.getansistring;
          is_const:=ppufile.getboolean;
+         ppufile.getsmallset(const_type);
          ppuload_platform(ppufile);
       end;
 
@@ -2630,6 +2632,7 @@ implementation
          ppufile.putderef(typedefderef);
          ppufile.putansistring(fprettyname);
          ppufile.putboolean(is_const);
+         ppufile.putsmallset(const_type);
          writeentry(ppufile,ibtypesym);
       end;
 

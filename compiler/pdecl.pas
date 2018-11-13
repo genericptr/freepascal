@@ -154,7 +154,10 @@ implementation
                // note: ryan
                { replace the generic parameter type with a temporary constant sym }
                else if p.resultdef.typ = undefineddef then
-                 hp:=cconstsym.create_undefined(orgname,p.resultdef)
+                 begin
+                   hp:=cconstsym.create_undefined(orgname,cundefinedtype);
+                   //hp:=tconstsym(ttypesym(tundefineddef(p.resultdef).typesym).make_generic_parameter_sym(orgname))
+                 end
                else 
                  Message(parser_e_illegal_expression);
              end;

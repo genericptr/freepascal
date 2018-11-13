@@ -251,7 +251,9 @@ type
   tgenericconstraintflag=(gcf_none,
     gcf_constructor,       { specialization type needs to have a constructor }
     gcf_class,             { specialization type needs to be a class }
-    gcf_record             { specialization type needs to be a record type }
+    gcf_record,            { specialization type needs to be a record type }
+    // note: ryan
+    gcf_const
   );
   tgenericconstraintflags=set of tgenericconstraintflag;
 
