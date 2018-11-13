@@ -85,11 +85,13 @@ uses
 
     { specialized generic param sym }
     tgenericparamsym = class (ttypesym)
+      function get_id_string: string; virtual; abstract;
     end;
 
     tgeneric_constint_paramsym = class (tgenericparamsym)
        value: Tconstexprint;
        function make_generic_parameter_sym(newname: string): tsym; override;
+       function get_id_string: string; override;
     end;
 
     tgeneric_conststr_paramsym = class (tgenericparamsym)
@@ -97,17 +99,25 @@ uses
        value_len: longint;
        value_type : tconststringtype;
        function make_generic_parameter_sym(newname: string): tsym; override;
+       function get_id_string: string; override;
+       procedure copy_value(value_str:pchar;len:longint;strtype:tconststringtype); 
     end;
 
     tgeneric_constreal_paramsym = class (tgenericparamsym)
-       value_real : bestreal;
-       value_currency : currency;
+       value : bestreal;
        function make_generic_parameter_sym(newname: string): tsym; override;
+       function get_id_string: string; override;
     end;
 
     tgeneric_constset_paramsym = class (tgenericparamsym)
-       value_set : pconstset;
+       value : tconstset;
        function make_generic_parameter_sym(newname: string): tsym; override;
+       function get_id_string: string; override;
+    end;
+
+    tgeneric_constnil_paramsym = class (tgenericparamsym)
+       function make_generic_parameter_sym(newname: string): tsym; override;
+       function get_id_string: string; override;
     end;
 
     function is_generic_param_const(def:tstoreddef):boolean;
@@ -115,19 +125,83 @@ uses
         result := def.typ = genericconstdef;
       end;
 
-    function tgeneric_constset_paramsym.make_generic_parameter_sym(newname: string): tsym;
+    //constructor tgenericparamsym.ppuload(ppufile:tcompilerppufile);
+    //  begin
+    //    inherited ppuload(ppufile);
+    //    //ppufile.getderef(constdefderef);
+    //    //ppufile.getdata(pc^,value.len);
+    //    id_string := ppufile.getstring;
+    //    writeln('ppuload:',id_string);
+    //  end;
+
+    //procedure tgenericparamsym.ppuwrite_platform(ppufile: tcompilerppufile);
+    //  begin
+    //    inherited ppuwrite_platform(ppufile);
+    //    //ppufile.putlongint(value.len);
+    //    //ppufile.putdata(pchar(value.valueptr)^,value.len);
+    //    writeln('ppuwrite:',id_string);
+    //    ppufile.putstring(id_string);
+    //  end;
+
+    function tgeneric_constnil_paramsym.make_generic_parameter_sym(newname: string): tsym;
       begin
-        internalerror(1);
+        result:=cconstsym.create_ord(newname,constnil,0,typedef);
+      end;
+
+    function tgeneric_constnil_paramsym.get_id_string: string;
+      begin
+        result := 'nil';
+      end;
+
+    function tgeneric_constset_paramsym.make_generic_parameter_sym(newname: string): tsym;
+      var
+        ps : ^tconstset;
+      begin
+        new(ps);
+        ps^:=value;
+        result:=cconstsym.create_ptr(newname,constset,ps,typedef);
+      end;
+
+    function tgeneric_constset_paramsym.get_id_string: string;
+      var
+        i: integer;
+      begin
+        result := '';
+        for i := 0 to 10 do
+          if i in value then
+            result := result+'_'+inttostr(i);
       end;
 
     function tgeneric_constreal_paramsym.make_generic_parameter_sym(newname: string): tsym;
+      var
+        pd : ^bestreal;
       begin
-        internalerror(1);
+        new(pd);
+        pd^:=value;
+        result:=cconstsym.create_ptr(newname,constreal,pd,typedef);
+      end;
+
+    function tgeneric_constreal_paramsym.get_id_string: string;
+      begin
+        result:=floattostr(value);
       end;
 
     function tgeneric_conststr_paramsym.make_generic_parameter_sym(newname: string): tsym;
       begin
         result:=cconstsym.create_string(newname,conststring,value,value_len,typedef);
+      end;
+      
+    procedure tgeneric_conststr_paramsym.copy_value(value_str:pchar;len:longint;strtype:tconststringtype); 
+      begin
+        getmem(value,len+1);
+        move(value_str^,value^,len+1);
+        value_len:=len;
+        value_type:=strtype;
+      end;
+
+    function tgeneric_conststr_paramsym.get_id_string: string;
+      begin
+        result:=value;
       end;
 
     function tgeneric_constint_paramsym.make_generic_parameter_sym(newname: string): tsym;
@@ -135,37 +209,49 @@ uses
         result:=cconstsym.create_ord(newname,constord,value,typedef);
       end;
 
+    function tgeneric_constint_paramsym.get_id_string: string;
+      begin
+        result:=inttostr(value.svalue);
+      end;
+
     constructor tgenericparamdef.create (fromdef:tdef;constref node:tnode;out id_str:string);
       var
-        sym: tgenericparamsym;
+        sym : tgenericparamsym;
+        sdef : tsetdef;
       begin
         create(genericconstdef);
         case node.nodetype of
           ordconstn:
             begin
-              sym := tgeneric_constint_paramsym.create(fromdef.typesym.realname,fromdef,false);
+              sym := tgeneric_constint_paramsym.create('ord',fromdef,false);
               tgeneric_constint_paramsym(sym).value := tordconstnode(node).value;
-              id_str := inttostr(tordconstnode(node).value.svalue);
             end;
           stringconstn:
             begin
-              sym := tgeneric_conststr_paramsym.create(fromdef.typesym.realname,fromdef,false);
-              tgeneric_conststr_paramsym(sym).value := tstringconstnode(node).value_str;
-              tgeneric_conststr_paramsym(sym).value_len := tstringconstnode(node).len;
-              tgeneric_conststr_paramsym(sym).value_type := tstringconstnode(node).cst_type;
-              id_str := tstringconstnode(node).value_str;
+              sym := tgeneric_conststr_paramsym.create('string',fromdef,false);
+              tgeneric_conststr_paramsym(sym).copy_value(tstringconstnode(node).value_str, tstringconstnode(node).len, tstringconstnode(node).cst_type);
             end;
           realconstn:
             begin
-              sym := tgeneric_constreal_paramsym.create(fromdef.typesym.realname,fromdef,false);
-              tgeneric_constreal_paramsym(sym).value_real := trealconstnode(node).value_real;
-              tgeneric_constreal_paramsym(sym).value_currency := trealconstnode(node).value_currency;
+              sym := tgeneric_constreal_paramsym.create('real',fromdef,false);
+              tgeneric_constreal_paramsym(sym).value := trealconstnode(node).value_real;
               id_str := floattostr(trealconstnode(node).value_real);
             end;
+          setconstn:
+            begin
+              sdef:=tsetdef(fromdef);
+              sym := tgeneric_constset_paramsym.create('set',fromdef,false);
+              tgeneric_constset_paramsym(sym).value := tsetconstnode(node).value_set^;
+            end;
+          niln:
+            begin
+              sym := tgeneric_constnil_paramsym.create('nil',fromdef,false);
+            end;
           otherwise
-            internalerror(1);
+            internalerror(0);
         end;
-        sym.owner := fromdef.typesym.owner;
+        id_str := sym.get_id_string;
+        sym.owner := fromdef.owner;
         typesym := sym;
       end;
 
@@ -464,7 +550,7 @@ uses
             if m_delphi in current_settings.modeswitches then
               validparam := typeparam.nodetype = typen
             else
-              validparam := typeparam.nodetype in [typen,ordconstn{,stringconstn,realconstn,setconstn}];
+              validparam := typeparam.nodetype in [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
             if validparam then
               begin
                 if tstoreddef(typeparam.resultdef).is_generic and
@@ -481,9 +567,10 @@ uses
                   end;
                 if typeparam.resultdef.typ<>errordef then
                   begin
-                    if not assigned(typeparam.resultdef.typesym) then
+                    if (typeparam.nodetype = typen) and not assigned(typeparam.resultdef.typesym) then
                       message(type_e_generics_cannot_reference_itself)
-                    else if (typeparam.resultdef.typ<>errordef) then
+                    else 
+                    if (typeparam.resultdef.typ<>errordef) then
                       begin
                         // note: ryan
                         { const nodes }
@@ -537,6 +624,7 @@ uses
             typeparam.free;
             first:=false;
           end;
+        writeln('spez:',prettyname);
         block_type:=old_block_type;
       end;
 
@@ -1325,7 +1413,7 @@ uses
 
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
       var
-        generictype : tgenerictypesym;
+        generictype : ttypesym;
         i,firstidx : longint;
         srsymtable : tsymtable;
         basedef,def : tdef;
@@ -1345,7 +1433,7 @@ uses
           is_const := try_to_consume(_CONST);
           if token=_ID then
             begin
-              generictype:=tgenerictypesym.create(orgpattern,cundefinedtype,false);
+              generictype:=ttypesym.create(orgpattern,cundefinedtype,false);
               generictype.is_const := is_const;
               { type parameters need to be added as strict private }
               generictype.visibility:=vis_strictprivate;

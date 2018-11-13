@@ -309,7 +309,8 @@ implementation
             p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
           constpointer :
             p1:=cpointerconstnode.create(p.value.valueordptr,p.constdef);
-          constnil :
+          constnil,
+          constundefined :
             p1:=cnilnode.create;
           constguid :
             p1:=cguidconstnode.create(pguid(p.value.valueptr)^);

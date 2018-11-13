@@ -70,7 +70,7 @@
       <ConfigFile>
         <StopAfterErrCount Value="50"/>
       </ConfigFile>
-      <CustomOptions Value="-dx86_64 -gw -godwarfcpp"/>
+      <CustomOptions Value="-dx86_64"/>
       <CompilerPath Value="$(CompPath)"/>
     </Other>
   </CompilerOptions>

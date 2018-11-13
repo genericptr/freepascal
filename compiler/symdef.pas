@@ -2208,7 +2208,7 @@ implementation
 
    function tstoreddef.is_generic_param_const(index:integer):boolean;
      begin
-       result := tgenerictypesym(genericparas[index]).is_const;
+       result := ttypesym(genericparas[index]).is_const;
      end;  
 
    function tstoreddef.is_specialization: boolean;

@@ -692,7 +692,9 @@ type
   tconsttyp = (constnone,
     constord,conststring,constreal,
     constset,constpointer,constnil,
-    constresourcestring,constwstring,constguid
+    constresourcestring,constwstring,constguid,
+    // note: ryan
+    constundefined
   );
 
   { RTTI information to store }
@@ -831,7 +833,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
        'abstractdef','arraydef','recorddef','pointerdef','orddef',
        'stringdef','enumdef','procdef','objectdef','errordef',
        'filedef','formaldef','setdef','procvardef','floatdef',
-       'classrefdef','forwarddef','variantdef','genericconstdef','undefineddef'
+       'classrefdef','forwarddef','variantdef','genconstdef','undefineddef'
      );
 
      EqualTypeName : array[tequaltype] of string[16] = (

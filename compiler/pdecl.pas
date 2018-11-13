@@ -141,18 +141,22 @@ implementation
            typen :
              begin
                if is_interface(p.resultdef) then
-                begin
-                  if assigned(tobjectdef(p.resultdef).iidguid) then
-                   begin
-                     new(pg);
-                     pg^:=tobjectdef(p.resultdef).iidguid^;
-                     hp:=cconstsym.create_ptr(orgname,constguid,pg,p.resultdef);
-                   end
-                  else
-                   Message1(parser_e_interface_has_no_guid,tobjectdef(p.resultdef).objrealname^);
-                end
-               else
-                Message(parser_e_illegal_expression);
+                 begin
+                   if assigned(tobjectdef(p.resultdef).iidguid) then
+                     begin
+                       new(pg);
+                       pg^:=tobjectdef(p.resultdef).iidguid^;
+                       hp:=cconstsym.create_ptr(orgname,constguid,pg,p.resultdef);
+                     end
+                    else
+                      Message1(parser_e_interface_has_no_guid,tobjectdef(p.resultdef).objrealname^);
+                 end
+               // note: ryan
+               { replace the generic parameter type with a temporary constant sym }
+               else if p.resultdef.typ = undefineddef then
+                 hp:=cconstsym.create_undefined(orgname,p.resultdef)
+               else 
+                 Message(parser_e_illegal_expression);
              end;
            inlinen:
              begin

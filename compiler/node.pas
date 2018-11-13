@@ -194,7 +194,8 @@ interface
           'loadparentfpn',
           'objcselectorn',
           'objcprotocoln',
-          'specializen');
+          'specializen'
+          );
 
       { a set containing all const nodes }
       nodetype_const = [ordconstn,

@@ -155,9 +155,10 @@ interface
           typedef      : tdef;
           typedefderef : tderef;
           fprettyname : ansistring;
+          is_const: boolean;
           constructor create(const n : string;def:tdef;doregister:boolean);virtual;
           destructor destroy;override;
-          constructor ppuload(ppufile:tcompilerppufile);
+          constructor ppuload(ppufile:tcompilerppufile);virtual;
           { do not override this routine in platform-specific subclasses,
             override ppuwrite_platform instead }
           procedure ppuwrite(ppufile:tcompilerppufile);override;final;
@@ -169,12 +170,6 @@ interface
           function make_generic_parameter_sym(newname: string) : tsym; virtual;
        end;
        ttypesymclass = class of ttypesym;
-
-       // note: ryan
-       { declared generic type sym }
-       tgenerictypesym = class (ttypesym)
-         is_const: boolean;
-       end;
 
        tabstractvarsym = class(tstoredsym)
           varoptions    : tvaroptions;
@@ -401,6 +396,7 @@ interface
           constructor create_ptr(const n : string;t : tconsttyp;v : pointer;def:tdef);virtual;
           constructor create_string(const n : string;t : tconsttyp;str:pchar;l:longint;def:tdef);virtual;
           constructor create_wstring(const n : string;t : tconsttyp;pw:pcompilerwidestring);virtual;
+          constructor create_undefined(const n : string;def: tdef);
           constructor ppuload(ppufile:tcompilerppufile);
           destructor  destroy;override;
           procedure buildderef;override;
@@ -1590,7 +1586,6 @@ implementation
           tparasymtable(parast).ppuwrite(ppufile);
       end;
 
-
 {****************************************************************************
                             TABSTRACTVARSYM
 ****************************************************************************}
@@ -2353,6 +2348,13 @@ implementation
          value.len:=getlengthwidestring(pw);
       end;
 
+    constructor tconstsym.create_undefined(const n : string;def: tdef);
+      begin
+        inherited create(constsym,n,true);
+        fillchar(value, sizeof(value), #0);
+        consttyp:=constundefined;
+        constdef:=def;
+      end;
 
     constructor tconstsym.ppuload(ppufile:tcompilerppufile);
       var
@@ -2425,7 +2427,8 @@ implementation
                new(pguid(value.valueptr));
                ppufile.getdata(value.valueptr^,sizeof(tguid));
              end;
-           constnil :
+           constnil,
+           constundefined :
              ppufile.getderef(constdefderef);
            else
              Message1(unit_f_ppu_invalid_entry,tostr(ord(consttyp)));
@@ -2457,7 +2460,7 @@ implementation
       begin
         inherited;
         case consttyp  of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid,constundefined:
             constdefderef.build(constdef);
           constwstring:
             ;
@@ -2470,7 +2473,7 @@ implementation
     procedure tconstsym.deref;
       begin
         case consttyp of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid,constundefined:
             constdef:=tdef(constdefderef.resolve);
           constwstring:
             constdef:=carraydef.getreusable(cwidechartype,getlengthwidestring(pcompilerwidestring(value.valueptr)));
@@ -2485,7 +2488,8 @@ implementation
          inherited ppuwrite(ppufile);
          ppufile.putbyte(byte(consttyp));
          case consttyp of
-           constnil :
+           constnil,
+           constundefined :
              ppufile.putderef(constdefderef);
            constord :
              begin
@@ -2602,6 +2606,7 @@ implementation
          inherited ppuload(typesym,ppufile);
          ppufile.getderef(typedefderef);
          fprettyname:=ppufile.getansistring;
+         is_const:=ppufile.getboolean;
          ppuload_platform(ppufile);
       end;
 
@@ -2624,6 +2629,7 @@ implementation
          inherited ppuwrite(ppufile);
          ppufile.putderef(typedefderef);
          ppufile.putansistring(fprettyname);
+         ppufile.putboolean(is_const);
          writeentry(ppufile,ibtypesym);
       end;
 
