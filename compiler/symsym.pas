@@ -155,6 +155,8 @@ interface
           typedef      : tdef;
           typedefderef : tderef;
           fprettyname : ansistring;
+          // note: ryan
+          { generic support }
           is_const: boolean;
           const_type: tdeftyp;
           constructor create(const n : string;def:tdef;doregister:boolean);virtual;

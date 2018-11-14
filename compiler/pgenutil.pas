@@ -85,6 +85,7 @@ uses
     { specialized generic param sym }
     tgenericparamsym = class (ttypesym)
       function get_id_string: string; virtual; abstract;
+      function get_const_type: tdeftyp; virtual;
     end;
 
     tgeneric_constint_paramsym = class (tgenericparamsym)
@@ -99,6 +100,7 @@ uses
        value_type : tconststringtype;
        function make_generic_parameter_sym(newname: string): tsym; override;
        function get_id_string: string; override;
+       function get_const_type: tdeftyp; override;
        procedure copy_value(value_str:pchar;len:longint;strtype:tconststringtype); 
     end;
 
@@ -123,24 +125,11 @@ uses
       begin
         result := def.typ = genericconstdef;
       end;
-
-    //constructor tgenericparamsym.ppuload(ppufile:tcompilerppufile);
-    //  begin
-    //    inherited ppuload(ppufile);
-    //    //ppufile.getderef(constdefderef);
-    //    //ppufile.getdata(pc^,value.len);
-    //    id_string := ppufile.getstring;
-    //    writeln('ppuload:',id_string);
-    //  end;
-
-    //procedure tgenericparamsym.ppuwrite_platform(ppufile: tcompilerppufile);
-    //  begin
-    //    inherited ppuwrite_platform(ppufile);
-    //    //ppufile.putlongint(value.len);
-    //    //ppufile.putdata(pchar(value.valueptr)^,value.len);
-    //    writeln('ppuwrite:',id_string);
-    //    ppufile.putstring(id_string);
-    //  end;
+    
+    function tgenericparamsym.get_const_type: tdeftyp; 
+      begin
+        result := typedef.typ;
+      end;
 
     function tgeneric_constnil_paramsym.make_generic_parameter_sym(newname: string): tsym;
       begin
@@ -201,6 +190,11 @@ uses
     function tgeneric_conststr_paramsym.get_id_string: string;
       begin
         result:=value;
+      end;
+    
+    function tgeneric_conststr_paramsym.get_const_type: tdeftyp;
+      begin
+        result:=stringdef;
       end;
 
     function tgeneric_constint_paramsym.make_generic_parameter_sym(newname: string): tsym;
@@ -308,15 +302,15 @@ uses
           begin
             filepos:=pfileposinfo(poslist[i])^;
             paradef:=tstoreddef(paradeflist[i]);
-            paratype:=ttypesym(paradef.typesym).typedef.typ;
             // note: ryan
             { validate const params }
-            //writeln('check_constraints:',i,' ',paradef.classname,' - ',genericdef.is_generic_param_const(i), ' type:', paratype);
-            if (m_objfpc in current_settings.modeswitches) then
+            if (m_objfpc in current_settings.modeswitches) and (genericdef.is_generic_param_const(i)) then
               begin
+                paratype:=tgenericparamsym(paradef.typesym).get_const_type;
+                //writeln('check_constraints:',i,' ',paradef.typesym.classname,' - ',genericdef.get_generic_param_type(i), ' type:', paratype);
                 { type constrained param doesn't match type }
-                if (genericdef.get_generic_param_type(i) <> undefineddef) and genericdef.is_generic_param_const(i) and (genericdef.get_generic_param_type(i) <> paratype) then
-                  Message(type_e_type_id_expected);
+                if (genericdef.get_generic_param_type(i) <> undefineddef) and (genericdef.get_generic_param_type(i) <> paratype) then
+                  Message(type_e_mismatch);
                 { parsing nested generic type const params don't match }
                 if (current_scanner.parsing_generic_type > 0) and 
                     assigned(current_structdef) and
@@ -1455,11 +1449,9 @@ uses
                   //basedef:=generrordef;
                   single_type(def, []);
                   if assigned(def) and (def.typ in [orddef,stringdef,floatdef,setdef]) then
-                    begin
-                      generictype.const_type := def.typ;
-                    end
+                    generictype.const_type := def.typ
                   else
-                    Message(parser_e_illegal_expression);
+                    Message(type_e_mismatch);
                 end;
             end
           else if try_to_consume(_COLON) then
