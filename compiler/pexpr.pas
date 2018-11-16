@@ -79,7 +79,7 @@ implementation
        nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,
        { parser }
        scanner,
-       pbase,pinline,ptype,pgenutil,procinfo,cpuinfo
+       pbase,pinline,ptype,pgenutil,psub,procinfo,cpuinfo
        ;
 
     function sub_expr(pred_level:Toperator_precedence;flags:texprflags;factornode:tnode):tnode;forward;
@@ -2730,6 +2730,36 @@ implementation
         end;
       end;
 
+    // note: ryan
+    function read_anonymous_proc:tnode;
+    var
+      pd : tprocdef;
+      again : boolean;
+      p1 : tnode;
+      nodechanged : boolean;
+    begin
+      p1:=nil;
+      pd:=read_proc(false,nil,false,true);
+      if assigned(pd) then
+        begin
+          do_proc_call(pd.procsym,pd.owner,nil,true,again,p1,[],nil);
+          if assigned(p1) then
+            begin
+              p1:=caddrnode.create(p1);
+              //p1.fileinfo:=filepos;
+              if cs_typed_addresses in current_settings.localswitches then
+                include(taddrnode(p1).addrnodeflags,anf_typedaddr);
+              { Store the procvar that we are expecting, the
+                addrn will use the information to find the correct
+                procdef or it will return an error }
+              if assigned(getprocvardef) and
+                 (taddrnode(p1).left.nodetype = loadn) then
+                taddrnode(p1).getprocvardef:=getprocvardef;
+            end;
+        end;
+      result := p1;
+    end;
+
   {$maxfpuregisters 0}
 
     function factor(getaddr:boolean;flags:texprflags) : tnode;
@@ -3920,7 +3950,19 @@ implementation
                  consume(_RKLAMMER);
                  p1:=cinlinenode.create(in_objc_protocol_x,false,p1);
                end;
-
+             // note: ryan
+             _FUNCTION,_PROCEDURE:
+               begin
+                 if m_nested_procvars in current_settings.modeswitches then
+                   p1 := read_anonymous_proc
+                  else
+                    begin
+                      Message(parser_e_illegal_expression);
+                      p1:=cerrornode.create;
+                      { recover }
+                      consume(token);
+                    end;
+               end;
              else
                begin
                  Message(parser_e_illegal_expression);

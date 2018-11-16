@@ -80,7 +80,7 @@ interface
     { reads any routine in the implementation, or a non-method routine
       declaration in the interface (depending on whether or not parse_only is
       true) }
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    function read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric,isanon:boolean):tprocdef;
 
     { parses only the body of a non nested routine; needs a correctly setup pd }
     procedure read_proc_body(pd:tprocdef);
@@ -2092,6 +2092,7 @@ implementation
           into the parse_body routine is not done because of having better file position
           information available }
         if not current_procinfo.procdef.is_specialization and
+           not (po_anonymous in current_procinfo.procdef.procoptions) and
             (
               not assigned(current_procinfo.procdef.struct) or
               not (df_specialization in current_procinfo.procdef.struct.defoptions)
@@ -2123,7 +2124,7 @@ implementation
       end;
 
 
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    function read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric,isanon:boolean):tprocdef;
       {
         Parses the procedure directives, then parses the procedure body, then
         generates the code for it
@@ -2139,6 +2140,8 @@ implementation
         srsym : tsym;
         i : longint;
       begin
+         result := nil;
+
          { save old state }
          old_current_procinfo:=current_procinfo;
          old_current_structdef:=current_structdef;
@@ -2154,7 +2157,7 @@ implementation
 
          if not assigned(usefwpd) then
            { parse procedure declaration }
-           pd:=parse_proc_dec(isclassmethod,old_current_structdef,isgeneric)
+           pd:=parse_proc_dec(isclassmethod,old_current_structdef,isgeneric,isanon)
          else
            pd:=usefwpd;
 
@@ -2332,6 +2335,8 @@ implementation
          current_genericdef:=old_current_genericdef;
          current_specializedef:=old_current_specializedef;
          current_procinfo:=old_current_procinfo;
+
+         result := pd;
       end;
 
 
@@ -2455,7 +2460,7 @@ implementation
                       Message(parser_e_procedure_or_function_expected);
                       hadgeneric:=false;
                     end;
-                  read_proc(is_classdef,nil,hadgeneric);
+                  read_proc(is_classdef,nil,hadgeneric,false);
                   is_classdef:=false;
                   hadgeneric:=false;
                 end;
@@ -2502,7 +2507,7 @@ implementation
                         handle_unexpected_had_generic;
                         if is_classdef then
                           begin
-                            read_proc(is_classdef,nil,false);
+                            read_proc(is_classdef,nil,false,false);
                             is_classdef:=false;
                           end
                         else
@@ -2585,7 +2590,7 @@ implementation
                      message(parser_e_procedure_or_function_expected);
                      hadgeneric:=false;
                    end;
-                 read_proc(false,nil,hadgeneric);
+                 read_proc(false,nil,hadgeneric,false);
                  hadgeneric:=false;
                end;
              else

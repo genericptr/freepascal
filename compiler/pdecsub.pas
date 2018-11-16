@@ -77,8 +77,8 @@ interface
     procedure parse_var_proc_directives(sym:tsym);
     procedure parse_object_proc_directives(pd:tabstractprocdef);
     procedure parse_record_proc_directives(pd:tabstractprocdef);
-    function  parse_proc_head(astruct:tabstractrecorddef;potype:tproctypeoption;isgeneric:boolean;genericdef:tdef;generictypelist:tfphashobjectlist;out pd:tprocdef):boolean;
-    function  parse_proc_dec(isclassmethod:boolean;astruct:tabstractrecorddef;isgeneric:boolean):tprocdef;
+    function  parse_proc_head(astruct:tabstractrecorddef;potype:tproctypeoption;isgeneric,isanon:boolean;genericdef:tdef;generictypelist:tfphashobjectlist;out pd:tprocdef):boolean;
+    function  parse_proc_dec(isclassmethod:boolean;astruct:tabstractrecorddef;isgeneric,isanon:boolean):tprocdef;
     procedure parse_proc_dec_finish(pd:tprocdef;isclassmethod:boolean;astruct:tabstractrecorddef);
 
     { parse a record method declaration (not a (class) constructor/destructor) }
@@ -570,7 +570,7 @@ implementation
       end;
 
 
-    function parse_proc_head(astruct:tabstractrecorddef;potype:tproctypeoption;isgeneric:boolean;genericdef:tdef;generictypelist:tfphashobjectlist;out pd:tprocdef):boolean;
+    function parse_proc_head(astruct:tabstractrecorddef;potype:tproctypeoption;isgeneric,isanon:boolean;genericdef:tdef;generictypelist:tfphashobjectlist;out pd:tprocdef):boolean;
       var
         hs       : string;
         orgsp,sp,orgspnongen,spnongen : TIDString;
@@ -856,7 +856,9 @@ implementation
             else
               sp:='';
           end;
-
+          
+        var
+          procname:string;
       begin
         sp:='';
         orgsp:='';
@@ -878,7 +880,19 @@ implementation
 
         if not assigned(genericdef) then
           begin
-            consume_proc_name;
+            if not isanon then
+              consume_proc_name
+            else
+              begin
+                // note: ryan
+                { build anonymous name based on scope and params }
+                procname := 'ANON_FUNC';
+                sp:='$'+procname+'$'+tostr(current_filepos.line);             // pattern
+                orgsp:='$'+lower(procname)+'$'+tostr(current_filepos.line);   // orgpattern
+                spnongen:=sp;
+                orgspnongen:=orgsp;
+                writeln('anonymous proc:',sp);
+              end;
 
             { examine interface map: function/procedure iname.functionname=locfuncname }
             if assigned(astruct) and
@@ -1112,6 +1126,9 @@ implementation
         pd.procsym:=aprocsym;
         pd.proctypeoption:=potype;
 
+        if isanon then
+          include(pd.procoptions,po_anonymous);
+
         if assigned(genericparams) then
           begin
             include(pd.defoptions,df_generic);
@@ -1267,7 +1284,6 @@ implementation
                   internalerror(201011260); // 11 nov 2010 index 0
               end;
           end;
-
         parse_generic:=old_parse_generic;
         result:=true;
       end;
@@ -1540,7 +1556,8 @@ implementation
                 message(parser_e_field_not_allowed_here);
                 consume_all_until(_SEMICOLON);
               end;
-            consume(_SEMICOLON);
+            if not (po_anonymous in pd.procoptions) then
+              consume(_SEMICOLON);
           end;
 
         if locationstr<>'' then
@@ -1551,7 +1568,7 @@ implementation
          end;
       end;
 
-    function parse_proc_dec(isclassmethod:boolean;astruct:tabstractrecorddef;isgeneric:boolean):tprocdef;
+    function parse_proc_dec(isclassmethod:boolean;astruct:tabstractrecorddef;isgeneric,isanon:boolean):tprocdef;
       var
         pd : tprocdef;
         old_block_type : tblock_type;
@@ -1574,7 +1591,7 @@ implementation
           _FUNCTION :
             begin
               consume(_FUNCTION);
-              if parse_proc_head(astruct,potype_function,isgeneric,nil,nil,pd) then
+              if parse_proc_head(astruct,potype_function,isgeneric,isanon,nil,nil,pd) then
                 begin
                   { pd=nil when it is a interface mapping }
                   if assigned(pd) then
@@ -1594,7 +1611,7 @@ implementation
           _PROCEDURE :
             begin
               consume(_PROCEDURE);
-              if parse_proc_head(astruct,potype_procedure,isgeneric,nil,nil,pd) then
+              if parse_proc_head(astruct,potype_procedure,isgeneric,isanon,nil,nil,pd) then
                 begin
                   { pd=nil when it is an interface mapping }
                   if assigned(pd) then
@@ -1610,9 +1627,9 @@ implementation
             begin
               consume(_CONSTRUCTOR);
               if isclassmethod then
-                recover:=not parse_proc_head(astruct,potype_class_constructor,false,nil,nil,pd)
+                recover:=not parse_proc_head(astruct,potype_class_constructor,false,false,nil,nil,pd)
               else
-                recover:=not parse_proc_head(astruct,potype_constructor,false,nil,nil,pd);
+                recover:=not parse_proc_head(astruct,potype_constructor,false,false,nil,nil,pd);
               if not recover then
                 parse_proc_dec_finish(pd,isclassmethod,astruct);
             end;
@@ -1621,9 +1638,9 @@ implementation
             begin
               consume(_DESTRUCTOR);
               if isclassmethod then
-                recover:=not parse_proc_head(astruct,potype_class_destructor,false,nil,nil,pd)
+                recover:=not parse_proc_head(astruct,potype_class_destructor,false,false,nil,nil,pd)
               else
-                recover:=not parse_proc_head(astruct,potype_destructor,false,nil,nil,pd);
+                recover:=not parse_proc_head(astruct,potype_destructor,false,false,nil,nil,pd);
               if not recover then
                 parse_proc_dec_finish(pd,isclassmethod,astruct);
             end;
@@ -1637,7 +1654,7 @@ implementation
               old_block_type:=block_type;
               block_type:=bt_body;
               consume(_OPERATOR);
-              parse_proc_head(astruct,potype_operator,false,nil,nil,pd);
+              parse_proc_head(astruct,potype_operator,false,false,nil,nil,pd);
               block_type:=old_block_type;
               if assigned(pd) then
                 parse_proc_dec_finish(pd,isclassmethod,astruct)
@@ -1678,7 +1695,7 @@ implementation
       begin
         oldparse_only:=parse_only;
         parse_only:=true;
-        result:=parse_proc_dec(is_classdef,astruct,hadgeneric);
+        result:=parse_proc_dec(is_classdef,astruct,hadgeneric,false);
 
         { this is for error recovery as well as forward }
         { interface mappings, i.e. mapping to a method  }

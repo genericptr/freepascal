@@ -414,7 +414,9 @@ type
     { procedure is an automatically generated property getter }
     po_is_auto_getter,
     { procedure is an automatically generated property setter }
-    po_is_auto_setter
+    po_is_auto_setter,
+    { anonymous nested procedure }
+    po_anonymous
   );
   tprocoptions=set of tprocoption;
 
@@ -1019,7 +1021,8 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_function_ref',{po_is_function_ref}
       'C-style blocks',{po_is_block}
       'po_is_auto_getter',{po_is_auto_getter}
-      'po_is_auto_setter'{po_is_auto_setter}
+      'po_is_auto_setter',{po_is_auto_setter}
+      'po_anonymous'{po_anonymous}
     );
 
 implementation

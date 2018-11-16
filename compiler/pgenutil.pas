@@ -1010,7 +1010,7 @@ uses
                 if genericdef.typ=procdef then
                   begin
                     current_scanner.startreplaytokens(tprocdef(genericdef).genericdecltokenbuf);
-                    parse_proc_head(tprocdef(genericdef).struct,tprocdef(genericdef).proctypeoption,false,genericdef,generictypelist,pd);
+                    parse_proc_head(tprocdef(genericdef).struct,tprocdef(genericdef).proctypeoption,false,false,genericdef,generictypelist,pd);
                     if assigned(pd) then
                       begin
                         if assigned(psym) then

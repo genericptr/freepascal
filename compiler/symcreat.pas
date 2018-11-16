@@ -259,7 +259,7 @@ implementation
       current_scanner.substitutemacro('meth_impl_macro',@str[1],length(str),lineno,fileno);
       current_scanner.readtoken(false);
       { and parse it... }
-      read_proc(is_classdef,usefwpd,false);
+      read_proc(is_classdef,usefwpd,false,false);
       parse_only:=oldparse_only;
       { remove the temporary macro input file again }
       current_scanner.closeinputfile;
