@@ -3101,7 +3101,6 @@ implementation
                  searchsym_type(pattern,srsym,srsymtable)
                else
                  searchsym(pattern,srsym,srsymtable);
-
                { handle unit specification like System.Writeln }
                if not isspecialize then
                  unit_found:=try_consume_unitsym(srsym,srsymtable,t,true,allowspecialize,isspecialize,pattern)
@@ -3462,16 +3461,30 @@ implementation
                     { check if it's a method/class method }
                     if is_member_read(srsym,srsymtable,p1,hdef) then
                       begin
+                        callflags:=[];
+
                         { if we are accessing a owner procsym from the nested }
                         { class we need to call it as a class member          }
                         if (srsymtable.symtabletype in [ObjectSymtable,recordsymtable]) and
                           assigned(current_structdef) and (current_structdef<>hdef) and is_owned_by(current_structdef,hdef) then
                           p1:=cloadvmtaddrnode.create(ctypenode.create(hdef));
+                        
+                        // note: ryan
+                        { sym was found in default property so handle default read property }
+                        if assigned(searchsym_found_default) then
+                          begin
+                            if maybe_load_methodpointer(srsymtable,p1) then
+                              include(callflags,cnf_member_call);
+                            do_property_read(searchsym_found_default,srsymtable,p1);
+                            // hdef := tabstractrecorddef(searchsym_found_default.propdef);
+                            searchsym_found_default := nil;
+                          end;
+
                         { not srsymtable.symtabletype since that can be }
                         { withsymtable as well                          }
                         if (srsym.owner.symtabletype in [ObjectSymtable,recordsymtable]) then
                           begin
-                            do_member_read(tabstractrecorddef(hdef),getaddr,srsym,p1,again,[],spezcontext);
+                            do_member_read(tabstractrecorddef(hdef),getaddr,srsym,p1,again,callflags,spezcontext);
                             spezcontext:=nil;
                           end
                         else

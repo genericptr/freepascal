@@ -178,13 +178,12 @@ implementation
             // note: removed for now
             //if oo_has_default_property in current_structdef.objectoptions then
             //  message(parser_e_only_one_default_property);
-            include(current_structdef.objectoptions,oo_has_default_property);
+            //include(current_structdef.objectoptions,oo_has_default_property);
             include(p.propoptions,ppo_defaultproperty);
 
             { default property without parameters }
             if not (ppo_hasparameters in p.propoptions) then
               begin
-
                 // note: ryan
                 if p.propaccesslist[palt_write].firstsym <> nil then
                   begin
@@ -194,9 +193,7 @@ implementation
                     else
                       current_structdef.default_write_prop := p;
                   end;
-
-                SetLength(current_structdef.default_props, Length(current_structdef.default_props) + 1);
-                current_structdef.default_props[High(current_structdef.default_props)] := p;
+                current_structdef.add_defaultprop(p);
               end;
             
             // note: removed for now

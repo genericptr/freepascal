@@ -291,6 +291,7 @@ interface
           { default properties }
           default_write_prop: tsym;
           default_props: array of tsym;
+
           constructor create(const n:string; dt:tdeftyp;doregister:boolean);
           constructor ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -302,7 +303,9 @@ interface
           function GetSymtable(t:tGetSymtable):TSymtable;override;
           function is_packed:boolean;
           function RttiName: string;
+          // note: ryan
           function has_default_property_access: boolean;
+          procedure add_defaultprop(p:tsym);
 
           { enumerator support }
           function search_enumerator_get: tprocdef; virtual;
@@ -3975,6 +3978,8 @@ implementation
       end;
 
     constructor tabstractrecorddef.ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
+      var
+        st : tstoredsymtable;
       begin
         inherited ppuload(dt,ppufile);
         objrealname:=ppufile.getpshortstring;
@@ -3984,9 +3989,32 @@ implementation
         if (import_lib^='') then
           stringdispose(import_lib);
         ppufile.getsmallset(objectoptions);
+
+        // note: ryan
+        //ppufile.getderef(default_write_prop.symderef);
+        // we can call ppuload if we know the sym class type. do we need to save that?
+        //default_write_prop.ppuwrite(ppufile);
+        //ctypesym.ppuload(ppufile);
+        //ccpupropertysym.
+
+        //if oo_has_default_property in objectoptions then
+        //  begin
+        //    writeln('load default props:');
+        //    writeln(ppufile.readentry);
+        //    writeln(ppufile.readentry);
+        //    writeln(ppufile.readentry);
+        //    writeln(ppufile.readentry);
+        //  end;
+
+        //st:=tstoredsymtable.create('struct_default_props');
+        //st.ppuload(ppufile);
+        //writeln('load:',st.symlist.count);
       end;
 
     procedure tabstractrecorddef.ppuwrite(ppufile: tcompilerppufile);
+      var
+        i : integer;
+        st : tstoredsymtable;
       begin
         inherited ppuwrite(ppufile);
         ppufile.putstring(objrealname^);
@@ -3995,6 +4023,32 @@ implementation
         else
           ppufile.putstring('');
         ppufile.putsmallset(objectoptions);
+
+        // note: ryan
+        // todo: this writes 2x for subclasses
+        //if length(default_props) > 0 then
+        //  begin
+        //    st:=tstoredsymtable.create('struct_default_props');
+        //    for i := 0 to length(default_props) - 1 do
+        //      begin
+        //        writeln('write ppu:',default_props[i].realname, ' ', typesym.realname);
+        //        st.insert(default_props[i]);
+        //      end;
+        //    writeln('write:',st.symlist.count);
+        //    st.ppuwrite(ppufile);
+        //    //st.free;
+        //  end;
+          
+        // todo: how do we know if this is the root object?
+        // and (((deftyp = objectdef) and assigned(tobjectdef(self).childof)) or (deftyp = recorddef))
+        //if has_default_property_access then
+        //  for i := 0 to length(default_props) - 1 do
+        //    begin
+        //      writeln('write ppu:',default_props[i].realname, ' ', typesym.realname);
+        //      tstoredsym(default_props[i]).ppuwrite(ppufile);
+        //    end;
+        //default_write_prop: tsym;
+        //default_props: array of tsym;
       end;
 
     destructor tabstractrecorddef.destroy;
@@ -4060,6 +4114,13 @@ implementation
     function tabstractrecorddef.is_packed:boolean;
       begin
         result:=tabstractrecordsymtable(symtable).is_packed;
+      end;
+
+    procedure tabstractrecorddef.add_defaultprop(p:tsym);
+      begin
+        include(objectoptions,oo_has_default_property);
+        setlength(default_props, length(default_props) + 1);
+        default_props[high(default_props)] := p;
       end;
 
     function tabstractrecorddef.has_default_property_access: boolean;
@@ -6668,6 +6729,12 @@ implementation
         writing_class_record_dbginfo:=false;
      end;
 
+     // note: ryan
+     procedure restore_default_properties_callback(data:TObject;args:pointer);
+       begin
+         if (tsym(data).typ = propertysym) and (ppo_defaultproperty in tpropertysym(data).propoptions) then
+           tobjectdef(args).add_defaultprop(tsym(data));
+       end;
 
     constructor tobjectdef.ppuload(ppufile:tcompilerppufile);
       var
@@ -6746,6 +6813,11 @@ implementation
              ppuload_platform(ppufile);
              tObjectSymtable(symtable).ppuload(ppufile);
            end;
+
+         // note: ryan
+         { restore default properties }
+         if (oo_has_default_property in objectoptions) then
+            symtable.symlist.ForEachCall(@restore_default_properties_callback, self);
 
          { handles the predefined class tobject  }
          { the last TOBJECT which is loaded gets }
