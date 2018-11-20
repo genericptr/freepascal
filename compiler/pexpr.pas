@@ -1382,12 +1382,11 @@ implementation
                       if assigned(getprocvardef) then
                         handle_procvar(getprocvardef,p2);
                       getprocvardef:=nil;
-                      { test if comp_expr result matches property def }
-                      if (compare_defs(propsym.propdef,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+                      { if p2 result is convertable to property def then insert property node }
+                      if not equal_defs(def,p2.resultdef) then
                         begin
                           p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
                           tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
-                          { mark as property, both the tcallnode and the real call block }
                           include(p1.flags,nf_isproperty);
                         end
                       else
@@ -1400,10 +1399,9 @@ implementation
                       consume(_ASSIGNMENT);
                       { read the expression }
                       p2:=comp_expr([ef_accept_equal]);
-                      { test if comp_expr result matches property def }
-                      if (compare_defs(propsym.propdef,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+                      { if p2 result is convertable to property def then insert property node }
+                      if not equal_defs(def,p2.resultdef) then
                         begin
-                          { generate access code }
                           if not handle_staticfield_access(sym,p1) then
                             propaccesslist_to_node(p1,st,propaccesslist);
                           include(p1.flags,nf_isproperty);
@@ -1514,7 +1512,7 @@ implementation
                            propaccesslist_to_node(p1,st,propaccesslist);
                          include(p1.flags,nf_isproperty);
                          { catch expressions like "(propx):=1;" }
-                         include(p1.flags,nf_no_lvalue);
+                         include(p1.flags,nf_no_lvalue)
                        end;
                      procsym :
                        begin
@@ -2341,6 +2339,15 @@ implementation
                        { The property symbol is referenced indirect }
                        protsym.IncRefCount;
                        handle_propertysym(protsym,protsym.owner,p1);
+                       { handle default arrays }
+                       if not (ppo_hasparameters in protsym.propoptions) then
+                         begin
+                           if not protsym.is_default_array then
+                             message(parser_e_no_default_property_available)
+                           else
+                             { the default property is an array so allow l-values }
+                             exclude(p1.flags,nf_no_lvalue);
+                         end;
                      end;
                  end
                else

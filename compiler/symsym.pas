@@ -372,6 +372,9 @@ interface
           procedure register_override(overriddenprop: tpropertysym);
           { inherit the read/write property }
           procedure inherit_accessor(getset: tpropaccesslisttypes); virtual;
+          // note: ryan
+          { returns true if the property is a default alias for an array  }
+          function is_default_array: boolean;
        end;
        tpropertysymclass = class of tpropertysym;
 
@@ -1535,6 +1538,21 @@ implementation
         { nothing to do by default }
       end;
 
+    function tpropertysym.is_default_array: boolean;
+      var
+        list : tpropaccesslist;
+        sym: tsym;
+      begin
+        result := (ppo_defaultproperty in propoptions) and not (ppo_hasparameters in propoptions);
+        if result and getpropaccesslist(palt_read,list) then
+          begin
+            sym := list.firstsym^.sym;
+            if sym.typ = fieldvarsym then
+              result := tfieldvarsym(sym).vardef.typ = arraydef
+            else
+              result := false;
+          end;
+      end;
 
     procedure tpropertysym.makeduplicate(p: tpropertysym; readprocdef, writeprocdef: tprocdef; out paranr: word);
       begin

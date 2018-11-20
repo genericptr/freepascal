@@ -1,16 +1,8 @@
-.gitignore
-*.sublime-project
-*.sublime-workspace
-*.code-workspace
-compiler/*.lpi
-compiler/ppcx64.lpi
-compiler/i386/lazbuild
-compiler/i386/pp
-compiler/i386/pp.app
-compiler/x86_64/lazbuild
-compiler/x86_64/pp
-compiler/x86_64/pp.app
-compiler/utils/*
-rtl/
-packages/
-compiler/.vscode
+# Ignore everything
+*
+
+# But not these files...
+!.gitignore
+!.pas
+!.pp
+!ryan_*.lpi
