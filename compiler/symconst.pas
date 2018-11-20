@@ -1022,6 +1022,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'C-style blocks',{po_is_block}
       'po_is_auto_getter',{po_is_auto_getter}
       'po_is_auto_setter',{po_is_auto_setter}
+      // note: ryan
       'po_anonymous'{po_anonymous}
     );
 

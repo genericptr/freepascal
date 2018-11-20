@@ -885,13 +885,15 @@ implementation
             else
               begin
                 // note: ryan
+                // todo: what should this name contain?
                 { build anonymous name based on scope and params }
-                procname := 'ANON_FUNC';
+                procname := 'anon';
+                procname := procname+'$'+lower(current_module.modulename^);
                 sp:='$'+procname+'$'+tostr(current_filepos.line);             // pattern
                 orgsp:='$'+lower(procname)+'$'+tostr(current_filepos.line);   // orgpattern
                 spnongen:=sp;
                 orgspnongen:=orgsp;
-                writeln('anonymous proc:',sp);
+                //writeln('anonymousproc:',sp);
               end;
 
             { examine interface map: function/procedure iname.functionname=locfuncname }
@@ -1126,6 +1128,7 @@ implementation
         pd.procsym:=aprocsym;
         pd.proctypeoption:=potype;
 
+        // note: ryan
         if isanon then
           include(pd.procoptions,po_anonymous);
 
