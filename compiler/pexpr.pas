@@ -1099,6 +1099,9 @@ implementation
                begin
                  if not (st.symtabletype in [ObjectSymtable,recordsymtable]) then
                    internalerror(200310031);
+                 // note: ryan
+                 // does obj have an overload for the params? if not
+                 // search helpers with param and change obj
                  p1:=ccallnode.create(para,tprocsym(sym),obj.symtable,p1,callflags,spezcontext);
                end
              else

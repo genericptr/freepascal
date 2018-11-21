@@ -3971,6 +3971,100 @@ implementation
           end;
       end;
 
+    // note: ryan
+    function search_objectdef(const s: string;classh : tobjectdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable): boolean;
+      var
+        hashedid  : THashedIDString;
+        pdef: tprocdef;
+        i: integer;
+      begin
+        hashedid.id:=s;
+        result:=false;
+        repeat
+          srsymtable:=classh.symtable;
+          srsym:=tsym(srsymtable.FindWithHash(hashedid));
+          if srsym<>nil then
+            begin
+              case srsym.typ of
+                procsym:
+                  begin
+                    for i:=0 to tprocsym(srsym).procdeflist.count-1 do
+                      begin
+                        pdef:=tprocdef(tprocsym(srsym).procdeflist[i]);
+                        if not is_visible_for_object(pdef.owner,pdef.visibility,contextclassh) then
+                          continue;
+                        srsym:=tprocdef(tprocsym(srsym).procdeflist[i]).procsym;
+                        srsymtable:=srsym.owner;
+                        result:=true;
+                        exit;
+                      end;
+                  end;
+                typesym,
+                fieldvarsym,
+                constsym,
+                enumsym,
+                undefinedsym,
+                propertysym:
+                  begin
+                    result:=true;
+                    exit;
+                  end;
+                else
+                  internalerror(2014041101);
+              end;
+            end;
+
+          { try the helper parent if available }
+          classh:=classh.childof;
+        until classh=nil;
+      end;
+
+    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable):boolean;
+      var
+        s: string;
+        list: TFPObjectList;
+        i: integer;
+        st: tsymtable;
+        odef : tobjectdef;
+      begin
+        result:=false;
+        { when there are no helpers active currently then we don't need to do
+          anything }
+        if current_module.extendeddefs.count=0 then
+          exit;
+        { no helpers for anonymous types }
+        if ((pd.typ in [recorddef,objectdef]) and
+            (
+              not assigned(tabstractrecorddef(pd).objrealname) or
+              (tabstractrecorddef(pd).objrealname^='')
+            )
+           ) or
+           not assigned(pd.typesym) then
+          exit;
+        { if pd is defined inside a procedure we must not use make_mangledname
+          (as a helper may not be defined in a procedure this is no problem...)}
+        st:=pd.owner;
+        while st.symtabletype in [objectsymtable,recordsymtable] do
+          st:=st.defowner.owner;
+        if st.symtabletype=localsymtable then
+          exit;
+        { the mangled name is used as the key for tmodule.extendeddefs }
+        s:=generate_objectpascal_helper_key(pd);
+        list:=TFPObjectList(current_module.extendeddefs.Find(s));
+        if assigned(list) and (list.count>0) then
+          begin
+            i:=list.count-1;
+            repeat
+              odef:=tobjectdef(list[{list.count-1}i]);
+              result:=(odef.owner.symtabletype in [staticsymtable,globalsymtable]) or
+                      is_visible_for_object(tobjectdef(list[i]).typesym,contextclassh);
+              if result then
+                result := search_objectdef(name,odef,contextclassh,srsym,srsymtable);
+              dec(i);
+            until result or (i<0);
+          end;
+      end;
+
     function search_last_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;out odef : tobjectdef):boolean;
       var
         s: string;
@@ -4019,72 +4113,41 @@ implementation
       end;
 
     function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
-
       var
-        hashedid  : THashedIDString;
         classh : tobjectdef;
-        i : integer;
-        pdef : tprocdef;
       begin
         result:=false;
 
         { if there is no class helper for the class then there is no need to
           search further }
-        if not search_last_objectpascal_helper(pd,contextclassh,classh) then
-          exit;
+        // note: ryan
+        if m_multiscope_helpers in current_settings.modeswitches then
+          begin
+            result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable);
+          end
+        else
+          begin
+            if search_last_objectpascal_helper(pd,contextclassh,classh) and
+               search_objectdef(s,classh,contextclassh,srsym,srsymtable) then
+                result:=true;
+          end;
 
-        hashedid.id:=s;
-
-        repeat
-          srsymtable:=classh.symtable;
-          srsym:=tsym(srsymtable.FindWithHash(hashedid));
-
-          if srsym<>nil then
-            begin
-              case srsym.typ of
-                procsym:
-                  begin
-                    for i:=0 to tprocsym(srsym).procdeflist.count-1 do
-                      begin
-                        pdef:=tprocdef(tprocsym(srsym).procdeflist[i]);
-                        if not is_visible_for_object(pdef.owner,pdef.visibility,contextclassh) then
-                          continue;
-                        { we need to know if a procedure references symbols
-                          in the static symtable, because then it can't be
-                          inlined from outside this unit }
-                        if assigned(current_procinfo) and
-                           (srsym.owner.symtabletype=staticsymtable) then
-                          include(current_procinfo.flags,pi_uses_static_symtable);
-                        { the first found method wins }
-                        srsym:=tprocdef(tprocsym(srsym).procdeflist[i]).procsym;
-                        srsymtable:=srsym.owner;
-                        addsymref(srsym);
-                        result:=true;
-                        exit;
-                      end;
-                  end;
-                typesym,
-                fieldvarsym,
-                constsym,
-                enumsym,
-                undefinedsym,
-                propertysym:
-                  begin
-                    addsymref(srsym);
-                    result:=true;
-                    exit;
-                  end;
-                else
-                  internalerror(2014041101);
-              end;
-            end;
-
-          { try the helper parent if available }
-          classh:=classh.childof;
-        until classh=nil;
-
-        srsym:=nil;
-        srsymtable:=nil;
+        if result then
+          begin
+            { we need to know if a procedure references symbols
+              in the static symtable, because then it can't be
+              inlined from outside this unit }
+            if (srsym.typ = procsym) and
+               assigned(current_procinfo) and
+               (srsym.owner.symtabletype=staticsymtable) then
+              include(current_procinfo.flags,pi_uses_static_symtable);
+            addsymref(srsym);
+          end
+        else
+          begin
+            srsym:=nil;
+            srsymtable:=nil;
+          end;
       end;
 
     function search_objc_helper(pd : tobjectdef;const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
