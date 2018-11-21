@@ -4055,7 +4055,7 @@ implementation
           begin
             i:=list.count-1;
             repeat
-              odef:=tobjectdef(list[{list.count-1}i]);
+              odef:=tobjectdef(list[i]);
               result:=(odef.owner.symtabletype in [staticsymtable,globalsymtable]) or
                       is_visible_for_object(tobjectdef(list[i]).typesym,contextclassh);
               if result then
