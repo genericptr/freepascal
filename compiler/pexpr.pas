@@ -962,148 +962,6 @@ implementation
          end;
       end;
 
-    // note: ryan
-    function find_best_helper_candidate_for_proc(para:tnode;var procsym: tprocsym;symtable: tsymtable;callnodeflags: tcallnodeflags;spezcontext: tspecializationcontext; var obj: tabstractrecorddef): boolean;
-      function find_best_candidate(para:tnode;var procsym: tprocsym;structh: tabstractrecorddef;callnodeflags: tcallnodeflags;spezcontext: tspecializationcontext): boolean;
-        var
-          candidates : tcallcandidates;
-          ignorevisibility : boolean;
-          bestpd:tabstractprocdef;
-          srsym:tsym;
-          srsymtable:TSymtable;
-        begin
-          result := false;
-          // todo: in defaultprops I think we messed up by not using search_struct_member_no_helper
-          // so overloads are probably broken in classes
-
-          { procsym is not from the correct def so we need to search again for it }
-          if (structh.typ = objectdef) and not searchsym_in_helper(tobjectdef(structh),tobjectdef(structh),upper(procsym.realname),srsym,srsymtable,[ssf_no_addsymref]) {and (srsym.typ = procsym) }then
-            exit;
-
-          { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
-          ignorevisibility:=((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
-                            (cnf_ignore_visibility in callnodeflags);
-          candidates:=tcallcandidates.create({procsym,structh.symtable}tprocsym(srsym),srsymtable,para,ignorevisibility,
-            {allowdefaultparas}true,cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
-            {callnodeflags*[cnf_anon_inherited,cnf_inherited]=[]}false,cnf_anon_inherited in callnodeflags,spezcontext);
-          if candidates.count > 0 then
-            begin
-              candidates.get_information;
-              result := candidates.choose_best(bestpd, false) > 0;
-              if result then
-                procsym := tprocsym(srsym);
-            end;
-          candidates.free;
-        end;
-      var
-        propsym: tpropertysym;
-        i: integer;
-        structh: tabstractrecorddef;
-        pd:tdef;
-        st:tsymtable;
-        list: TFPObjectList;
-        s:string;
-        odef:tobjectdef;
-      begin
-        result:=false;
-        // note: TEMPORARY
-        pd := obj;
-        { when there are no helpers active currently then we don't need to do
-          anything }
-        if current_module.extendeddefs.count=0 then
-          exit;
-        { no helpers for anonymous types }
-        if ((pd.typ in [recorddef,objectdef]) and
-            (
-              not assigned(tabstractrecorddef(pd).objrealname) or
-              (tabstractrecorddef(pd).objrealname^='')
-            )
-           ) or
-           not assigned(pd.typesym) then
-          exit;
-        { if pd is defined inside a procedure we must not use make_mangledname
-          (as a helper may not be defined in a procedure this is no problem...)}
-        st:=pd.owner;
-        while st.symtabletype in [objectsymtable,recordsymtable] do
-          st:=st.defowner.owner;
-        if st.symtabletype=localsymtable then
-          exit;
-        { the mangled name is used as the key for tmodule.extendeddefs }
-        s:=generate_objectpascal_helper_key(pd);
-        list:=TFPObjectList(current_module.extendeddefs.Find(s));
-        if assigned(list) and (list.count>0) then
-          begin
-            i:=list.count-1;
-            repeat
-              odef:=tobjectdef(list[i]);
-              result:=(odef.owner.symtabletype in [staticsymtable,globalsymtable]) or
-                      is_visible_for_object(tobjectdef(list[i]).typesym,{contextclassh}obj); // note: what is context here?
-              if result then
-                begin
-                  result := find_best_candidate(para,procsym,odef,callnodeflags,spezcontext);
-                  if result then
-                    obj := odef;
-                end;
-              dec(i);
-            until result or (i<0);
-          end;
-      end;
-
-(*
-    function find_best_candidate_for_operator(p1, p2: tnode; optoken: ttoken; access: tpropaccesslisttypes; var obj: tabstractrecorddef; out propsym: tpropertysym): boolean;
-      function find_operator(fromdef: tabstractrecorddef; optoken: ttoken; right:tnode): boolean;
-        var
-          candidates : tcallcandidates;
-          ppn : tcallparanode;
-          bestpd: tabstractprocdef;
-        begin
-          result := false;
-          // todo: _ASSIGNMENT, _OP_EXPLICIT aren't searchable!
-          ppn:=ccallparanode.create(right.getcopy,ccallparanode.create(ttypenode.create(fromdef),nil));
-          ppn.get_paratype;
-          candidates:=tcallcandidates.create_operator(optoken,ppn);
-          if candidates.count > 0 then
-            begin
-              candidates.get_information;
-              result := candidates.choose_best(bestpd,false) > 0;
-            end;
-          ppn.free;
-          candidates.free;
-        end;
-      var
-        i: integer;
-        structh: tabstractrecorddef;
-      begin
-        result := false;
-        { search base first and if there's a matching operator then stop }
-        if find_operator(obj, optoken, p2) then
-          exit;
-        { search default properties }
-        for i := high(obj.default_props) downto 0 do
-          begin
-            propsym := tpropertysym(obj.default_props[i]);
-            { property is not default }
-            if not (ppo_defaultproperty in propsym.propoptions) then
-              continue;
-            { property doesn't have required access }
-            if propsym.propaccesslist[access].firstsym = nil then
-              continue;
-            structh := tabstractrecorddef(propsym.propdef);
-            if (structh.typ in [recorddef, objectdef]) and find_operator(structh, optoken, p2) then
-              begin
-                obj := structh;
-                exit(true);
-              end;
-            { compare property def with right node result def }
-            if (compare_defs(structh,p2.resultdef,p1.nodetype)>=te_convert_l6) then
-              begin
-                obj := structh;
-                exit(true);
-              end;
-          end;
-      end;
-*)
-
     { reads the parameter for a subroutine call }
     procedure do_proc_call(sym:tsym;st:TSymtable;obj:tabstractrecorddef;getaddr:boolean;var again : boolean;var p1:tnode;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
       var
@@ -1240,16 +1098,6 @@ implementation
                begin
                  if not (st.symtabletype in [ObjectSymtable,recordsymtable]) then
                    internalerror(200310031);
-                 // note: ryan
-                 { there may be an overloaded method which matches the 
-                   params which are available now. }
-                 if (m_multiscope_helpers in current_settings.modeswitches) then
-                   begin
-                     if assigned(para) and not assigned(para.resultdef) then
-                       tcallparanode(para).get_paratype;
-                     if find_best_helper_candidate_for_proc(para,tprocsym(sym),obj.symtable,callflags,spezcontext,obj) then
-                       ;//writeln('find_best_helper_candidate_for_proc:',obj.typesym.realname);
-                   end;
                  p1:=ccallnode.create(para,tprocsym(sym),obj.symtable,p1,callflags,spezcontext);
                end
              else
@@ -2083,7 +1931,8 @@ implementation
                   def:=voidpointertype
                 else
                   def:=node.resultdef;
-              result:=search_objectpascal_helper(def,nil,pattern,srsym,srsymtable);
+              { allow multiscope searches }
+              result:=search_objectpascal_helper(def,nil,false,pattern,srsym,srsymtable);
               if result then
                 begin
                   if not (srsymtable.symtabletype=objectsymtable) or

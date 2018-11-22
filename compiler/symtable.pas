@@ -358,7 +358,7 @@ interface
     function  search_last_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;out odef : tobjectdef):boolean;
     { searches whether the symbol s is available in the currently active }
     { helper for pd }
-    function  search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
+    function  search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;lastonly : boolean;const s : string;out srsym: tsym; out srsymtable: tsymtable):boolean;
     function  search_objc_helper(pd : tobjectdef;const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
     function  search_objc_method(const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
     {Looks for macro s (must be given in upper case) in the macrosymbolstack, }
@@ -368,6 +368,9 @@ interface
     { actually defined (could be disable using "undef")                     }
     function  defined_macro(const s : string):boolean;
     { Look for a system procedure (no overloads supported) }
+    // note: ryan
+    { returns a list of helpers in the current module for the def }
+    function get_objectpascal_helpers(pd : tdef):TFPObjectList;
 
 {*** Object Helpers ***}
     function search_default_property(pd : tabstractrecorddef) : tpropertysym;
@@ -3569,7 +3572,7 @@ implementation
                 if (classh.objecttype in objecttypes_with_helpers) and
                     (ssf_search_helper in flags) then
                   begin
-                    result:=search_objectpascal_helper(classh,contextclassh,s,srsym,srsymtable);
+                    result:=search_objectpascal_helper(classh,contextclassh,true,s,srsym,srsymtable);
                     { an eventual overload inside the extended type's hierarchy
                       will be found by tcallcandidates }
                     if result then
@@ -3604,7 +3607,7 @@ implementation
         result:=false;
         hashedid.id:=s;
         { search for a record helper method first }
-        result:=search_objectpascal_helper(recordh,recordh,s,srsym,srsymtable);
+        result:=search_objectpascal_helper(recordh,recordh,false,s,srsym,srsymtable);
         if result then
           { an eventual overload inside the extended type's hierarchy
             will be found by tcallcandidates }
@@ -4019,15 +4022,13 @@ implementation
         until classh=nil;
       end;
 
-    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable):boolean;
+    // note: ryan
+    function get_objectpascal_helpers(pd : tdef):TFPObjectList;
       var
         s: string;
-        list: TFPObjectList;
-        i: integer;
         st: tsymtable;
-        odef : tobjectdef;
       begin
-        result:=false;
+        result:=nil;
         { when there are no helpers active currently then we don't need to do
           anything }
         if current_module.extendeddefs.count=0 then
@@ -4050,7 +4051,19 @@ implementation
           exit;
         { the mangled name is used as the key for tmodule.extendeddefs }
         s:=generate_objectpascal_helper_key(pd);
-        list:=TFPObjectList(current_module.extendeddefs.Find(s));
+        result:=TFPObjectList(current_module.extendeddefs.Find(s));
+      end;
+
+    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable):boolean;
+      var
+        s: string;
+        list: TFPObjectList;
+        i: integer;
+        st: tsymtable;
+        odef : tobjectdef;
+      begin
+        result:=false;
+        list:=get_objectpascal_helpers(pd);
         if assigned(list) and (list.count>0) then
           begin
             i:=list.count-1;
@@ -4070,33 +4083,10 @@ implementation
         s: string;
         list: TFPObjectList;
         i: integer;
-        st: tsymtable;
       begin
         result:=false;
         odef:=nil;
-        { when there are no helpers active currently then we don't need to do
-          anything }
-        if current_module.extendeddefs.count=0 then
-          exit;
-        { no helpers for anonymous types }
-        if ((pd.typ in [recorddef,objectdef]) and
-            (
-              not assigned(tabstractrecorddef(pd).objrealname) or
-              (tabstractrecorddef(pd).objrealname^='')
-            )
-           ) or
-           not assigned(pd.typesym) then
-          exit;
-        { if pd is defined inside a procedure we must not use make_mangledname
-          (as a helper may not be defined in a procedure this is no problem...)}
-        st:=pd.owner;
-        while st.symtabletype in [objectsymtable,recordsymtable] do
-          st:=st.defowner.owner;
-        if st.symtabletype=localsymtable then
-          exit;
-        { the mangled name is used as the key for tmodule.extendeddefs }
-        s:=generate_objectpascal_helper_key(pd);
-        list:=TFPObjectList(current_module.extendeddefs.Find(s));
+        list:=get_objectpascal_helpers(pd);
         if assigned(list) and (list.count>0) then
           begin
             i:=list.count-1;
@@ -4112,7 +4102,7 @@ implementation
           end;
       end;
 
-    function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
+    function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;lastonly : boolean;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
       var
         classh : tobjectdef;
       begin
@@ -4121,10 +4111,8 @@ implementation
         { if there is no class helper for the class then there is no need to
           search further }
         // note: ryan
-        if m_multiscope_helpers in current_settings.modeswitches then
-          begin
-            result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable);
-          end
+        if not lastonly and (m_multiscope_helpers in current_settings.modeswitches) then
+          result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
         else
           begin
             if search_last_objectpascal_helper(pd,contextclassh,classh) and
@@ -4274,7 +4262,7 @@ implementation
         if (oo_is_formal in pd.objectoptions) then
           pd:=find_real_class_definition(tobjectdef(pd),true);
 
-        if search_objectpascal_helper(pd, pd, s, result, srsymtable) then
+        if search_objectpascal_helper(pd, pd, true, s, result, srsymtable) then
           exit;
 
         result:=search_struct_member_no_helper(pd,s);
