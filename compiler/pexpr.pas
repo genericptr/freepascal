@@ -56,7 +56,7 @@ interface
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
     
     // note: ryan
-    { convert property symbol into read node }
+    { read property and convert to access node }
     function do_property_read(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;
 
     function get_intconst:TConstExprInt;
@@ -1121,6 +1121,8 @@ implementation
                    { generate access code }
                    if not handle_staticfield_access(sym,p1) then
                      propaccesslist_to_node(p1,st,propaccesslist);
+                   include(p1.flags,nf_isproperty);
+                   include(p1.flags,nf_no_lvalue);
                    result := tabstractrecorddef(tpropertysym(propsym).propdef);
                  end;
                procsym :
@@ -1131,6 +1133,7 @@ implementation
                     if membercall then
                       include(callflags,cnf_member_call);
                     p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                    include(p1.flags,nf_isproperty);
                     result := tabstractrecorddef(tpropertysym(propsym).propdef);
                  end
                else
@@ -1155,7 +1158,7 @@ implementation
       begin
         if not assigned(p1) or not assigned(p1.resultdef) then
           exit;
-        if is_class_or_object(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then
+        if is_struct(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then
           begin
             if p2.resultdef = nil then
               do_typecheckpass(p2);
@@ -1310,7 +1313,7 @@ implementation
                  // note: ryan
                  { now that we have params parsed, if the struct has default properties 
                    then search for available overloads in default properties }
-                  if assigned(st) and is_class_or_object(tdef(st.defowner)) and tabstractrecorddef(st.defowner).has_default_property_access then
+                  if assigned(st) and is_struct(tdef(st.defowner)) and tabstractrecorddef(st.defowner).has_default_property_access then
                     begin
                       if assigned(para) and not assigned(para.resultdef) then
                         tcallparanode(para).get_paratype;
@@ -1377,7 +1380,7 @@ implementation
         propsym : tpropertysym;
         sym : tsym;
       begin
-        if (token = _ASSIGNMENT) and is_class_or_object(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
+        if (token = _ASSIGNMENT) and is_struct(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
           begin
             def := tabstractrecorddef(p1.resultdef);
             st := def.symtable;
@@ -2367,7 +2370,7 @@ implementation
                          begin
                            // note: ryan
                            { search the default propery for [] overload }
-                           if (ppo_defaultproperty in protsym.propoptions) and is_class_or_object(protsym.propdef) then
+                           if (ppo_defaultproperty in protsym.propoptions) and is_struct(protsym.propdef) then
                              begin
                                srsym:=search_default_property(tabstractrecorddef(protsym.propdef));
                                if assigned(srsym) and (ppo_hasparameters in tpropertysym(srsym).propoptions) then

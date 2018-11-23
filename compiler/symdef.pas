@@ -1202,6 +1202,8 @@ interface
     function is_implicit_array_pointer(def: tdef): boolean;
     function is_class_or_object(def: tdef): boolean;
     function is_record(def: tdef): boolean;
+    { "struct" is any: class, object or record }
+    function is_struct(def:TDefEntry): boolean;
 
     function is_javaclass(def: tdef): boolean;
     function is_javaclassref(def: tdef): boolean;
@@ -8248,6 +8250,11 @@ implementation
         result:=
           assigned(def) and
           (def.typ=recorddef);
+      end;
+
+    function is_struct (def:TDefEntry): boolean;
+      begin
+        result := def.typ in [objectdef,recorddef];
       end;
 
     function is_javaclass(def: tdef): boolean;
