@@ -1155,7 +1155,7 @@ implementation
       begin
         if not assigned(p1) or not assigned(p1.resultdef) then
           exit;
-        if (p1.resultdef.typ in [objectdef, recorddef]) and tabstractrecorddef(p1.resultdef).has_default_property_access then
+        if is_class_or_object(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then
           begin
             if p2.resultdef = nil then
               do_typecheckpass(p2);
@@ -1310,7 +1310,7 @@ implementation
                  // note: ryan
                  { now that we have params parsed, if the struct has default properties 
                    then search for available overloads in default properties }
-                  if assigned(st) and (st.defowner.typ in [objectdef,recorddef]) and tabstractrecorddef(st.defowner).has_default_property_access then
+                  if assigned(st) and is_class_or_object(tdef(st.defowner)) and tabstractrecorddef(st.defowner).has_default_property_access then
                     begin
                       if assigned(para) and not assigned(para.resultdef) then
                         tcallparanode(para).get_paratype;
@@ -1377,7 +1377,7 @@ implementation
         propsym : tpropertysym;
         sym : tsym;
       begin
-        if (token = _ASSIGNMENT) and (p1.resultdef.typ in [objectdef, recorddef]) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
+        if (token = _ASSIGNMENT) and is_class_or_object(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
           begin
             def := tabstractrecorddef(p1.resultdef);
             st := def.symtable;
@@ -2365,11 +2365,22 @@ implementation
                        { handle default arrays }
                        if not (ppo_hasparameters in protsym.propoptions) then
                          begin
-                           if not protsym.is_default_array then
-                             message(parser_e_no_default_property_available)
-                           else
-                             { the default property is an array so allow l-values }
-                             exclude(p1.flags,nf_no_lvalue);
+                           // note: ryan
+                           { search the default propery for [] overload }
+                           if (ppo_defaultproperty in protsym.propoptions) and is_class_or_object(protsym.propdef) then
+                             begin
+                               srsym:=search_default_property(tabstractrecorddef(protsym.propdef));
+                               if assigned(srsym) and (ppo_hasparameters in tpropertysym(srsym).propoptions) then
+                                 protsym:=nil;
+                             end;
+                           if assigned(protsym) then
+                             begin
+                               if not protsym.is_default_array then
+                                 message(parser_e_no_default_property_available)
+                               else
+                                 { the default property is an array so allow l-values }
+                                 exclude(p1.flags,nf_no_lvalue);
+                             end;
                          end;
                      end;
                  end
