@@ -1121,8 +1121,6 @@ implementation
                    { generate access code }
                    if not handle_staticfield_access(sym,p1) then
                      propaccesslist_to_node(p1,st,propaccesslist);
-                   include(p1.flags,nf_isproperty);
-                   include(p1.flags,nf_no_lvalue);
                    result := tabstractrecorddef(tpropertysym(propsym).propdef);
                  end;
                procsym :
@@ -1133,7 +1131,6 @@ implementation
                     if membercall then
                       include(callflags,cnf_member_call);
                     p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
-                    include(p1.flags,nf_isproperty);
                     result := tabstractrecorddef(tpropertysym(propsym).propdef);
                  end
                else
