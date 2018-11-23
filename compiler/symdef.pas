@@ -4124,8 +4124,22 @@ implementation
       end;
 
     function tabstractrecorddef.has_default_property_access: boolean;
+      var
+        pd:tabstractrecorddef;
       begin
-        result := Length(default_props) > 0;
+        result := false;
+        pd:=self;
+        while assigned(pd) do
+         begin
+            result := length(pd.default_props) > 0;
+            if result then
+              exit(true);
+            if pd.typ=objectdef then
+              pd:=tobjectdef(pd).childof
+            else
+              pd:=nil;
+          end;
+        //result := Length(default_props) > 0;
       end;
 
     function tabstractrecorddef.RttiName: string;
