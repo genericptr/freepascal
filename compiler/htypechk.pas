@@ -2290,7 +2290,6 @@ implementation
                )
                and searchhelpers then
              begin
-               // note: ryan
                if (m_multiscope_helpers in current_settings.modeswitches) then
                  begin
                    helperlist:=get_objectpascal_helpers(structdef);
@@ -2300,7 +2299,7 @@ implementation
                        repeat
                          helperdef:=tobjectdef(helperlist[i]);
                          if (helperdef.owner.symtabletype in [staticsymtable,globalsymtable]) or
-                            is_visible_for_object(helperdef.typesym,{structdef}helperdef) then
+                            is_visible_for_object(helperdef.typesym,helperdef) then
                               if processhelper(hashedid,helperdef) then
                                 exit;
                          dec(i);
@@ -2309,28 +2308,6 @@ implementation
                  end
                else if search_last_objectpascal_helper(structdef,nil,helperdef) and processhelper(hashedid,helperdef) then
                   exit;
-
-               //if processhelper then
-               //  begin
-               //    srsym:=nil;
-               //    while assigned(helperdef) do
-               //      begin
-               //        srsym:=tsym(helperdef.symtable.FindWithHash(hashedid));
-               //        if assigned(srsym) and
-               //            { Delphi allows hiding a property by a procedure with the same name }
-               //            (srsym.typ=procsym) then
-               //          begin
-               //            hasoverload:=processprocsym(tprocsym(srsym),foundanything);
-               //            { when there is no explicit overload we stop searching }
-               //            if foundanything and
-               //               not hasoverload then
-               //              break;
-               //          end;
-               //        helperdef:=helperdef.childof;
-               //      end;
-               //    if not hasoverload and assigned(srsym) then
-               //      exit;
-               //  end;
              end;
            { now search in the type itself }
            srsym:=tsym(structdef.symtable.FindWithHash(hashedid));

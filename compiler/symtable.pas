@@ -368,7 +368,6 @@ interface
     { actually defined (could be disable using "undef")                     }
     function  defined_macro(const s : string):boolean;
     { Look for a system procedure (no overloads supported) }
-    // note: ryan
     { returns a list of helpers in the current module for the def }
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
 
@@ -3974,7 +3973,6 @@ implementation
           end;
       end;
 
-    // note: ryan
     function search_objectdef(const s: string;classh : tobjectdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable): boolean;
       var
         hashedid  : THashedIDString;
@@ -4022,7 +4020,6 @@ implementation
         until classh=nil;
       end;
 
-    // note: ryan
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
       var
         s: string;
@@ -4110,7 +4107,6 @@ implementation
 
         { if there is no class helper for the class then there is no need to
           search further }
-        // note: ryan
         if not lastonly and (m_multiscope_helpers in current_settings.modeswitches) then
           result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
         else
