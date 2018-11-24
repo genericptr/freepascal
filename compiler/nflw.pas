@@ -930,7 +930,7 @@ implementation
                   begin
                     // note: ryan
                     { search default properties for compiler type that supports enumeration }
-                    if (expr.resultdef.typ in [objectdef,recorddef]) then
+                    if is_struct(expr.resultdef) then
                       begin
                         structh := tabstractrecorddef(expr.resultdef);
                         if structh.has_default_property_access then
@@ -946,7 +946,7 @@ implementation
                               { property doesn't support enumeration }
                               if not (propsym.propdef.typ in [stringdef,arraydef,setdef]) then
                                 continue;
-                              do_property_read(propsym,structh.symtable,expr);
+                              handle_default_read_property(propsym,structh.symtable,expr);
                               if expr.resultdef = nil then
                                 do_typecheckpass(expr);
                             end;

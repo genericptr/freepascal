@@ -55,9 +55,7 @@ interface
     { the ID token has to be consumed before calling this function }
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
     
-    // note: ryan
-    { read property and convert to access node }
-    function do_property_read(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;
+    function handle_default_read_property(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;
 
     function get_intconst:TConstExprInt;
     function get_stringconst:string;
@@ -969,6 +967,9 @@ implementation
       end;
 
     // note: ryan
+    { searches the struct for procs that match the paramater node.
+      the base struct is searched first (bottom to top) then subsequent
+      default properties are searched next. }
     function find_best_candidate_for_proc(para:tnode; var procsym: tprocsym; symtable: tsymtable; callnodeflags: tcallnodeflags; spezcontext: tspecializationcontext; var obj: tabstractrecorddef; var foundprop: tpropertysym): boolean;
       function process_procsym(para:tnode; var procsym: tprocsym; structh: tabstractrecorddef; callnodeflags: tcallnodeflags; spezcontext: tspecializationcontext): boolean;
         var
@@ -1051,6 +1052,10 @@ implementation
           end;
       end;
 
+    { searches the record for operator overoads given left/right node pair.
+      the base record is searched first followed by default properties.
+
+      TODO: assignment operators are not working yet (see tcallcandidates.create_operator) }
     function find_best_candidate_for_operator(p1, p2: tnode; optoken: ttoken; access: tpropaccesslisttypes; var obj: tabstractrecorddef; out propsym: tpropertysym): boolean;
       function process_operator(fromdef: tabstractrecorddef; optoken: ttoken; right:tnode): boolean;
         var
@@ -1104,48 +1109,15 @@ implementation
           end;
       end;
 
-    function do_property_read(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;
-      var
-        membercall : boolean;
-        callflags  : tcallnodeflags;
-        propaccesslist : tpropaccesslist;
-        sym: tsym;
+    procedure handle_procvar(pv : tprocvardef;var p2 : tnode);forward;
+    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault:boolean;var p1 : tnode);forward;
+
+    { takes read property and converts to access node.
+      this function is only used for default properties. }
+    function handle_default_read_property(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;inline;
       begin
-        result := nil;
-        if tpropertysym(propsym).getpropaccesslist(palt_read,propaccesslist) then
-          begin
-             sym := propaccesslist.firstsym^.sym;
-             case sym.typ of
-               fieldvarsym :
-                 begin
-                   { generate access code }
-                   if not handle_staticfield_access(sym,p1) then
-                     propaccesslist_to_node(p1,st,propaccesslist);
-                   result := tabstractrecorddef(tpropertysym(propsym).propdef);
-                 end;
-               procsym :
-                 begin
-                    callflags:=[];
-                    { generate the method call }
-                    membercall:=maybe_load_methodpointer(st,p1);
-                    if membercall then
-                      include(callflags,cnf_member_call);
-                    p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
-                    result := tabstractrecorddef(tpropertysym(propsym).propdef);
-                 end
-               else
-                 begin
-                    p1:=cerrornode.create;
-                    Message(type_e_mismatch);
-                 end;
-            end;
-          end
-        else
-          begin
-             { error, no function to read property }
-             p1:=cerrornode.create;
-             Message(parser_e_no_procedure_to_access_property);
-          end;
+        handle_propertysym(tpropertysym(propsym),st,true,p1);
+        result := tabstractrecorddef(tpropertysym(propsym).propdef);
       end;
 
     procedure handle_default_operator (var p1: tnode; p2: tnode; access: tpropaccesslisttypes; optoken: ttoken);
@@ -1165,7 +1137,7 @@ implementation
                 { c style operators can't use defaults }
                 //if (optoken in [_PLUS, _MINUS, _STAR, _SLASH]) then
                 //  exit;
-                do_property_read(propsym,operdef.symtable,p1);
+                handle_default_read_property(propsym,operdef.symtable,p1);
               end;
           end;
       end;
@@ -1309,14 +1281,21 @@ implementation
                    internalerror(200310031);
                  // note: ryan
                  { now that we have params parsed, if the struct has default properties 
-                   then search for available overloads in default properties }
-                  if assigned(st) and is_struct(tdef(st.defowner)) and tabstractrecorddef(st.defowner).has_default_property_access then
+                   then search for available overloads in default properties.
+                   
+                   AFAIK we need to search here before the call node is created because
+                   if we search in tcallcandidates during typecheck we won't be able
+                   to insert the property node (using handle_default_read_property).
+
+                   if this isn't true then ideally we resolve the node in do_member_read
+                   after do_proc_call. }
+                  if assigned(st) and is_struct(st.defowner) and tabstractrecorddef(st.defowner).has_default_property_access then
                     begin
                       if assigned(para) and not assigned(para.resultdef) then
                         tcallparanode(para).get_paratype;
                       obj := tabstractrecorddef(st.defowner);
                       if find_best_candidate_for_proc(para,tprocsym(sym),st,callflags,spezcontext,obj,propsym) then
-                        do_property_read(propsym,obj.symtable, p1);
+                        handle_default_read_property(propsym,obj.symtable,p1);
                     end;
                  p1:=ccallnode.create(para,tprocsym(sym),obj.symtable,p1,callflags,spezcontext);
                end
@@ -1365,84 +1344,15 @@ implementation
          end;
       end;
 
-    // note: ryan
-    procedure handle_default_assign(var p1 : tnode);
-      var
-        p2 : tnode;
-        def : tabstractrecorddef;
-        st : tsymtable;
-        membercall : boolean;
-        callflags  : tcallnodeflags;
-        propaccesslist : tpropaccesslist;
-        propsym : tpropertysym;
-        sym : tsym;
-      begin
-        if (token = _ASSIGNMENT) and is_struct(p1.resultdef) and tabstractrecorddef(p1.resultdef).has_default_property_access then 
-          begin
-            def := tabstractrecorddef(p1.resultdef);
-            st := def.symtable;
-            propsym := tpropertysym(def.default_write_prop);
-            { no default write property }
-            if propsym = nil then
-              exit;
-            if propsym.getpropaccesslist(palt_write,propaccesslist) then
-              begin
-                sym:=propaccesslist.firstsym^.sym;
-                case sym.typ of
-                  procsym :
-                    begin
-                      callflags:=[];
-                      { generate the method call }
-                      membercall:=maybe_load_methodpointer(st,p1);
-                      if membercall then
-                        include(callflags,cnf_member_call);
-                      addsymref(sym);
-                      consume(_ASSIGNMENT);
-                      { read the expression }
-                      if propsym.propdef.typ=procvardef then
-                        getprocvardef:=tprocvardef(propsym.propdef);
-                      p2:=comp_expr([ef_accept_equal]);
-                      if assigned(getprocvardef) then
-                        handle_procvar(getprocvardef,p2);
-                      getprocvardef:=nil;
-                      { if p2 result is convertable to property def then insert property node }
-                      if not equal_defs(def,p2.resultdef) then
-                        begin
-                          p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
-                          tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
-                          include(p1.flags,nf_isproperty);
-                        end
-                      else
-                        begin
-                          p1:=cassignmentnode.create(p1,p2);
-                        end;
-                    end;
-                  fieldvarsym :
-                    begin
-                      consume(_ASSIGNMENT);
-                      { read the expression }
-                      p2:=comp_expr([ef_accept_equal]);
-                      { if p2 result is convertable to property def then insert property node }
-                      if not equal_defs(def,p2.resultdef) then
-                        begin
-                          if not handle_staticfield_access(sym,p1) then
-                            propaccesslist_to_node(p1,st,propaccesslist);
-                          include(p1.flags,nf_isproperty);
-                        end;
-                      p1:=cassignmentnode.create(p1,p2);
-                    end
-                  else
-                    begin
-                      p1:=cerrornode.create;
-                      Message(parser_e_no_procedure_to_access_property);
-                    end;
-                end;
-              end;
-          end;
-      end;
-
     { the following procedure handles the access to a property symbol }
-    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;var p1 : tnode);
+
+    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault:boolean;var p1 : tnode);
+      { returns true if p2 resultdef should be handled as a default assignment,
+        i.e. without invoking the default property. }
+      function should_default_assign(p2: tnode): boolean;
+        begin
+          result := equal_defs(tabstractrecorddef(propsym.owner.defowner),p2.resultdef);
+        end;
       var
          paras : tnode;
          p2    : tnode;
@@ -1478,36 +1388,81 @@ implementation
                    case sym.typ of
                      procsym :
                        begin
-                         callflags:=[];
-                         { generate the method call }
-                         membercall:=maybe_load_methodpointer(st,p1);
-                         if membercall then
-                           include(callflags,cnf_member_call);
-                         p1:=ccallnode.create(paras,tprocsym(sym),st,p1,callflags,nil);
-                         addsymref(sym);
-                         paras:=nil;
-                         consume(_ASSIGNMENT);
-                         { read the expression }
-                         if propsym.propdef.typ=procvardef then
-                           getprocvardef:=tprocvardef(propsym.propdef);
-                         p2:=comp_expr([ef_accept_equal]);
-                         if assigned(getprocvardef) then
-                           handle_procvar(getprocvardef,p2);
-                         tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
-                         { mark as property, both the tcallnode and the real call block }
-                         include(p1.flags,nf_isproperty);
-                         getprocvardef:=nil;
+                        callflags:=[];
+                        { generate the method call }
+                        membercall:=maybe_load_methodpointer(st,p1);
+                        if membercall then
+                          include(callflags,cnf_member_call);
+
+                         if isdefault then
+                           begin
+                             consume(_ASSIGNMENT);
+                             { read the expression }
+                             if propsym.propdef.typ=procvardef then
+                               getprocvardef:=tprocvardef(propsym.propdef);
+                             p2:=comp_expr([ef_accept_equal]);
+                             if assigned(getprocvardef) then
+                               handle_procvar(getprocvardef,p2);
+                             getprocvardef:=nil;
+                             { if the r-hand value is compatible with the struct containing the default property
+                               then insert as default assignment so the struct can be copied/replaced }
+                             if not should_default_assign(p2) then
+                               begin
+                                 p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                                 addsymref(sym);
+                                 paras:=nil;
+                                 tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
+                                 include(p1.flags,nf_isproperty);
+                               end
+                             else
+                               p1:=cassignmentnode.create(p1,p2);
+                           end
+                          else
+                            begin
+                              p1:=ccallnode.create(paras,tprocsym(sym),st,p1,callflags,nil);
+                              addsymref(sym);
+                              paras:=nil;
+                              consume(_ASSIGNMENT);
+                              { read the expression }
+                              if propsym.propdef.typ=procvardef then
+                                getprocvardef:=tprocvardef(propsym.propdef);
+                              p2:=comp_expr([ef_accept_equal]);
+                              if assigned(getprocvardef) then
+                                handle_procvar(getprocvardef,p2);
+                              tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
+                              { mark as property, both the tcallnode and the real call block }
+                              include(p1.flags,nf_isproperty);
+                              getprocvardef:=nil;
+                            end;
                        end;
                      fieldvarsym :
                        begin
-                         { generate access code }
-                         if not handle_staticfield_access(sym,p1) then
-                           propaccesslist_to_node(p1,st,propaccesslist);
-                         include(p1.flags,nf_isproperty);
-                         consume(_ASSIGNMENT);
-                         { read the expression }
-                         p2:=comp_expr([ef_accept_equal]);
-                         p1:=cassignmentnode.create(p1,p2);
+                         if isdefault then
+                           begin
+                             consume(_ASSIGNMENT);
+                             { read the expression }
+                             p2:=comp_expr([ef_accept_equal]);
+                             { if the r-hand value is compatible with the struct containing the default property
+                              then insert as default assignment so the struct can be copied/replaced }
+                             if not should_default_assign(p2) then
+                               begin
+                                 if not handle_staticfield_access(sym,p1) then
+                                   propaccesslist_to_node(p1,st,propaccesslist);
+                                 include(p1.flags,nf_isproperty);
+                               end;
+                             p1:=cassignmentnode.create(p1,p2);
+                           end
+                         else
+                           begin
+                              { generate access code }
+                              if not handle_staticfield_access(sym,p1) then
+                                propaccesslist_to_node(p1,st,propaccesslist);
+                              include(p1.flags,nf_isproperty);
+                              consume(_ASSIGNMENT);
+                              { read the expression }
+                              p2:=comp_expr([ef_accept_equal]);
+                              p1:=cassignmentnode.create(p1,p2);
+                           end;
                       end
                     else
                       begin
@@ -1533,9 +1488,12 @@ implementation
                          { generate access code }
                          if not handle_staticfield_access(sym,p1) then
                            propaccesslist_to_node(p1,st,propaccesslist);
-                         include(p1.flags,nf_isproperty);
-                         { catch expressions like "(propx):=1;" }
-                         include(p1.flags,nf_no_lvalue)
+                         if not isdefault then
+                           begin
+                             include(p1.flags,nf_isproperty);
+                             { catch expressions like "(propx):=1;" }
+                             include(p1.flags,nf_no_lvalue)
+                           end;
                        end;
                      procsym :
                        begin
@@ -1546,8 +1504,11 @@ implementation
                             include(callflags,cnf_member_call);
                           p1:=ccallnode.create(paras,tprocsym(sym),st,p1,callflags,nil);
                           paras:=nil;
-                          include(p1.flags,nf_isproperty);
-                          include(p1.flags,nf_no_lvalue);
+                          if not isdefault then
+                            begin
+                              include(p1.flags,nf_isproperty);
+                              include(p1.flags,nf_no_lvalue);
+                            end;
                        end
                      else
                        begin
@@ -1567,7 +1528,6 @@ implementation
         if assigned(paras) then
          paras.free;
       end;
-
 
     { the ID token has to be consumed before calling this function }
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
@@ -1667,7 +1627,7 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      handle_propertysym(tpropertysym(sym),sym.owner,p1);
+                      handle_propertysym(tpropertysym(sym),sym.owner,false,p1);
                    end;
                  typesym:
                    begin
@@ -2361,7 +2321,7 @@ implementation
                      begin
                        { The property symbol is referenced indirect }
                        protsym.IncRefCount;
-                       handle_propertysym(protsym,protsym.owner,p1);
+                       handle_propertysym(protsym,protsym.owner,false,p1);
                        { handle default arrays }
                        if not (ppo_hasparameters in protsym.propoptions) then
                          begin
@@ -2687,7 +2647,7 @@ implementation
                          { sym was found in default property so handle default read property }
                          if assigned(searchsym_found_default) then
                            begin
-                             structh:=do_property_read(searchsym_found_default,srsymtable,p1);
+                             structh:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
                              searchsym_found_default := nil;
                            end;
                          if erroroutp1 then
@@ -2904,7 +2864,7 @@ implementation
                           { sym was found in default property so handle default read property }
                           if assigned(searchsym_found_default) then
                             begin
-                              structh:=do_property_read(searchsym_found_default,srsymtable,p1);
+                              structh:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
                               searchsym_found_default := nil;
                             end;
                           if erroroutp1 then
@@ -3014,7 +2974,15 @@ implementation
               else
                 begin
                   // note: ryan
-                  handle_default_assign(p1);                  
+                  { if the node is a struct with default properties
+                    then we need to intercept the assignment here. }
+                  //handle_default_assign(p1);
+                  if (token = _ASSIGNMENT) and struct_has_property_access(p1.resultdef) then 
+                    begin
+                      structh:=tabstractrecorddef(p1.resultdef);
+                      if structh.default_write_prop <> nil then
+                        handle_propertysym(tpropertysym(structh.default_write_prop),structh.symtable,true,p1);
+                    end;
                   again:=false;
                 end;
              end;
@@ -3405,7 +3373,7 @@ implementation
                         { sym was found in default property so handle default read property }
                         if assigned(searchsym_found_default) then
                           begin
-                            hdef:=do_property_read(searchsym_found_default,srsymtable,p1);
+                            hdef:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
                             searchsym_found_default := nil;
                           end;
 
@@ -3513,7 +3481,7 @@ implementation
                           begin
                             if maybe_load_methodpointer(srsymtable,p1) then
                               include(callflags,cnf_member_call);
-                            do_property_read(searchsym_found_default,srsymtable,p1);
+                            handle_default_read_property(searchsym_found_default,srsymtable,p1);
                             searchsym_found_default := nil;
                           end;
 
@@ -3577,7 +3545,7 @@ implementation
                     else
                     { no method pointer }
                       begin
-                        handle_propertysym(tpropertysym(srsym),srsymtable,p1);
+                        handle_propertysym(tpropertysym(srsym),srsymtable,false,p1);
                       end;
                   end;
 

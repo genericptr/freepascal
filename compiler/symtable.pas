@@ -305,7 +305,9 @@ interface
        tsymbol_search_flags = set of tsymbol_search_flag;
 
     // note: ryan
-    // todo: using a global  here because i'm not sure if I can change the params to searchsym_in_xxx functions
+    { searchsym_found_default is set the default property found when calling searchsym_in_defaults()
+      using a global here in order to not change the params to searchsym_in_xxx functions
+      or introduce new fields into tsym }
     var
       searchsym_found_default: tpropertysym = nil;
 

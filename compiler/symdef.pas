@@ -1204,6 +1204,7 @@ interface
     function is_record(def: tdef): boolean;
     { "struct" is any: class, object or record }
     function is_struct(def:TDefEntry): boolean;
+    function struct_has_property_access(def: tdefentry): boolean;
 
     function is_javaclass(def: tdef): boolean;
     function is_javaclassref(def: tdef): boolean;
@@ -8255,6 +8256,11 @@ implementation
     function is_struct (def:TDefEntry): boolean;
       begin
         result := def.typ in [objectdef,recorddef];
+      end;
+
+    function struct_has_property_access(def: tdefentry): boolean;
+      begin
+        result := is_struct(def) and tabstractrecorddef(def).has_default_property_access;
       end;
 
     function is_javaclass(def: tdef): boolean;
