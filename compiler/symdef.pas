@@ -271,9 +271,7 @@ interface
        tabstractrecorddef= class(tstoreddef)
        private
           rttistring     : string;
-          // note: ryan
-          type tsearch_default_enumerator_callback = function(struct:tabstractrecorddef):tobject;
-          function search_default_enumerator(callback:tsearch_default_enumerator_callback):tobject;
+          function search_default_enumerator(method:pointer):tobject;
        public
           objname,
           objrealname    : PShortString;
@@ -4247,23 +4245,11 @@ implementation
       end;
 
     // note: ryan
-    // note: adding objects unit from rtl gave errors so using callbacks instead
-    function search_enumerator_get_callback(struct:tabstractrecorddef): tobject;
-    begin
-      result := struct.search_enumerator_get;
-    end;
+    { adding Objects unit gave errors so we're doing it manually }
+    type 
+      VoidMethod = function(target: pointer): pointer;
 
-    function search_enumerator_move_callback(struct:tabstractrecorddef): tobject;
-    begin
-      result := struct.search_enumerator_move;
-    end;
-
-    function search_enumerator_current_callback(struct:tabstractrecorddef): tobject;
-    begin
-      result := struct.search_enumerator_current;
-    end;
-
-    function tabstractrecorddef.search_default_enumerator(callback:tsearch_default_enumerator_callback):tobject;
+    function tabstractrecorddef.search_default_enumerator(method:pointer):tobject;
       var
         i : integer;
         pd : tprocdef;
@@ -4284,9 +4270,9 @@ implementation
               { property doesn't have read access }
               if propsym.propaccesslist[palt_read].firstsym = nil then
                 continue;
-              if propdef.typ in [recorddef, objectdef] then
+              if is_struct(propdef) then
                 begin
-                  res := callback(propdef);
+                  res := TObject(VoidMethod(method)(propdef));
                   if assigned(res) then
                     exit(res);
                 end;
@@ -4319,7 +4305,7 @@ implementation
           end;
         // note: ryan
         { search default properties }
-        pd := tprocdef(search_default_enumerator(@search_enumerator_get_callback));
+        pd := tprocdef(search_default_enumerator(@tabstractrecorddef.search_enumerator_get));
         if assigned(pd) then
           exit(pd);
       end;
@@ -4366,7 +4352,7 @@ implementation
           end;
         // note: ryan
         { search default properties }
-        pd := tprocdef(search_default_enumerator(@search_enumerator_move_callback));
+        pd := tprocdef(search_default_enumerator(@tabstractrecorddef.search_enumerator_move));
         if assigned(pd) then
           exit(pd);
       end;
@@ -4399,7 +4385,7 @@ implementation
           end;
         // note: ryan
         { search default properties }
-        sym := tsym(search_default_enumerator(@search_enumerator_current_callback));
+        sym := tsym(search_default_enumerator(@tabstractrecorddef.search_enumerator_current));
         if assigned(sym) then
           exit(sym);
       end;
