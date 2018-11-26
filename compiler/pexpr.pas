@@ -1932,7 +1932,7 @@ implementation
                 else
                   def:=node.resultdef;
               { allow multiscope searches }
-              result:=search_objectpascal_helper(def,nil,false,pattern,srsym,srsymtable);
+              result:=search_objectpascal_helper(def,nil,pattern,srsym,srsymtable);
               if result then
                 begin
                   if not (srsymtable.symtabletype=objectsymtable) or

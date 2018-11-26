@@ -358,7 +358,7 @@ interface
     function  search_last_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;out odef : tobjectdef):boolean;
     { searches whether the symbol s is available in the currently active }
     { helper for pd }
-    function  search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;lastonly : boolean;const s : string;out srsym: tsym; out srsymtable: tsymtable):boolean;
+    function  search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s : string;out srsym: tsym; out srsymtable: tsymtable):boolean;
     function  search_objc_helper(pd : tobjectdef;const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
     function  search_objc_method(const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
     {Looks for macro s (must be given in upper case) in the macrosymbolstack, }
@@ -3571,7 +3571,7 @@ implementation
                 if (classh.objecttype in objecttypes_with_helpers) and
                     (ssf_search_helper in flags) then
                   begin
-                    result:=search_objectpascal_helper(classh,contextclassh,true,s,srsym,srsymtable);
+                    result:=search_objectpascal_helper(classh,contextclassh,s,srsym,srsymtable);
                     { an eventual overload inside the extended type's hierarchy
                       will be found by tcallcandidates }
                     if result then
@@ -3606,7 +3606,7 @@ implementation
         result:=false;
         hashedid.id:=s;
         { search for a record helper method first }
-        result:=search_objectpascal_helper(recordh,recordh,false,s,srsym,srsymtable);
+        result:=search_objectpascal_helper(recordh,recordh,s,srsym,srsymtable);
         if result then
           { an eventual overload inside the extended type's hierarchy
             will be found by tcallcandidates }
@@ -4099,7 +4099,7 @@ implementation
           end;
       end;
 
-    function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;lastonly : boolean;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
+    function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
       var
         classh : tobjectdef;
       begin
@@ -4107,7 +4107,7 @@ implementation
 
         { if there is no class helper for the class then there is no need to
           search further }
-        if not lastonly and (m_multiscope_helpers in current_settings.modeswitches) then
+        if m_multiscope_helpers in current_settings.modeswitches then
           result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
         else
           begin
@@ -4258,7 +4258,7 @@ implementation
         if (oo_is_formal in pd.objectoptions) then
           pd:=find_real_class_definition(tobjectdef(pd),true);
 
-        if search_objectpascal_helper(pd, pd, true, s, result, srsymtable) then
+        if search_objectpascal_helper(pd, pd, s, result, srsymtable) then
           exit;
 
         result:=search_struct_member_no_helper(pd,s);
