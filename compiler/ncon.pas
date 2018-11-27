@@ -312,6 +312,8 @@ implementation
           constnil :
             p1:=cnilnode.create;
           // note: ryan
+          { constundefined is a placeholder for unrestricted generic const params
+            so we just treat it as a nil node. }
           constundefined :
             begin
               p1:=cnilnode.create;

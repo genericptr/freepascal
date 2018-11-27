@@ -155,10 +155,6 @@ interface
           typedef      : tdef;
           typedefderef : tderef;
           fprettyname : ansistring;
-          // note: ryan
-          { generic support }
-          is_const: boolean;
-          const_type: tdeftyp;
           constructor create(const n : string;def:tdef;doregister:boolean);virtual;
           destructor destroy;override;
           constructor ppuload(ppufile:tcompilerppufile);virtual;
@@ -168,9 +164,6 @@ interface
           procedure buildderef;override;
           procedure deref;override;
           function prettyname : string;override;
-          // note: ryan
-          { generic support }
-          function make_generic_parameter_sym(newname: string) : tsym; virtual;
        end;
        ttypesymclass = class of ttypesym;
 
@@ -2609,8 +2602,6 @@ implementation
          inherited ppuload(typesym,ppufile);
          ppufile.getderef(typedefderef);
          fprettyname:=ppufile.getansistring;
-         is_const:=ppufile.getboolean;
-         ppufile.getsmallset(const_type);
          ppuload_platform(ppufile);
       end;
 
@@ -2633,8 +2624,6 @@ implementation
          inherited ppuwrite(ppufile);
          ppufile.putderef(typedefderef);
          ppufile.putansistring(fprettyname);
-         ppufile.putboolean(is_const);
-         ppufile.putsmallset(const_type);
          writeentry(ppufile,ibtypesym);
       end;
 
@@ -2645,11 +2634,6 @@ implementation
           result:=fprettyname
         else
           result:=inherited prettyname;
-      end;
-
-    function ttypesym.make_generic_parameter_sym(newname: string) : tsym;
-      begin
-        result:=nil;
       end;
 
 {****************************************************************************

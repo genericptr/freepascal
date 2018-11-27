@@ -103,9 +103,6 @@ interface
          procedure writetoken(t: ttoken);
          function readtoken : ttoken;
        public
-          // note: ryan
-          parsing_generic_type: integer;
-
           inputfile    : tinputfile;  { current inputfile list }
           inputfilecount : longint;
 

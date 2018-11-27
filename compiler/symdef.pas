@@ -130,8 +130,11 @@ interface
           { same as above for specializations }
           function is_specialization:boolean;inline;
           // note: ryan
+          { generic utilities }
           function is_generic_param_const(index:integer):boolean;inline;
-          function get_generic_param_type(index:integer):tdeftyp;inline;
+          function get_generic_param_type(index:integer):tconsttyp;inline;
+          function is_generic_const:boolean;inline;
+          function get_const_type: tconsttyp;inline;
           { registers this def in the unit's deflist; no-op if already registered }
           procedure register_def; override;
           { add the def to the top of the symtable stack if it's not yet owned
@@ -2200,7 +2203,8 @@ implementation
          for i:=0 to genericparas.count-1 do
            begin
              sym:=tsym(genericparas[i]);
-             if sym.typ<>symconst.typesym then
+             { sym must be either a type or const }
+             if not (sym.typ in [symconst.typesym,symconst.constsym]) then
                internalerror(2014050903);
              if sym.owner.defowner<>self then
                exit(false);
@@ -2209,13 +2213,23 @@ implementation
 
    function tstoreddef.is_generic_param_const(index:integer):boolean;
      begin
-       result := ttypesym(genericparas[index]).is_const;
+       result := tsym(genericparas[index]).typ = constsym;
      end;  
 
-   function tstoreddef.get_generic_param_type(index:integer):tdeftyp;
+   function tstoreddef.get_generic_param_type(index:integer):tconsttyp;
      begin
-       result := ttypesym(genericparas[index]).const_type;
+       result := tconstsym(genericparas[index]).consttyp;
      end;  
+
+   function tstoreddef.is_generic_const:boolean;
+     begin
+       result := typ = genericconstdef;
+     end;
+
+   function tstoreddef.get_const_type: tconsttyp;
+     begin
+       result := tconstsym(typesym).consttyp;
+     end;
 
    function tstoreddef.is_specialization: boolean;
      var
@@ -2232,7 +2246,8 @@ implementation
            for i:=0 to genericparas.count-1 do
              begin
                sym:=tsym(genericparas[i]);
-               if sym.typ<>symconst.typesym then
+               { sym must be either a type or const }
+               if not (sym.typ in [symconst.typesym,symconst.constsym]) then
                  internalerror(2014050904);
                if sym.owner.defowner<>self then
                  exit(true);
