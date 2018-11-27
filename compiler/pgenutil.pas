@@ -76,10 +76,10 @@ uses
   pbase,pexpr,pdecsub,ptype,psub;
 
   type
-    tdeftyps = set of tdeftyp;
+    tdeftypeset = set of tdeftyp;
   const
-    tgeneric_param_const_types:tdeftyps = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef];
-
+    tgeneric_param_const_types:tdeftypeset = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef,undefineddef];
+    tgeneric_param_nodes: tnodetypeset = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
   type    
     { specialized generic param def }
     tgenericparamdef = class(tdef)
@@ -98,36 +98,32 @@ uses
         i : integer;
       begin
         create(genericconstdef);
-        case fromdef.typ of
-          orddef:
+        case node.nodetype of
+          ordconstn:
             begin
               sym:=cconstsym.create_ord(undefinedname,constord,tordconstnode(node).value,fromdef);
               prettyname:=inttostr(tordconstnode(node).value.svalue);
             end;
-          stringdef,arraydef:
+          stringconstn:
             begin
               getmem(sp,tstringconstnode(node).len+1);
               move(tstringconstnode(node).value_str^,sp^,tstringconstnode(node).len+1);
               sym:=cconstsym.create_string(undefinedname,conststring,sp,tstringconstnode(node).len,fromdef);
               prettyname:=''''+tstringconstnode(node).value_str+'''';
             end;
-          floatdef:
+          realconstn:
             begin
               new(pd);
               pd^:=trealconstnode(node).value_real;
               sym:=cconstsym.create_ptr(undefinedname,constreal,pd,fromdef);
               prettyname:=floattostr(trealconstnode(node).value_real);
             end;
-          setdef:
+          setconstn:
             begin
-              // TODO: how do we handle typed consts?
-              // "kSomeDays:TDays = [Mon, Wed];" is a loadnode
-              if node.nodetype = loadn then
-                internalerror(1);
               new(ps);
               ps^:=tsetconstnode(node).value_set^;
               sym:=cconstsym.create_ptr(undefinedname,constset,ps,fromdef);
-              // TODO: how do we make pretty string for enum? 
+              // TODO: how do we make pretty string for sets? 
               prettyname:='[';
               for i := 0 to 10 do
                 if i in tsetconstnode(node).value_set^ then
@@ -137,7 +133,7 @@ uses
                     prettyname:=prettyname+inttostr(i);
               prettyname:=prettyname+']';
             end;
-          pointerdef:
+          niln:
             begin
               { only "nil" is available for pointer constants }
               sym:=cconstsym.create_ord(undefinedname,constnil,0,fromdef);
@@ -453,13 +449,11 @@ uses
             block_type:=bt_type;
             tmpparampos:=current_filepos;
             typeparam:=factor(false,[ef_type_only]);
+            { determine if the typeparam node is a valid type or const }
             if not gen_const_enabled then
               validparam := typeparam.nodetype = typen
             else
-              if assigned(typeparam.resultdef) then
-                validparam:=typeparam.resultdef.typ in tgeneric_param_const_types
-              else
-                validparam:=false;
+              validparam:=typeparam.nodetype in tgeneric_param_nodes;
             if validparam then
               begin
                 if tstoreddef(typeparam.resultdef).is_generic and
