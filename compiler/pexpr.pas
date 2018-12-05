@@ -1318,13 +1318,16 @@ implementation
                       do_proc_call(sym,sym.owner,structh,
                                    (getaddr and not(token in [_CARET,_POINT])),
                                    again,p1,callflags,spezcontext);
+                      // note: ryan
                       { we need to know which procedure is called }
                       if not (cnf_object_constructor in callflags) then
                         do_typecheckpass(p1)
-                      else
+                      else if p1.nodetype = calln then
                         begin
+                          { for object constructors we skip type checking
+                            until the assignment expression has finished. }
                           p1.resultdef:=structh;
-                          include(p1.flags,nf_object_constructor);
+                          include(tcallnode(p1).callnodeflags,cnf_object_constructor);
                         end;
                       { calling using classref? }
                       if (
@@ -1608,12 +1611,12 @@ implementation
                         savedfilepos:=current_filepos;
                         consume(_ID);
                         // note: ryan
-                        { the sym is a constructor call so defer until the assignemnt is complete }
-                        if (hdef.typ = objectdef) and (srsym.typ = procsym) and (tprocsym(srsym).Find_procdef_bytype(potype_constructor)<>nil) then
-                          begin
-                            writeln('calling constructor from type');
-                            callflags:=[cnf_object_constructor];
-                          end;
+                        { the sym is a constructor call so defer 
+                          until the assignemnt is complete }
+                        if (hdef.typ = objectdef) and 
+                           (srsym.typ = procsym) and 
+                           (tprocsym(srsym).Find_procdef_bytype(potype_constructor)<>nil) then
+                          callflags:=[cnf_object_constructor];
                         if not (sp_generic_dummy in srsym.symoptions) or
                             not (token in [_LT,_LSHARPBRACKET]) then
                           check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,savedfilepos)
@@ -1742,11 +1745,8 @@ implementation
         p2:tnode;
         again:boolean;
       begin
-        //p2:=cderefnode.create(p1);
-        //do_typecheckpass(p2);
         p2:=p1;
         do_member_read(classh,false,sym,p2,again,[cnf_dispose_call],nil);
-        { we need the real called method }
         do_typecheckpass(p2);
         result:=p2;
       end;
@@ -1765,19 +1765,12 @@ implementation
         proc:=tcallnode(p2).symtableprocentry;
         methodname:=proc.name;
         para:=tcallnode(p2).left;
-        writeln('call ', methodname,' on ',classh.typesym.realname);
         sym:=search_struct_member(classh,methodname);
         if assigned(sym) then
           begin
             p2:=cderefnode.create(p1.getcopy);
             include(p2.flags,nf_no_checkpointer);
-            // todo: we're mp2essed here. p2 WAS a callnode but it got replaced
-            // by the deref node so we need to take the ORIGINAL p2 and
-            // set the deref to it like do_proc_call does
-            // todo: 
             p2:=ccallnode.create(para,tprocsym(proc),classh.symtable,p2,[cnf_new_call],nil);
-            //do_member_read(classh,false,sym,p2,again,[cnf_new_call],nil);
-            { we need the real called method }
             do_typecheckpass(p2);
             p2.resultdef:=p1.resultdef;
             result:=cassignmentnode.create(p1,p2);
@@ -2631,15 +2624,13 @@ implementation
                                    old_current_filepos:=current_filepos;
                                    consume(_ID);
                                    // note: ryan
+                                   { the symbol is an object destructor which needs
+                                     an inline calling convention }
                                    if (structh.typ = objectdef) and 
                                    (srsym.typ = procsym) and 
                                    (tprocsym(srsym).Find_procdef_bytype(potype_destructor)<>nil) and
                                    (p1.nodetype=derefn) then
-                                     begin
-                                       writeln('calling destructor');
-                                       // callflags:=[cnf_object_constructor];
-                                       p1:=handle_object_destruction(tobjectdef(structh),srsym,p1);
-                                     end;
+                                      p1:=handle_object_destruction(tobjectdef(structh),srsym,p1);
                                    if not (sp_generic_dummy in srsym.symoptions) or
                                        not (token in [_LT,_LSHARPBRACKET]) then
                                      check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,old_current_filepos)
@@ -4521,10 +4512,8 @@ implementation
                 getprocvardef:=nil;
                 // note: ryan
                 { the assignemnt is an object constructor }
-                if nf_object_constructor in p2.flags then
-                  begin
-                    p1:=handle_object_construction(p1,p2);
-                  end
+                if (p2.nodetype = calln) and (cnf_object_constructor in tcallnode(p2).callnodeflags) then
+                  p1:=handle_object_construction(p1,p2)
                 else
                   p1:=cassignmentnode.create(p1,p2);
              end;
