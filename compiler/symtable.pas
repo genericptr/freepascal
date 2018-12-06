@@ -3221,6 +3221,9 @@ implementation
                   end;
               end
             // note: ryan
+            { TODO(ryan): do some tests to see if this breaks anything.
+              it's needed for default properties but it adds another condition
+              for searching which may have side effects. } 
             else if (srsymtable.symtabletype=recordsymtable) then
               begin
                 if searchsym_in_record(tobjectdef(srsymtable.defowner),s,srsym,srsymtable) then
@@ -3529,18 +3532,16 @@ implementation
         propdef  : tabstractrecorddef;
       begin
         result := false;
+        searchsym_found_default := nil;
         while assigned(structh) do
           begin
-            if structh.has_default_property_access then
+            if length(structh.default_props) > 0 then
               for i := high(structh.default_props) downto 0 do
                 begin
                   propsym := tpropertysym(structh.default_props[i]);
                   propdef := tabstractrecorddef(propsym.propdef);
                   { property is not default }
                   if not (ppo_defaultproperty in propsym.propoptions) then
-                    continue;
-                  { property is not a struct }
-                  if not (propdef.typ in [objectdef,recorddef]) then
                     continue;
                   { property is write only }
                   if propsym.propaccesslist[palt_read].firstsym = nil then
@@ -3571,6 +3572,11 @@ implementation
                           searchsym_found_default := propsym;
                           exit(true);
                         end;
+                    end
+                  else if (ssf_search_helper in flags) and search_objectpascal_helper(propdef,nil,s,srsym,srsymtable) then
+                    begin
+                      searchsym_found_default := propsym;
+                      exit(true);
                     end;
                 end;
             { search up hierarchy for objects }
@@ -3700,7 +3706,7 @@ implementation
           end;
         // note: ryan
         { search default after base has been searched }
-        if searchsym_in_defaults(recordh,recordh,s,srsym,srsymtable,[]) then
+        if searchsym_in_defaults(recordh,recordh,s,srsym,srsymtable,[ssf_search_helper]) then
           exit(true);
         srsym:=nil;
         srsymtable:=nil;
@@ -4393,6 +4399,7 @@ implementation
        helperpd : tobjectdef;
      begin
         _defaultprop:=nil;
+        search_default_property:=nil;
         { first search in helper's hierarchy }
         if search_last_objectpascal_helper(pd,nil,helperpd) then
           while assigned(helperpd) do
@@ -4413,7 +4420,7 @@ implementation
              pd.symtable.SymList.ForEachCall(@tstoredsymtable(pd.symtable).testfordefaultproperty,@_defaultprop);
              if assigned(_defaultprop) then
                break;
-             if (pd.typ=objectdef) then
+             if is_object(pd) then
                pd:=tobjectdef(pd).childof
              else
                break;

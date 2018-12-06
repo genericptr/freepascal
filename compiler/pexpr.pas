@@ -974,7 +974,7 @@ implementation
       function process_procsym(para:tnode; var procsym: tprocsym; structh: tabstractrecorddef; callnodeflags: tcallnodeflags; spezcontext: tspecializationcontext): boolean;
         var
           candidates : tcallcandidates;
-          ignorevisibility : boolean;
+          ignorevisibility,allowdefaultparas,searchhelpers : boolean;
           bestpd : tabstractprocdef;
           srsym : tsym;
         begin
@@ -988,12 +988,17 @@ implementation
             end
           else
             srsym:=procsym;
-          { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
-          ignorevisibility:=((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
-                            (cnf_ignore_visibility in callnodeflags);
-          candidates:=tcallcandidates.create(tprocsym(srsym),structh.symtable,para,ignorevisibility,
-            {allowdefaultparas}true,cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
-            callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,spezcontext);
+          ignorevisibility:=false;
+          allowdefaultparas:=true;            
+          searchhelpers:=true;
+          candidates:=tcallcandidates.create(tprocsym(srsym),structh.symtable,para,
+                      ignorevisibility,
+                      allowdefaultparas,
+                      cnf_objc_id_call in callnodeflags,
+                      cnf_unit_specified in callnodeflags,
+                      searchhelpers,
+                      cnf_anon_inherited in callnodeflags,
+                      spezcontext);
           if candidates.count > 0 then
             begin
               candidates.get_information;
@@ -1037,7 +1042,7 @@ implementation
                   if propsym.propaccesslist[palt_read].firstsym = nil then
                     continue;
                   propdef := tabstractrecorddef(propsym.propdef);
-                  if (propdef.typ in [recorddef, objectdef]) and process_procsym(para, procsym, propdef, callnodeflags, spezcontext) then
+                  if is_struct(propdef) and process_procsym(para,procsym,propdef,callnodeflags,spezcontext) then
                     begin
                       obj := propdef;
                       foundprop := propsym;
@@ -1056,8 +1061,8 @@ implementation
       the base record is searched first followed by default properties.
 
       TODO: assignment operators are not working yet (see tcallcandidates.create_operator) }
-    function find_best_candidate_for_operator(p1, p2: tnode; optoken: ttoken; access: tpropaccesslisttypes; var obj: tabstractrecorddef; out propsym: tpropertysym): boolean;
-      function process_operator(fromdef: tabstractrecorddef; optoken: ttoken; right:tnode): boolean;
+    function find_best_candidate_for_operator(p1, p2: tnode; optoken: ttoken; access: tpropaccesslisttypes; var operdef: tdef; out propsym: tpropertysym): boolean;
+      function process_operator(fromdef: tdef; optoken: ttoken; right:tnode): boolean;
         var
           candidates : tcallcandidates;
           ppn : tcallparanode;
@@ -1078,51 +1083,52 @@ implementation
         end;
       var
         i: integer;
-        structh: tabstractrecorddef;
+        def: tdef;
       begin
         result := false;
         { process base first and if there's a matching operator then stop }
-        if process_operator(obj, optoken, p2) then
+        if process_operator(operdef, optoken, p2) then
           exit;
         { search default properties }
-        for i := high(obj.default_props) downto 0 do
+        for i := high(tabstractrecorddef(operdef).default_props) downto 0 do
           begin
-            propsym := tpropertysym(obj.default_props[i]);
+            propsym := tpropertysym(tabstractrecorddef(operdef).default_props[i]);
             { property is not default }
             if not (ppo_defaultproperty in propsym.propoptions) then
               continue;
             { property doesn't have required access }
             if propsym.propaccesslist[access].firstsym = nil then
               continue;
-            structh := tabstractrecorddef(propsym.propdef);
-            if (structh.typ in [recorddef, objectdef]) and process_operator(structh, optoken, p2) then
+            //structh := tabstractrecorddef(propsym.propdef);
+            def := propsym.propdef;
+            if is_struct(def) and process_operator(def, optoken, p2) then
               begin
-                obj := structh;
+                operdef := def;
                 exit(true);
               end;
             { compare property def with right node result def }
-            if (compare_defs(structh,p2.resultdef,p1.nodetype)>=te_convert_l6) then
+            if (compare_defs(def,p2.resultdef,p1.nodetype)>=te_convert_l6) then
               begin
-                obj := structh;
+                operdef := def;
                 exit(true);
               end;
           end;
       end;
 
     procedure handle_procvar(pv : tprocvardef;var p2 : tnode);forward;
-    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault:boolean;var p1 : tnode);forward;
+    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault,readonly:boolean;var p1 : tnode);forward;
 
     { takes read property and converts to access node.
       this function is only used for default properties. }
-    function handle_default_read_property(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;inline;
+    function handle_default_read_property(propsym : tsym;st : TSymtable;var p1 : tnode) : tabstractrecorddef;
       begin
-        handle_propertysym(tpropertysym(propsym),st,true,p1);
+        handle_propertysym(tpropertysym(propsym),st,true,true,p1);
         result := tabstractrecorddef(tpropertysym(propsym).propdef);
       end;
 
     procedure handle_default_operator (var p1: tnode; p2: tnode; access: tpropaccesslisttypes; optoken: ttoken);
       var
-        operdef: tabstractrecorddef;
+        operdef: tdef;
         propsym: tpropertysym;
       begin
         if not assigned(p1) or not assigned(p1.resultdef) then
@@ -1131,14 +1137,9 @@ implementation
           begin
             if p2.resultdef = nil then
               do_typecheckpass(p2);
-            operdef := tabstractrecorddef(p1.resultdef);
-            if find_best_candidate_for_operator(p1,p2,optoken,access,operdef,propsym) and not equal_defs(tabstractrecorddef(p1.resultdef), operdef) then
-              begin
-                { c style operators can't use defaults }
-                //if (optoken in [_PLUS, _MINUS, _STAR, _SLASH]) then
-                //  exit;
-                handle_default_read_property(propsym,operdef.symtable,p1);
-              end;
+            operdef := p1.resultdef;
+            if find_best_candidate_for_operator(p1,p2,optoken,access,operdef,propsym) and not equal_defs(p1.resultdef, operdef) then
+              handle_default_read_property(propsym,operdef.owner,p1);
           end;
       end;
 
@@ -1281,22 +1282,15 @@ implementation
                    internalerror(200310031);
                  // note: ryan
                  { now that we have params parsed, if the struct has default properties 
-                   then search for available overloads in default properties.
-                   
-                   AFAIK we need to search here before the call node is created because
-                   if we search in tcallcandidates during typecheck we won't be able
-                   to insert the property node (using handle_default_read_property).
-
-                   if this isn't true then ideally we resolve the node in do_member_read
-                   after do_proc_call. }
-                  if assigned(st) and is_struct(st.defowner) and tabstractrecorddef(st.defowner).has_default_property_access then
-                    begin
-                      if assigned(para) and not assigned(para.resultdef) then
-                        tcallparanode(para).get_paratype;
-                      obj := tabstractrecorddef(st.defowner);
-                      if find_best_candidate_for_proc(para,tprocsym(sym),st,callflags,spezcontext,obj,propsym) then
-                        handle_default_read_property(propsym,obj.symtable,p1);
-                    end;
+                   then search for available overloads in default properties }
+                 if obj.has_default_property_access then
+                   begin
+                     if assigned(para) and not assigned(para.resultdef) then
+                       tcallparanode(para).get_paratype;
+                     obj := tabstractrecorddef(st.defowner);
+                     if find_best_candidate_for_proc(para,tprocsym(sym),st,callflags,spezcontext,obj,propsym) then
+                       handle_default_read_property(propsym,obj.symtable,p1);
+                   end;
                  p1:=ccallnode.create(para,tprocsym(sym),obj.symtable,p1,callflags,spezcontext);
                end
              else
@@ -1346,7 +1340,7 @@ implementation
 
     { the following procedure handles the access to a property symbol }
 
-    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault:boolean;var p1 : tnode);
+    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;isdefault,readonly:boolean;var p1 : tnode);
       { returns true if p2 resultdef should be handled as a default assignment,
         i.e. without invoking the default property. }
       function should_default_assign(p2: tnode): boolean;
@@ -1380,7 +1374,7 @@ implementation
            end;
          { we need only a write property if a := follows }
          { if not(afterassignment) and not(in_args) then }
-         if token=_ASSIGNMENT then
+         if (token=_ASSIGNMENT) and not readonly then
            begin
               if propsym.getpropaccesslist(palt_write,propaccesslist) then
                 begin
@@ -1530,7 +1524,7 @@ implementation
       end;
 
     { the ID token has to be consumed before calling this function }
-    procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
+    procedure do_member_read_internal(structh:tabstractrecorddef;getaddr:boolean;sym,defaultsym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
       var
         isclassref:boolean;
         isrecordtype:boolean;
@@ -1563,7 +1557,15 @@ implementation
 
               if assigned(spezcontext) and not (sym.typ=procsym) then
                 internalerror(2015091801);
-
+              
+              // note: ryan
+              { is a default property sym was provided for the member
+                then handle the property before reading }
+              // todo: do we need to call try_type_helper here? not sure about this...
+              if assigned(defaultsym) then
+                structh:=handle_default_read_property(defaultsym,defaultsym.owner,p1);
+              searchsym_found_default:=nil;
+              
               { we assume, that only procsyms and varsyms are in an object }
               { symbol table, for classes, properties are allowed          }
               case sym.typ of
@@ -1627,7 +1629,7 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      handle_propertysym(tpropertysym(sym),sym.owner,false,p1);
+                      handle_propertysym(tpropertysym(sym),sym.owner,false,false,p1);
                    end;
                  typesym:
                    begin
@@ -1673,6 +1675,11 @@ implementation
            end;
       end;
 
+    
+    procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);inline;
+      begin
+        do_member_read_internal(structh,getaddr,sym,nil,p1,again,callflags,spezcontext);
+      end;
 
     function handle_specialize_inline_specialization(var srsym:tsym;out srsymtable:tsymtable;out spezcontext:tspecializationcontext):boolean;
       var
@@ -2321,7 +2328,7 @@ implementation
                      begin
                        { The property symbol is referenced indirect }
                        protsym.IncRefCount;
-                       handle_propertysym(protsym,protsym.owner,false,p1);
+                       handle_propertysym(protsym,protsym.owner,false,false,p1);
                        { handle default arrays }
                        if not (ppo_hasparameters in protsym.propoptions) then
                          begin
@@ -2643,13 +2650,6 @@ implementation
                                  consume(_ID);
                                end;
                            end;
-                         // note: ryan
-                         { sym was found in default property so handle default read property }
-                         if assigned(searchsym_found_default) then
-                           begin
-                             structh:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
-                             searchsym_found_default := nil;
-                           end;
                          if erroroutp1 then
                            begin
                              p1.free;
@@ -2657,7 +2657,7 @@ implementation
                            end
                          else
                            if p1.nodetype<>specializen then
-                             do_member_read(structh,getaddr,srsym,p1,again,[],spezcontext);
+                             do_member_read_internal(structh,getaddr,srsym,searchsym_found_default,p1,again,[],spezcontext);
                        end
                      else
                      consume(_ID);
@@ -2860,13 +2860,6 @@ implementation
                                    consume(_ID);
                                 end;
                             end;
-                          // note: ryan
-                          { sym was found in default property so handle default read property }
-                          if assigned(searchsym_found_default) then
-                            begin
-                              structh:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
-                              searchsym_found_default := nil;
-                            end;
                           if erroroutp1 then
                             begin
                               p1.free;
@@ -2874,7 +2867,7 @@ implementation
                             end
                           else
                             if p1.nodetype<>specializen then
-                              do_member_read(structh,getaddr,srsym,p1,again,[],spezcontext);
+                              do_member_read_internal(structh,getaddr,srsym,searchsym_found_default,p1,again,[],spezcontext);
                         end
                       else { Error }
                         Consume(_ID);
@@ -2976,12 +2969,11 @@ implementation
                   // note: ryan
                   { if the node is a struct with default properties
                     then we need to intercept the assignment here. }
-                  //handle_default_assign(p1);
                   if (token = _ASSIGNMENT) and struct_has_property_access(p1.resultdef) then 
                     begin
                       structh:=tabstractrecorddef(p1.resultdef);
                       if structh.default_write_prop <> nil then
-                        handle_propertysym(tpropertysym(structh.default_write_prop),structh.symtable,true,p1);
+                        handle_propertysym(tpropertysym(structh.default_write_prop),structh.symtable,true,false,p1);
                     end;
                   again:=false;
                 end;
@@ -3369,20 +3361,12 @@ implementation
                               else
                                 p1:=load_self_node;
                             end;
-                        // note: ryan
-                        { sym was found in default property so handle default read property }
-                        if assigned(searchsym_found_default) then
-                          begin
-                            hdef:=handle_default_read_property(searchsym_found_default,srsymtable,p1);
-                            searchsym_found_default := nil;
-                          end;
-
                         { now, if the field itself is part of an objectsymtab }
                         { (it can be even if it was found in a withsymtable,  }
                         {  e.g., "with classinstance do field := 5"), then    }
                         { let do_member_read handle it                        }
                         if (srsym.owner.symtabletype in [ObjectSymtable,recordsymtable]) then
-                          do_member_read(tabstractrecorddef(hdef),getaddr,srsym,p1,again,[],nil)
+                          do_member_read_internal(tabstractrecorddef(hdef),getaddr,srsym,searchsym_found_default,p1,again,[],nil)
                         else
                           { otherwise it's a regular record subscript }
                           p1:=csubscriptnode.create(srsym,p1);
@@ -3475,21 +3459,11 @@ implementation
                           assigned(current_structdef) and (current_structdef<>hdef) and is_owned_by(current_structdef,hdef) then
                           p1:=cloadvmtaddrnode.create(ctypenode.create(hdef));
                         
-                        // note: ryan
-                        { sym was found in default property so handle default read property }
-                        if assigned(searchsym_found_default) then
-                          begin
-                            if maybe_load_methodpointer(srsymtable,p1) then
-                              include(callflags,cnf_member_call);
-                            handle_default_read_property(searchsym_found_default,srsymtable,p1);
-                            searchsym_found_default := nil;
-                          end;
-
                         { not srsymtable.symtabletype since that can be }
                         { withsymtable as well                          }
                         if (srsym.owner.symtabletype in [ObjectSymtable,recordsymtable]) then
                           begin
-                            do_member_read(tabstractrecorddef(hdef),getaddr,srsym,p1,again,callflags,spezcontext);
+                            do_member_read_internal(tabstractrecorddef(hdef),getaddr,srsym,searchsym_found_default,p1,again,callflags,spezcontext);
                             spezcontext:=nil;
                           end
                         else
@@ -3545,7 +3519,7 @@ implementation
                     else
                     { no method pointer }
                       begin
-                        handle_propertysym(tpropertysym(srsym),srsymtable,false,p1);
+                        handle_propertysym(tpropertysym(srsym),srsymtable,false,false,p1);
                       end;
                   end;
 
@@ -4522,7 +4496,7 @@ implementation
                p2:=sub_expr(succ(pred_level),flags+[ef_accept_equal],nil);
              // note: ryan
              if oldt <> NOTOKEN then
-               handle_default_operator(p1, p2, palt_read, oldt);
+               handle_default_operator(p1,p2,palt_read,oldt);
              case oldt of
                _PLUS :
                  p1:=caddnode.create(addn,p1,p2);
@@ -4776,7 +4750,7 @@ implementation
                consume(_PLUSASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
                // note: ryan
-               handle_default_operator(p1, p2, palt_write, _PLUS);
+               handle_default_operator(p1,p2,palt_write,_PLUS);
                p1:=gen_c_style_operator(addn,p1,p2);
             end;
           _MINUSASN :
@@ -4784,7 +4758,7 @@ implementation
                consume(_MINUSASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
                // note: ryan
-               handle_default_operator(p1, p2, palt_write, _MINUS);
+               handle_default_operator(p1,p2,palt_write,_MINUS);
                p1:=gen_c_style_operator(subn,p1,p2);
             end;
           _STARASN :
@@ -4792,7 +4766,7 @@ implementation
                consume(_STARASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
                // note: ryan
-               handle_default_operator(p1, p2, palt_write, _STAR);
+               handle_default_operator(p1,p2,palt_write,_STAR);
                p1:=gen_c_style_operator(muln,p1,p2);
             end;
           _SLASHASN :
@@ -4800,7 +4774,7 @@ implementation
                consume(_SLASHASN);
                p2:=sub_expr(opcompare,[ef_accept_equal],nil);
                // note: ryan
-               handle_default_operator(p1, p2, palt_write, _SLASH);
+               handle_default_operator(p1,p2,palt_write,_SLASH);
                p1:=gen_c_style_operator(slashn,p1,p2);
             end;
           else
