@@ -1056,11 +1056,6 @@ implementation
           ppn.free;
       end;
 
-    function get_binary_overload_key(l,r:tnode): toverloadname;
-      begin
-        result:=l.resultdef.typename+'$'+r.resultdef.typename;
-      end; 
-
     procedure handle_default_binary_operator (var p1: tnode; p2: tnode; access: tpropaccesslisttypes; optoken: ttoken);
       function search_operator(l,r:tnode;optoken:ttoken):tnode;
         var
@@ -1069,22 +1064,12 @@ implementation
           operpd  : tprocdef;
           operps  : tpropertysym;
           cand_count: integer;
-          key: string;
         label
           finished;
         begin
           result:=nil;
           operpd:=nil;
           operps:=nil;
-
-          //key:=get_binary_overload_key(l,r);
-          //if restore_binary_overload(optoken,key,operpd,operps) then
-          //  begin
-          //    //writeln('restore:',overloaded_names[optoken],' ',key);
-          //    result:=l;
-          //    handle_read_property(operps,tabstractrecorddef(operps.owner.defowner).symtable,result);
-          //    exit;
-          //  end;
 
           { generate parameter nodes }
           ppn:=ccallparanode.create(r.getcopy,ccallparanode.create(l.getcopy,nil));
@@ -1136,7 +1121,6 @@ implementation
                 it's a matching type. }
               if assigned(operps) then
                 begin
-                  //remember_proc_overload(key,operpd,operps);
                   result:=l;
                   handle_read_property(operps,tabstractrecorddef(l.resultdef).symtable,result);
                 end;
@@ -1147,7 +1131,6 @@ implementation
           if (cand_count=1) and assigned(operps) then
             begin
               result:=l;
-              //remember_proc_overload(key,operpd,operps);
               handle_read_property(operps,operpd.owner,result);
             end;
 

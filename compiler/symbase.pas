@@ -103,7 +103,6 @@ interface
           { do not allow to add new definitions, can be extended to symbols probably }
           sealed : boolean;
           symtabletype  : TSymtabletype;
-          overload_table : tobject;
           constructor Create(const s:string);
           destructor  destroy;override;
           procedure freeinstance;override;
@@ -247,8 +246,6 @@ implementation
         { SymList can already be disposed or set to nil for withsymtable, }
         { but in that case Free does nothing                              }
         SymList.Free;
-        if assigned(overload_table) then
-          overload_table.free;
         stringdispose(name);
         stringdispose(realname);
       end;

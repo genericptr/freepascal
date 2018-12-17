@@ -2024,9 +2024,6 @@ implementation
         current_procinfo.procdef:=pd;
         isnestedproc:=(current_procinfo.procdef.parast.symtablelevel>normal_function_level);
 
-        // note: ryan
-        clear_proc_overloads(pd);
-
         { Insert mangledname }
         pd.aliasnames.insert(pd.mangledname);
 

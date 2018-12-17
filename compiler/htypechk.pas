@@ -213,14 +213,6 @@ interface
 
     procedure UninitializedVariableMessage(pos : tfileposinfo;warning,local,managed : boolean;name : TMsgStr);
     
-    // note: ryan
-    type
-      toverloadname=TSymStr;
-    procedure clear_proc_overloads(pd:tprocdef);
-    procedure remember_proc_overload(key:toverloadname;pd:tprocdef;ps:tpropertysym=nil);
-    function restore_binary_overload(token:ttoken;key:toverloadname;out pd:tprocdef;out ps:tpropertysym): boolean;
-    function restore_proc_overload(procsym:tprocsym;key:toverloadname;out pd:tprocdef): boolean;
-
     const
       non_commutative_op_tokens=[_OP_SHL,_OP_SHR,_OP_DIV,_OP_MOD,_STARSTAR,_SLASH,_MINUS];
       non_commutative_op_nodes=[shln,shrn,divn,modn,starstarn,slashn,subn];
@@ -237,32 +229,13 @@ implementation
        ;
 
     // note: ryan
-
-    { ================================================================= }
-
     { proc overload entry }
     type
       tprocoverloadentry = class
-        strict private
-          function getname: string;
-          function gethash: longword;
         public
           pd: tprocdef;
           ps: tpropertysym; { optional default property for overload }
           constructor create(_pd:tprocdef; _ps:tpropertysym);
-          { hash table values }
-          property name: string read getname;
-          property hash: longword read gethash;
-      end;
-
-    function tprocoverloadentry.getname: string;
-      begin
-        result:=pd.procsym.name;
-      end;
-
-    function tprocoverloadentry.gethash: longword;
-      begin
-        result:=pd.procsym.hash;
       end;
 
     constructor tprocoverloadentry.create(_pd:tprocdef; _ps:tpropertysym);
@@ -270,171 +243,6 @@ implementation
         pd:=_pd;
         ps:=_ps;
       end;
-
-    { proc overload table }
-    type
-      tprocoverloadtable = class (TFPHashObjectList)
-        public
-          function get_overload(key:toverloadname): tprocoverloadentry;
-      end;
-
-    function tprocoverloadtable.get_overload(key:toverloadname): tprocoverloadentry;
-      var
-        hashedid   : THashedIDString;
-      begin
-        hashedid.id:=key;
-        result:=tprocoverloadentry(list.FindWithHash(hashedid.id,hashedid.hash));
-      end;
-
-    { proc overload entries }
-    type
-      tprocoverloadentries = class
-        strict private
-          list:TFPHashObjectList;
-          function get_table(name:TSymStr;hash:LongWord): tprocoverloadtable;
-        public
-          constructor create;
-          procedure add_entry(key:toverloadname; entry:tprocoverloadentry);
-          function get_entry(sym:tsym; key:toverloadname): tprocoverloadentry;overload;
-          function get_entry(name,key:toverloadname): tprocoverloadentry;overload;
-          procedure clear(pd:tprocdef);
-      end;
-
-    constructor tprocoverloadentries.create;
-      begin
-        list:=TFPHashObjectList.Create;
-      end;  
-
-    function tprocoverloadentries.get_entry(sym:tsym; key:toverloadname): tprocoverloadentry;
-      var
-        table:tprocoverloadtable;
-      begin
-        table:=tprocoverloadtable(list.FindWithHash(sym.name,sym.hash));
-        if assigned(table) then
-          result:=table.get_overload(key)
-        else
-          result:=nil;
-      end;
-
-    function tprocoverloadentries.get_entry(name,key:toverloadname): tprocoverloadentry;
-      var
-        table:tprocoverloadtable;
-        hashedid:THashedIDString;
-      begin
-        hashedid.id:=name;
-        table:=get_table(hashedid.id,hashedid.hash);
-        if assigned(table) then
-          result:=table.get_overload(key)
-        else
-          result:=nil;
-      end;
-
-    function tprocoverloadentries.get_table(name:TSymStr;hash:LongWord): tprocoverloadtable;inline;
-      begin
-        result:=tprocoverloadtable(list.FindWithHash(name,hash));
-      end;
-
-    procedure tprocoverloadentries.add_entry(key:toverloadname; entry:tprocoverloadentry);
-      var
-        table:tprocoverloadtable;
-      begin
-        table:=get_table(entry.name,entry.hash);
-        if not assigned(table) then
-          begin
-            table:=tprocoverloadtable.create;
-            list.add(entry.name,table);
-          end;
-        table.add(key,entry);
-      end;
-
-    procedure tprocoverloadentries.clear(pd:tprocdef);
-      var
-        table:tprocoverloadtable;
-      begin
-        table:=get_table(pd.procsym.name,pd.procsym.hash);
-        if assigned(table) then
-          table.clear;
-      end;
-
-    { ==== global overloads ==== }  
-
-    // TODO: kill this for all stores in tsymtable. global space is staticsymtable
-    var
-      global_overload_table: tprocoverloadentries = nil;
-
-    function get_table_for_proc(sym:tsym;allocate:boolean): tprocoverloadentries;
-      var
-        table:tprocoverloadentries;
-      begin
-        table:=tprocoverloadentries(sym.owner.overload_table);
-        if not assigned(table) and allocate then
-          begin
-            table:=tprocoverloadentries.create;
-            sym.owner.overload_table:=table;
-          end;
-        result:=table;
-      end;
-
-    procedure clear_proc_overloads(pd:tprocdef);
-      var
-        table:tprocoverloadentries;
-      begin
-        table:=get_table_for_proc(pd.procsym,false);
-        if assigned(table) then
-          table.clear(pd);
-      end;
-
-    procedure remember_proc_overload(key:toverloadname;pd:tprocdef;ps:tpropertysym=nil);
-      var
-        entry:tprocoverloadentry;
-        table:tprocoverloadentries;
-      begin
-        table:=get_table_for_proc(pd.procsym,true);
-        writeln('remember: "', pd.procsym.name, '" "', key,'" -> ', pd.owner.symtabletype, ' ', hexstr(pd.owner));
-        // TODO: check for duplicates first!
-        entry:=tprocoverloadentry.create(pd,ps);
-        table.add_entry(key,entry);
-      end;
-
-    // TODO: global_overload_table is dead now so we need to know
-    // which symtable we're in now
-    function restore_binary_overload(token:ttoken;key:toverloadname;out pd:tprocdef;out ps:tpropertysym): boolean;
-      var
-        entry:tprocoverloadentry;
-      begin
-        if global_overload_table=nil then
-          exit(false);
-        entry:=global_overload_table.get_entry(overloaded_names[token],key);
-        if assigned(entry) then
-          begin
-            pd:=entry.pd;
-            ps:=entry.ps;
-            result:=true;
-          end
-        else
-          result:=false;
-      end;
-
-    function restore_proc_overload(procsym:tprocsym;key:toverloadname;out pd:tprocdef): boolean;
-      var
-        entry:tprocoverloadentry;
-        table:tprocoverloadentries;
-      begin
-        table:=get_table_for_proc(procsym,false);
-        { no overloads }
-        if not assigned(table) then
-          exit;
-        entry:=table.get_entry(procsym,key);
-        if assigned(entry) then
-          begin
-            pd:=entry.pd;
-            result:=true;
-          end
-        else
-          result:=false;
-      end;
-
-    { ================================================================= }
 
     type
       TValidAssign=(Valid_Property,Valid_Void,Valid_Const,Valid_Addr,Valid_Packed,Valid_Range);
@@ -2362,8 +2170,6 @@ implementation
         FParanode:=ppn;
         FIgnoredCandidateProcs:=tfpobjectlist.create(true);
         create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults,spezcontext);
-        debugstats.call_cand_start:=getrealtime;
-        debugstats.call_count+=1;
       end;
 
 
@@ -2375,8 +2181,6 @@ implementation
         FParanode:=ppn;
         FIgnoredCandidateProcs:=tfpobjectlist.create(true);
         create_candidate_list(false,false,false,false,false,false,searchdefaults,nil);
-        debugstats.call_cand_start:=getrealtime;
-        debugstats.call_count+=1;
       end;
 
 
@@ -2387,7 +2191,6 @@ implementation
         psym : tprocsym;
         i : longint;
       begin
-        debugstats.call_cand_time:=getrealtime - debugstats.call_cand_start;
         FIgnoredCandidateProcs.free;
         hp:=FCandidateProcs;
         while assigned(hp) do

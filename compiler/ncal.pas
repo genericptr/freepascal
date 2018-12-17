@@ -3472,32 +3472,6 @@ implementation
           end;
       end;
 
-    // note: ryan
-    // TODO: put this into tcallparanode once we're certain of it
-    function get_proc_overload_key(para:tcallparanode;flags:longint): toverloadname;
-      function def_id_str(def:tdef): string;
-        begin
-          // TODO: can we hash this value and set it back in the def?
-          result:=def.typename;
-          //result:=tostr(def.defid);
-        end;
-      var
-        pt:tcallparanode;
-        parastr:toverloadname;
-      begin
-        parastr:='';
-        pt:=tcallparanode(para);
-        while assigned(pt) do
-          begin
-            if parastr='' then
-              parastr:=def_id_str(pt.resultdef)
-            else
-              parastr:=parastr+'$'+def_id_str(pt.resultdef);
-            pt:=tcallparanode(pt.right);
-          end;
-        result:=parastr+'$'+tostr(flags);
-      end;  
-
     function tcallnode.pass_typecheck:tnode;
       var
         candidates : tcallcandidates;
@@ -3513,7 +3487,6 @@ implementation
         statements : tstatementnode;
         converted_result_data : ttempcreatenode;
         calltype: tdispcalltype;
-        cand_key: toverloadname;
       begin
          result:=nil;
          candidates:=nil;
@@ -3622,20 +3595,6 @@ implementation
                          end;
                      end;
 
-                   // note: ryan
-                   cand_key:='';
-                   if not assigned(spezcontext) then
-                     begin
-                       //cand_key:=get_proc_overload_key(tcallparanode(left),longint(callnodeflags));
-                       //if restore_proc_overload(symtableprocentry,cand_key,tprocdef(procdefinition)) then
-                       //  begin
-                       //    writeln('restored: "',symtableprocentry.name,'" "',cand_key,'" ', procdefinition.owner.symtabletype, ' ', hexstr(procdefinition.owner));
-                       //    { assign procdefinition }
-                       //    if symtableproc=nil then
-                       //      symtableproc:=procdefinition.owner;
-                       //  end;
-                     end;
-
                    if not assigned(procdefinition) then
                      begin
                        { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
@@ -3726,9 +3685,6 @@ implementation
                           { assign procdefinition }
                           if symtableproc=nil then
                             symtableproc:=procdefinition.owner;
-                          { cache results }
-                          //if cand_key<>'' then
-                          //  remember_proc_overload(cand_key,tprocdef(procdefinition));
                         end
                        else
                         begin
