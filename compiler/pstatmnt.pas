@@ -62,6 +62,12 @@ implementation
 
     function statement : tnode;forward;
 
+    { currently statements resolve default properties by assuming
+      the first orddef default can pass the statement }
+    procedure handle_expr_default_property_access(var ex:tnode);inline;
+      begin
+        try_default_read_property(ex,[orddef]);
+      end;
 
     function if_statement : tnode;
       var
@@ -69,6 +75,7 @@ implementation
       begin
          consume(_IF);
          ex:=comp_expr([ef_accept_equal]);
+         handle_expr_default_property_access(ex);
          consume(_THEN);
          if not(token in endtokens) then
            if_a:=statement
@@ -124,6 +131,7 @@ implementation
       begin
          consume(_CASE);
          caseexpr:=comp_expr([ef_accept_equal]);
+         handle_expr_default_property_access(caseexpr);
          { determines result type }
          do_typecheckpass(caseexpr);
          { variants must be accepted, but first they must be converted to integer }
@@ -318,6 +326,7 @@ implementation
 
          first:=cblocknode.create(first);
          p_e:=comp_expr([ef_accept_equal]);
+         handle_expr_default_property_access(p_e);
          result:=cwhilerepeatnode.create(p_e,first,false,true);
       end;
 
@@ -330,6 +339,7 @@ implementation
       begin
          consume(_WHILE);
          p_e:=comp_expr([ef_accept_equal]);
+         handle_expr_default_property_access(p_e);
          consume(_DO);
          p_a:=statement;
          result:=cwhilerepeatnode.create(p_e,p_a,true,false);

@@ -128,7 +128,8 @@ implementation
        optconstprop,
        optdeadstore,
        optloadmodifystore,
-       optutils
+       optutils,
+       htypechk
 {$if defined(arm)}
        ,cpuinfo
 {$endif arm}
@@ -2022,6 +2023,9 @@ implementation
         current_module.procinfo:=current_procinfo;
         current_procinfo.procdef:=pd;
         isnestedproc:=(current_procinfo.procdef.parast.symtablelevel>normal_function_level);
+
+        // note: ryan
+        clear_proc_overloads(pd);
 
         { Insert mangledname }
         pd.aliasnames.insert(pd.mangledname);

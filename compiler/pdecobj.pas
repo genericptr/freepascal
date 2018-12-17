@@ -183,18 +183,9 @@ implementation
 
             { default property without parameters }
             if not (ppo_hasparameters in p.propoptions) then
-              begin
-                // note: ryan
-                if p.propaccesslist[palt_write].firstsym <> nil then
-                  begin
-                    { only one write default allowed }
-                    if current_structdef.default_write_prop <> nil then
-                      message(parser_e_only_one_default_property)
-                    else
-                      current_structdef.default_write_prop := p;
-                  end;
-                current_structdef.add_defaultprop(p);
-              end;
+              current_structdef.add_defaultprop(p)
+            else
+              include(current_structdef.objectoptions,oo_has_default_property);
             
             // note: removed for now
             //if not(ppo_hasparameters in p.propoptions) then

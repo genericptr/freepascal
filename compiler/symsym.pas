@@ -375,6 +375,7 @@ interface
           // note: ryan
           { returns true if the property is a default alias for an array  }
           function is_default_array: boolean;
+          function has_access(pap:tpropaccesslisttypes):boolean;
        end;
        tpropertysymclass = class of tpropertysym;
 
@@ -1536,6 +1537,11 @@ implementation
     procedure tpropertysym.inherit_accessor(getset: tpropaccesslisttypes);
       begin
         { nothing to do by default }
+      end;
+
+    function tpropertysym.has_access(pap:tpropaccesslisttypes):boolean;
+      begin
+        result:=assigned(propaccesslist[pap].firstsym);
       end;
 
     function tpropertysym.is_default_array: boolean;

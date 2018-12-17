@@ -862,7 +862,7 @@ implementation
         orgsp:='';
         spnongen:='';
         orgspnongen:='';
-
+        
         { Save the position where this procedure really starts }
         procstartfilepos:=current_tokenpos;
         old_parse_generic:=parse_generic;
@@ -875,6 +875,7 @@ implementation
         genericparams:=nil;
         freegenericparams:=true;
         hadspecialize:=false;
+
 
         if not assigned(genericdef) then
           begin

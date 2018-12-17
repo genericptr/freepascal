@@ -299,17 +299,9 @@ interface
          ssf_search_helper,
          ssf_has_inherited,
          ssf_no_addsymref,
-         // note: ryan
-         ssf_no_defaults
+         ssf_search_defaults
        );
        tsymbol_search_flags = set of tsymbol_search_flag;
-
-    // note: ryan
-    { searchsym_found_default is set the default property found when calling searchsym_in_defaults()
-      using a global here in order to not change the params to searchsym_in_xxx functions
-      or introduce new fields into tsym }
-    var
-      searchsym_found_default: tpropertysym = nil;
 
 {****************************************************************************
                              Functions
@@ -376,6 +368,11 @@ interface
     { actually defined (could be disable using "undef")                     }
     function  defined_macro(const s : string):boolean;
     { Look for a system procedure (no overloads supported) }
+
+{*** Defaults ***}
+    function  searchsym_with_defaults(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym):boolean;
+    function  searchsym_in_class(classh: tobjectdef;contextclassh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags):boolean;
+    function  searchsym_in_record(recordh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags):boolean;
 
 {*** Object Helpers ***}
     function search_default_property(pd : tabstractrecorddef) : tpropertysym;
@@ -3187,20 +3184,19 @@ implementation
         result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,[],sp_none);
       end;
 
-
     function  searchsym_with_flags(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;
       begin
         result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,flags,sp_none);
       end;
 
-
-    function  searchsym_maybe_with_symoption(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags;option:tsymoption):boolean;
+    function  searchsym_maybe_with_symoption(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags;option:tsymoption):boolean;
       var
         hashedid: THashedIDString;
         contextstructdef: tabstractrecorddef;
         stackitem: psymtablestackitem;
       begin
         result:=false;
+        srprop:=nil;
         hashedid.id:=s;
         stackitem:=symtablestack.stack;
         while assigned(stackitem) do
@@ -3214,7 +3210,7 @@ implementation
                     result:=false;
                     exit;
                   end;
-                if searchsym_in_class(tobjectdef(srsymtable.defowner),tobjectdef(srsymtable.defowner),s,srsym,srsymtable,flags+[ssf_search_helper]) then
+                if searchsym_in_class(tobjectdef(srsymtable.defowner),tobjectdef(srsymtable.defowner),s,srsym,srsymtable,srprop,flags+[ssf_search_helper]) then
                   begin
                     result:=true;
                     exit;
@@ -3223,10 +3219,10 @@ implementation
             // note: ryan
             { TODO(ryan): do some tests to see if this breaks anything.
               it's needed for default properties but it adds another condition
-              for searching which may have side effects. } 
+              for searching which may have side effects } 
             else if (srsymtable.symtabletype=recordsymtable) then
               begin
-                if searchsym_in_record(tobjectdef(srsymtable.defowner),s,srsym,srsymtable) then
+                if searchsym_in_record(tobjectdef(srsymtable.defowner),s,srsym,srsymtable,srprop,flags) then
                   begin
                     result:=true;
                     exit;
@@ -3282,6 +3278,19 @@ implementation
           end;
         srsym:=nil;
         srsymtable:=nil;
+      end;
+
+    { alias }
+    function  searchsym_maybe_with_symoption(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags;option:tsymoption):boolean;inline;
+      var
+        srprop:tpropertysym;
+      begin
+        result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,srprop,flags,option);
+      end; 
+
+    function  searchsym_with_defaults(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym):boolean;
+      begin
+        result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,srprop,[ssf_search_defaults],sp_none);
       end;
 
     function searchsym_with_symoption(const s: TIDString;out srsym:tsym;out
@@ -3524,58 +3533,44 @@ implementation
       end;
 
     // note: ryan
-    function searchsym_in_defaults (structh:tabstractrecorddef;contextstructh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags): boolean;
+    function searchsym_in_defaults (structh:tabstractrecorddef;contextstructh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags): boolean;
       var
         hashedid : THashedIDString;
         i        : longint;
         propsym  : tpropertysym;
-        propdef  : tabstractrecorddef;
+        propdef  : tdef;
       begin
         result := false;
-        searchsym_found_default := nil;
+        srprop := nil;
         while assigned(structh) do
           begin
             if length(structh.default_props) > 0 then
               for i := high(structh.default_props) downto 0 do
                 begin
                   propsym := tpropertysym(structh.default_props[i]);
-                  propdef := tabstractrecorddef(propsym.propdef);
+                  propdef := propsym.propdef;
                   { property is not default }
                   if not (ppo_defaultproperty in propsym.propoptions) then
                     continue;
                   { property is write only }
                   if propsym.propaccesslist[palt_read].firstsym = nil then
                     continue;
-                  if propdef.typ = objectdef then
+                  { not visible }
+                  if not is_visible_for_object(propsym,contextstructh) then
+                    continue;
+                  if (propdef.typ = objectdef) and searchsym_in_class(tobjectdef(propdef),tobjectdef(propdef),s,srsym,srsymtable,srprop,flags-[ssf_search_defaults]) then
                     begin
-                      if searchsym_in_class(tobjectdef(propdef),propdef,s,srsym,srsymtable,flags+[ssf_no_defaults]) then
-                        begin
-                          searchsym_found_default := propsym;
-                          exit(true);
-                        end;
+                      srprop := propsym;
+                      exit(true);
                     end
-                  else if propdef.typ = recorddef then
+                  else if (propdef.typ = recorddef) and searchsym_in_record(tabstractrecorddef(propdef),s,srsym,srsymtable,srprop,flags-[ssf_search_defaults]) then
                     begin
-                      hashedid.id:=s;
-                      { search for a record helper method first }
-                      result:=search_objectpascal_helper(propdef,propdef,s,srsym,srsymtable);
-                      if result then
-                        { an eventual overload inside the extended type's hierarchy
-                          will be found by tcallcandidates }
-                        exit;
-                      srsymtable:=propdef.symtable;
-                      srsym:=tsym(srsymtable.FindWithHash(hashedid));
-                      if assigned(srsym) and is_visible_for_object(srsym,propdef) then
-                        begin
-                          if not (ssf_no_addsymref in flags) then
-                            addsymref(srsym);
-                          searchsym_found_default := propsym;
-                          exit(true);
-                        end;
+                      srprop := propsym;
+                      exit(true);
                     end
                   else if (ssf_search_helper in flags) and search_objectpascal_helper(propdef,nil,s,srsym,srsymtable) then
                     begin
-                      searchsym_found_default := propsym;
+                      srprop := propsym;
                       exit(true);
                     end;
                 end;
@@ -3587,13 +3582,14 @@ implementation
           end;
       end;
 
-    function searchsym_in_class(classh: tobjectdef;contextclassh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;
+    function searchsym_in_class(classh: tobjectdef;contextclassh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags):boolean;
       var
         hashedid : THashedIDString;
         orgclass : tobjectdef;
         i        : longint;
       begin
         orgclass:=classh;
+        srprop:=nil;
         { in case this is a formal class, first find the real definition }
         if assigned(classh) then
           begin
@@ -3672,7 +3668,7 @@ implementation
               end;
             // note: ryan
             { search default after entire base class hierarchy has been searched }
-            if not (ssf_no_defaults in flags) and searchsym_in_defaults(orgclass,contextclassh,s,srsym,srsymtable,flags) then
+            if (ssf_search_defaults in flags) and searchsym_in_defaults(orgclass,contextclassh,s,srsym,srsymtable,srprop,flags) then
               exit(true);
           end;
         if is_objcclass(orgclass) then
@@ -3681,14 +3677,17 @@ implementation
           begin
             srsym:=nil;
             srsymtable:=nil;
+            srprop:=nil;
           end;
       end;
 
-    function  searchsym_in_record(recordh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable):boolean;
+
+    function searchsym_in_record(recordh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;out srprop:tpropertysym;flags:tsymbol_search_flags):boolean;
       var
         hashedid : THashedIDString;
       begin
         result:=false;
+        srprop:=nil;
         hashedid.id:=s;
         { search for a record helper method first }
         result:=search_objectpascal_helper(recordh,recordh,s,srsym,srsymtable);
@@ -3704,12 +3703,28 @@ implementation
             result:=true;
             exit;
           end;
-        // note: ryan
         { search default after base has been searched }
-        if searchsym_in_defaults(recordh,recordh,s,srsym,srsymtable,[ssf_search_helper]) then
+        if (ssf_search_defaults in flags) and searchsym_in_defaults(recordh,recordh,s,srsym,srsymtable,srprop,flags+[ssf_search_helper]) then
           exit(true);
         srsym:=nil;
         srsymtable:=nil;
+        srprop:=nil;
+      end;
+
+    { alias }
+    function searchsym_in_class(classh: tobjectdef;contextclassh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;inline;
+      var
+        srprop:tpropertysym;
+      begin
+        result:=searchsym_in_class(classh,contextclassh,s,srsym,srsymtable,srprop,flags);
+      end;
+
+    { alias } 
+    function searchsym_in_record(recordh:tabstractrecorddef;const s : TIDString;out srsym:tsym;out srsymtable:TSymtable):boolean;inline;
+      var
+        srprop:tpropertysym;
+      begin
+        result:=searchsym_in_record(recordh,s,srsym,srsymtable,srprop,[]);
       end;
 
     function searchsym_in_class_by_msgint(classh:tobjectdef;msgid:longint;out srdef : tdef;out srsym:tsym;out srsymtable:TSymtable):boolean;
@@ -4399,7 +4414,6 @@ implementation
        helperpd : tobjectdef;
      begin
         _defaultprop:=nil;
-        search_default_property:=nil;
         { first search in helper's hierarchy }
         if search_last_objectpascal_helper(pd,nil,helperpd) then
           while assigned(helperpd) do
@@ -4420,7 +4434,7 @@ implementation
              pd.symtable.SymList.ForEachCall(@tstoredsymtable(pd.symtable).testfordefaultproperty,@_defaultprop);
              if assigned(_defaultprop) then
                break;
-             if is_object(pd) then
+             if (pd.typ=objectdef) then
                pd:=tobjectdef(pd).childof
              else
                break;

@@ -48,6 +48,7 @@ interface
       tcandidate = record
          next         : pcandidate;
          data         : tprocdef;
+         prop         : tpropertysym; { default property for candidate }
          wrongparaidx,
          firstparaidx : integer;
          exact_count,
@@ -75,22 +76,24 @@ interface
         FParaNode   : tnode;
         FParaLength : smallint;
         FAllowVariant : boolean;
-        procedure collect_overloads_in_struct(structdef:tabstractrecorddef;ProcdefOverloadList:TFPObjectList;searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
+        operator_not_overloadable:tpropertysym;
+        procedure collect_overloads_in_struct(structdef:tabstractrecorddef;ProcdefOverloadList:TFPObjectList;searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
         procedure collect_overloads_in_units(ProcdefOverloadList:TFPObjectList; objcidcall,explicitunit: boolean;spezcontext:tspecializationcontext);
-        procedure create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
+        procedure create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
         procedure calc_distance(st_root:tsymtable;objcidcall: boolean);
-        function  proc_add(st:tsymtable;pd:tprocdef;objcidcall: boolean):pcandidate;
+        function  proc_add(st:tsymtable;pd:tprocdef;prop:tpropertysym;objcidcall: boolean):pcandidate;
         function  maybe_specialize(var pd:tprocdef;spezcontext:tspecializationcontext):boolean;
       public
-        constructor create(sym:tprocsym;st:TSymtable;ppn:tnode;ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
-        constructor create_operator(op:ttoken;ppn:tnode);
+        constructor create(sym:tprocsym;st:TSymtable;ppn:tnode;ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
+        constructor create_operator(op:ttoken;ppn:tnode;searchdefaults:boolean=false);
         destructor destroy;override;
         procedure list(all:boolean);
 {$ifdef EXTDEBUG}
         procedure dump_info(lvl:longint);
 {$endif EXTDEBUG}
         procedure get_information;
-        function  choose_best(var bestpd:tabstractprocdef; singlevariant: boolean):integer;
+        function  choose_best(var bestpd:tabstractprocdef; singlevariant: boolean):integer; overload;
+        function  choose_best(var bestpd:tabstractprocdef; out bestps : tpropertysym; singlevariant: boolean):integer; overload;
         procedure find_wrong_para;
         property  Count:integer read FProcCnt;
       end;
@@ -150,6 +153,8 @@ interface
 
     function node2opstr(nt:tnodetype):string;
     function token2managementoperator(optoken:ttoken):tmanagementoperator;
+    function tok2nodetype(t: ttoken):tnodetype;
+    function nodetype2tok(n:tnodetype):ttoken;
 
     { check operator args and result type }
 
@@ -207,6 +212,18 @@ interface
     function is_valid_for_default(def:tdef):boolean;
 
     procedure UninitializedVariableMessage(pos : tfileposinfo;warning,local,managed : boolean;name : TMsgStr);
+    
+    // note: ryan
+    type
+      toverloadname=TSymStr;
+    procedure clear_proc_overloads(pd:tprocdef);
+    procedure remember_proc_overload(key:toverloadname;pd:tprocdef;ps:tpropertysym=nil);
+    function restore_binary_overload(token:ttoken;key:toverloadname;out pd:tprocdef;out ps:tpropertysym): boolean;
+    function restore_proc_overload(procsym:tprocsym;key:toverloadname;out pd:tprocdef): boolean;
+
+    const
+      non_commutative_op_tokens=[_OP_SHL,_OP_SHR,_OP_DIV,_OP_MOD,_STARSTAR,_SLASH,_MINUS];
+      non_commutative_op_nodes=[shln,shrn,divn,modn,starstarn,slashn,subn];
 
 implementation
 
@@ -219,16 +236,209 @@ implementation
        pgenutil
        ;
 
+    // note: ryan
+
+    { ================================================================= }
+
+    { proc overload entry }
+    type
+      tprocoverloadentry = class
+        strict private
+          function getname: string;
+          function gethash: longword;
+        public
+          pd: tprocdef;
+          ps: tpropertysym; { optional default property for overload }
+          constructor create(_pd:tprocdef; _ps:tpropertysym);
+          { hash table values }
+          property name: string read getname;
+          property hash: longword read gethash;
+      end;
+
+    function tprocoverloadentry.getname: string;
+      begin
+        result:=pd.procsym.name;
+      end;
+
+    function tprocoverloadentry.gethash: longword;
+      begin
+        result:=pd.procsym.hash;
+      end;
+
+    constructor tprocoverloadentry.create(_pd:tprocdef; _ps:tpropertysym);
+      begin
+        pd:=_pd;
+        ps:=_ps;
+      end;
+
+    { proc overload table }
+    type
+      tprocoverloadtable = class (TFPHashObjectList)
+        public
+          function get_overload(key:toverloadname): tprocoverloadentry;
+      end;
+
+    function tprocoverloadtable.get_overload(key:toverloadname): tprocoverloadentry;
+      var
+        hashedid   : THashedIDString;
+      begin
+        hashedid.id:=key;
+        result:=tprocoverloadentry(list.FindWithHash(hashedid.id,hashedid.hash));
+      end;
+
+    { proc overload entries }
+    type
+      tprocoverloadentries = class
+        strict private
+          list:TFPHashObjectList;
+          function get_table(name:TSymStr;hash:LongWord): tprocoverloadtable;
+        public
+          constructor create;
+          procedure add_entry(key:toverloadname; entry:tprocoverloadentry);
+          function get_entry(sym:tsym; key:toverloadname): tprocoverloadentry;overload;
+          function get_entry(name,key:toverloadname): tprocoverloadentry;overload;
+          procedure clear(pd:tprocdef);
+      end;
+
+    constructor tprocoverloadentries.create;
+      begin
+        list:=TFPHashObjectList.Create;
+      end;  
+
+    function tprocoverloadentries.get_entry(sym:tsym; key:toverloadname): tprocoverloadentry;
+      var
+        table:tprocoverloadtable;
+      begin
+        table:=tprocoverloadtable(list.FindWithHash(sym.name,sym.hash));
+        if assigned(table) then
+          result:=table.get_overload(key)
+        else
+          result:=nil;
+      end;
+
+    function tprocoverloadentries.get_entry(name,key:toverloadname): tprocoverloadentry;
+      var
+        table:tprocoverloadtable;
+        hashedid:THashedIDString;
+      begin
+        hashedid.id:=name;
+        table:=get_table(hashedid.id,hashedid.hash);
+        if assigned(table) then
+          result:=table.get_overload(key)
+        else
+          result:=nil;
+      end;
+
+    function tprocoverloadentries.get_table(name:TSymStr;hash:LongWord): tprocoverloadtable;inline;
+      begin
+        result:=tprocoverloadtable(list.FindWithHash(name,hash));
+      end;
+
+    procedure tprocoverloadentries.add_entry(key:toverloadname; entry:tprocoverloadentry);
+      var
+        table:tprocoverloadtable;
+      begin
+        table:=get_table(entry.name,entry.hash);
+        if not assigned(table) then
+          begin
+            table:=tprocoverloadtable.create;
+            list.add(entry.name,table);
+          end;
+        table.add(key,entry);
+      end;
+
+    procedure tprocoverloadentries.clear(pd:tprocdef);
+      var
+        table:tprocoverloadtable;
+      begin
+        table:=get_table(pd.procsym.name,pd.procsym.hash);
+        if assigned(table) then
+          table.clear;
+      end;
+
+    { ==== global overloads ==== }  
+
+    // TODO: kill this for all stores in tsymtable. global space is staticsymtable
+    var
+      global_overload_table: tprocoverloadentries = nil;
+
+    function get_table_for_proc(sym:tsym;allocate:boolean): tprocoverloadentries;
+      var
+        table:tprocoverloadentries;
+      begin
+        table:=tprocoverloadentries(sym.owner.overload_table);
+        if not assigned(table) and allocate then
+          begin
+            table:=tprocoverloadentries.create;
+            sym.owner.overload_table:=table;
+          end;
+        result:=table;
+      end;
+
+    procedure clear_proc_overloads(pd:tprocdef);
+      var
+        table:tprocoverloadentries;
+      begin
+        table:=get_table_for_proc(pd.procsym,false);
+        if assigned(table) then
+          table.clear(pd);
+      end;
+
+    procedure remember_proc_overload(key:toverloadname;pd:tprocdef;ps:tpropertysym=nil);
+      var
+        entry:tprocoverloadentry;
+        table:tprocoverloadentries;
+      begin
+        table:=get_table_for_proc(pd.procsym,true);
+        writeln('remember: "', pd.procsym.name, '" "', key,'" -> ', pd.owner.symtabletype, ' ', hexstr(pd.owner));
+        // TODO: check for duplicates first!
+        entry:=tprocoverloadentry.create(pd,ps);
+        table.add_entry(key,entry);
+      end;
+
+    // TODO: global_overload_table is dead now so we need to know
+    // which symtable we're in now
+    function restore_binary_overload(token:ttoken;key:toverloadname;out pd:tprocdef;out ps:tpropertysym): boolean;
+      var
+        entry:tprocoverloadentry;
+      begin
+        if global_overload_table=nil then
+          exit(false);
+        entry:=global_overload_table.get_entry(overloaded_names[token],key);
+        if assigned(entry) then
+          begin
+            pd:=entry.pd;
+            ps:=entry.ps;
+            result:=true;
+          end
+        else
+          result:=false;
+      end;
+
+    function restore_proc_overload(procsym:tprocsym;key:toverloadname;out pd:tprocdef): boolean;
+      var
+        entry:tprocoverloadentry;
+        table:tprocoverloadentries;
+      begin
+        table:=get_table_for_proc(procsym,false);
+        { no overloads }
+        if not assigned(table) then
+          exit;
+        entry:=table.get_entry(procsym,key);
+        if assigned(entry) then
+          begin
+            pd:=entry.pd;
+            result:=true;
+          end
+        else
+          result:=false;
+      end;
+
+    { ================================================================= }
+
     type
       TValidAssign=(Valid_Property,Valid_Void,Valid_Const,Valid_Addr,Valid_Packed,Valid_Range);
       TValidAssigns=set of TValidAssign;
-
-
-    { keep these two in sync! }
-    const
-      non_commutative_op_tokens=[_OP_SHL,_OP_SHR,_OP_DIV,_OP_MOD,_STARSTAR,_SLASH,_MINUS];
-      non_commutative_op_nodes=[shln,shrn,divn,modn,starstarn,slashn,subn];
-
 
     function node2opstr(nt:tnodetype):string;
       var
@@ -243,6 +453,25 @@ implementation
             end;
        end;
 
+   function tok2nodetype(t:ttoken):tnodetype;
+     var
+       i: integer;
+     begin
+       result:=emptynode;
+       for i := 0 to tok2nodes-1 do
+         if tok2node[i].tok=t then
+           exit(tok2node[i].nod);
+     end;
+
+   function nodetype2tok(n:tnodetype):ttoken;
+     var
+       i: integer;
+     begin
+       result:=NOTOKEN;
+       for i := 0 to tok2nodes-1 do
+         if tok2node[i].nod=n then
+           exit(tok2node[i].tok);
+     end;
 
     function token2managementoperator(optoken:ttoken):tmanagementoperator;
       var
@@ -851,7 +1080,6 @@ implementation
         tcallnode(t).procdefinition:=operpd;
       end;
 
-
     function isbinaryoverloaded(var t : tnode;ocf:toverload_check_flags) : boolean;
       var
         rd,ld   : tdef;
@@ -864,12 +1092,13 @@ implementation
         function search_operator(optoken:ttoken;generror:boolean): integer;
           var
             candidates : tcallcandidates;
+            operps : tpropertysym;
           begin
             { generate parameter nodes }
             ppn:=ccallparanode.create(tbinarynode(t).right.getcopy,ccallparanode.create(tbinarynode(t).left.getcopy,nil));
             ppn.get_paratype;
             candidates:=tcallcandidates.create_operator(optoken,ppn);
-
+            
             { for commutative operators we can swap arguments and try again }
             if (candidates.count=0) and
                not(optoken in non_commutative_op_tokens) then
@@ -909,7 +1138,7 @@ implementation
                 { Display info when multiple candidates are found }
                 candidates.dump_info(V_Debug);
         {$endif EXTDEBUG}
-                result:=candidates.choose_best(tabstractprocdef(operpd),false);
+                result:=candidates.choose_best(tabstractprocdef(operpd),operps,false);
               end;
 
             { exit when no overloads are found }
@@ -2123,7 +2352,7 @@ implementation
                            TCallCandidates
 ****************************************************************************}
 
-    constructor tcallcandidates.create(sym:tprocsym;st:TSymtable;ppn:tnode;ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
+    constructor tcallcandidates.create(sym:tprocsym;st:TSymtable;ppn:tnode;ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
       begin
         if not assigned(sym) then
           internalerror(200411015);
@@ -2131,19 +2360,23 @@ implementation
         FProcsym:=sym;
         FProcsymtable:=st;
         FParanode:=ppn;
-        FIgnoredCandidateProcs:=tfpobjectlist.create(false);
-        create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,spezcontext);
+        FIgnoredCandidateProcs:=tfpobjectlist.create(true);
+        create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults,spezcontext);
+        debugstats.call_cand_start:=getrealtime;
+        debugstats.call_count+=1;
       end;
 
 
-    constructor tcallcandidates.create_operator(op:ttoken;ppn:tnode);
+    constructor tcallcandidates.create_operator(op:ttoken;ppn:tnode;searchdefaults:boolean=false);
       begin
         FOperator:=op;
         FProcsym:=nil;
         FProcsymtable:=nil;
         FParanode:=ppn;
-        FIgnoredCandidateProcs:=tfpobjectlist.create(false);
-        create_candidate_list(false,false,false,false,false,false,nil);
+        FIgnoredCandidateProcs:=tfpobjectlist.create(true);
+        create_candidate_list(false,false,false,false,false,false,searchdefaults,nil);
+        debugstats.call_cand_start:=getrealtime;
+        debugstats.call_count+=1;
       end;
 
 
@@ -2154,6 +2387,7 @@ implementation
         psym : tprocsym;
         i : longint;
       begin
+        debugstats.call_cand_time:=getrealtime - debugstats.call_cand_start;
         FIgnoredCandidateProcs.free;
         hp:=FCandidateProcs;
         while assigned(hp) do
@@ -2180,12 +2414,12 @@ implementation
       end;
 
 
-    procedure tcallcandidates.collect_overloads_in_struct(structdef:tabstractrecorddef;ProcdefOverloadList:TFPObjectList;searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
+    procedure tcallcandidates.collect_overloads_in_struct(structdef:tabstractrecorddef;ProcdefOverloadList:TFPObjectList;searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
 
       var
         changedhierarchy : boolean;
 
-      function processprocsym(srsym:tprocsym; out foundanything: boolean):boolean;
+      function processprocsym(srsym:tprocsym; propsym:tpropertysym; out foundanything: boolean):boolean;
         var
           j  : integer;
           pd : tprocdef;
@@ -2200,7 +2434,7 @@ implementation
                 continue;
               if (po_ignore_for_overload_resolution in pd.procoptions) then
                 begin
-                  FIgnoredCandidateProcs.add(pd);
+                  FIgnoredCandidateProcs.add(tprocoverloadentry.create(pd,propsym));
                   continue;
                 end;
               { in case of anonymous inherited, only match procdefs identical
@@ -2231,7 +2465,7 @@ implementation
                 result:=true;
               { if the hierarchy had been changed we need to check for duplicates }
               if not changedhierarchy or (ProcdefOverloadList.IndexOf(pd)<0) then
-                ProcdefOverloadList.Add(pd);
+                ProcdefOverloadList.Add(tprocoverloadentry.create(pd,propsym));
             end;
         end;
 
@@ -2242,11 +2476,18 @@ implementation
         foundanything : boolean;
         extendeddef : tabstractrecorddef;
         helperdef  : tobjectdef;
+        origstruct : tabstractrecorddef;
+        propsym : tpropertysym;
+        propdef : tabstractrecorddef;
+        srsymtable : tsymtable;
+        i : integer;
+        process : boolean;
       begin
         if FOperator=NOTOKEN then
           hashedid.id:=FProcsym.name
         else
           hashedid.id:=overloaded_names[FOperator];
+        origstruct:=structdef;
         hasoverload:=false;
         extendeddef:=nil;
         changedhierarchy:=false;
@@ -2271,7 +2512,7 @@ implementation
                            { Delphi allows hiding a property by a procedure with the same name }
                            (srsym.typ=procsym) then
                          begin
-                           hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+                           hasoverload:=processprocsym(tprocsym(srsym),nil,foundanything);
                            { when there is no explicit overload we stop searching }
                            if foundanything and
                               not hasoverload then
@@ -2289,7 +2530,7 @@ implementation
               { Delphi allows hiding a property by a procedure with the same name }
               (srsym.typ=procsym) then
              begin
-               hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+               hasoverload:=processprocsym(tprocsym(srsym),nil,foundanything);
                { when there is no explicit overload we stop searching }
                if foundanything and
                   not hasoverload then
@@ -2313,7 +2554,7 @@ implementation
                   { Delphi allows hiding a property by a procedure with the same name }
                   (srsym.typ=procsym) then
                  begin
-                   hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+                   hasoverload:=processprocsym(tprocsym(srsym),nil,foundanything);
                    { when there is no explicit overload we stop searching }
                    if foundanything and
                       not hasoverload then
@@ -2333,6 +2574,84 @@ implementation
                changedhierarchy:=true;
              end;
          end;
+        // note: ryan
+        { the entire base hierarchy has been searched so 
+          we can proceed to default properties }
+        if searchdefaults then
+          begin
+            structdef:=origstruct;
+            while assigned(structdef) do
+              begin
+                for i := high(structdef.default_props) downto 0 do
+                  begin
+                    propsym := tpropertysym(structdef.default_props[i]);
+                    propdef := tabstractrecorddef(propsym.propdef);
+                    { property is not default }
+                    if not (ppo_defaultproperty in propsym.propoptions) then
+                      continue;
+                    { property is write only }
+                    if not propsym.has_access(palt_read) then
+                      continue;
+                    { remember the first non-overloadable property because
+                      we may need to fall back to this later }
+                    if (FOperator<>NOTOKEN) and not assigned(operator_not_overloadable) then
+                      begin
+                        if assigned(tbinarynode(FParanode).right) then
+                          begin
+                            if not isbinaryoperatoroverloadable(
+                              tok2nodetype(FOperator),
+                              propdef,
+                              tcallparanode(tbinarynode(FParanode).right).left.nodetype,
+                              tbinarynode(FParanode).left.resultdef,
+                              tbinarynode(FParanode).left.nodetype) then
+                                operator_not_overloadable:=propsym;
+                          end
+                        else
+                          begin
+                            if not isunaryoperatoroverloadable(tok2nodetype(FOperator),in_none,propdef) then
+                              operator_not_overloadable:=propsym;
+                          end;
+                      end;
+                    process:=false;
+                    if is_struct(propdef) then
+                      begin
+                        { search helpers first }
+                        if search_objectpascal_helper(propdef,propdef,hashedid.id,srsym,srsymtable) and (srsym.typ=procsym) then
+                          process:=true
+                        else
+                          { search actual type next }
+                          begin
+                            srsymtable:=propdef.symtable;
+                            srsym:=tsym(srsymtable.FindWithHash(hashedid));
+                            if assigned(srsym) and (srsym.typ=procsym) then
+                              process:=true;
+                          end;
+                      end
+                    { for operators we need to search entire scope
+                      because compiler types may contain operator procs }
+                    else if FOperator<>NOTOKEN then
+                      begin
+                        searchsym(hashedid.id,srsym,srsymtable);
+                        if assigned(srsym) and (srsym.typ=procsym) then
+                          process:=true;
+                      end;
+                    { process the sym }
+                    if process then
+                      begin
+                        hasoverload:=processprocsym(tprocsym(srsym),propsym,foundanything);                          
+                        { when there is no explicit overload we stop searching }
+                        if foundanything and
+                          not hasoverload then
+                        break;
+                      end;
+                  end;
+                { search up hierarchy for objects }
+                if structdef.typ = objectdef then
+                  structdef:=tobjectdef(structdef).childof
+                else
+                  break;
+              end;
+          end;
       end;
 
 
@@ -2397,7 +2716,7 @@ implementation
                           continue;
                         if (po_ignore_for_overload_resolution in pd.procoptions) then
                           begin
-                            FIgnoredCandidateProcs.add(pd);
+                            FIgnoredCandidateProcs.add(tprocoverloadentry.create(pd,nil));
                             continue;
                           end;
                         { Store first procsym found }
@@ -2405,7 +2724,7 @@ implementation
                           FProcsym:=tprocsym(srsym);
                         if po_overload in pd.procoptions then
                           hasoverload:=true;
-                        ProcdefOverloadList.Add(pd);
+                        ProcdefOverloadList.Add(tprocoverloadentry.create(pd,nil));
                       end;
                     { when there is no explicit overload we stop searching,
                       except for Objective-C methods called via id }
@@ -2419,7 +2738,7 @@ implementation
       end;
 
 
-    procedure tcallcandidates.create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited:boolean;spezcontext:tspecializationcontext);
+    procedure tcallcandidates.create_candidate_list(ignorevisibility,allowdefaultparas,objcidcall,explicitunit,searchhelpers,anoninherited,searchdefaults:boolean;spezcontext:tspecializationcontext);
       var
         j     : integer;
         pd    : tprocdef;
@@ -2431,15 +2750,16 @@ implementation
         contextstructdef : tabstractrecorddef;
         ProcdefOverloadList : TFPObjectList;
         cpoptions : tcompare_paras_options;
+        prop : tpropertysym;
       begin
         FCandidateProcs:=nil;
 
         { Find all available overloads for this procsym }
-        ProcdefOverloadList:=TFPObjectList.Create(false);
+        ProcdefOverloadList:=TFPObjectList.Create(true);
         if not objcidcall and
            (FOperator=NOTOKEN) and
            (FProcsym.owner.symtabletype in [objectsymtable,recordsymtable]) then
-          collect_overloads_in_struct(tabstractrecorddef(FProcsym.owner.defowner),ProcdefOverloadList,searchhelpers,anoninherited,spezcontext)
+          collect_overloads_in_struct(tabstractrecorddef(FProcsym.owner.defowner),ProcdefOverloadList,searchhelpers,anoninherited,searchdefaults,spezcontext)
         else
         if (FOperator<>NOTOKEN) then
           begin
@@ -2448,9 +2768,16 @@ implementation
             pt:=tcallparanode(FParaNode);
             while assigned(pt) do
               begin
+                // note: ryan
+                { search in structs with default properties }
+                if searchdefaults then
+                  begin
+                    if assigned(pt.left) and not assigned(pt.right) and struct_has_default_property_access(pt.left.resultdef) then
+                      collect_overloads_in_struct(tabstractrecorddef(pt.left.resultdef),ProcdefOverloadList,searchhelpers,anoninherited,searchdefaults,spezcontext);
+                  end;
                 if (pt.resultdef.typ=recorddef) and
                     (sto_has_operator in tabstractrecorddef(pt.resultdef).symtable.tableoptions) then
-                  collect_overloads_in_struct(tabstractrecorddef(pt.resultdef),ProcdefOverloadList,searchhelpers,anoninherited,spezcontext);
+                  collect_overloads_in_struct(tabstractrecorddef(pt.resultdef),ProcdefOverloadList,searchhelpers,anoninherited,searchdefaults,spezcontext);
                 pt:=tcallparanode(pt.right);
               end;
             collect_overloads_in_units(ProcdefOverloadList,objcidcall,explicitunit,spezcontext);
@@ -2496,7 +2823,8 @@ implementation
         { Process all found overloads }
         for j:=0 to ProcdefOverloadList.Count-1 do
           begin
-            pd:=tprocdef(ProcdefOverloadList[j]);
+            pd:=tprocoverloadentry(ProcdefOverloadList[j]).pd;
+            prop:=tprocoverloadentry(ProcdefOverloadList[j]).ps;
             added:=false;
 
             { only when the # of parameter are supported by the procedure and
@@ -2554,7 +2882,7 @@ implementation
                   end;
                 if not found then
                   begin
-                    proc_add(st,pd,objcidcall);
+                    proc_add(st,pd,prop,objcidcall);
                     added:=true;
                   end;
               end;
@@ -2656,7 +2984,7 @@ implementation
       end;
 
 
-    function tcallcandidates.proc_add(st:tsymtable;pd:tprocdef;objcidcall: boolean):pcandidate;
+    function tcallcandidates.proc_add(st:tsymtable;pd:tprocdef;prop:tpropertysym;objcidcall: boolean):pcandidate;
       var
         defaultparacnt : integer;
       begin
@@ -2664,6 +2992,7 @@ implementation
         new(result);
         fillchar(result^,sizeof(tcandidate),0);
         result^.data:=pd;
+        result^.prop:=prop;
         result^.next:=FCandidateProcs;
         FCandidateProcs:=result;
         inc(FProccnt);
@@ -2827,6 +3156,7 @@ implementation
            while (paraidx>=0) and (vo_is_hidden_para in tparavarsym(hp^.data.paras[paraidx]).varoptions) do
              dec(paraidx);
            pt:=tcallparanode(FParaNode);
+           //writeln('proc:',hp^.data.owner.name^, ' cand_cnt:',count);
            while assigned(pt) and (paraidx>=0) do
             begin
               currpara:=tparavarsym(hp^.data.paras[paraidx]);
@@ -2836,8 +3166,16 @@ implementation
               releasecurrpt:=false;
               { retrieve current parameter definitions to compares }
               eq:=te_incompatible;
-              def_from:=currpt.resultdef;
+              // note: ryan
+              { if the candiates is from a default property then
+                we need to pass the 1st param as the default property
+                type instead of the original. }
+              if assigned(hp^.prop) and (paraidx=0) then
+                def_from:=hp^.prop.propdef
+              else
+                def_from:=currpt.resultdef;
               def_to:=currpara.vardef;
+              //writeln('  paraidx:',paraidx,' from:',deftostr(def_from),' to:',deftostr(def_to),' para:',currpara.realname);
               if not(assigned(def_from)) then
                internalerror(200212091);
               if not(
@@ -3406,8 +3744,14 @@ implementation
           internalerror(2006122805);
       end;
 
-
     function tcallcandidates.choose_best(var bestpd:tabstractprocdef; singlevariant: boolean):integer;
+      var
+        bestps : tpropertysym;
+      begin
+        result:=choose_best(bestpd,bestps,singlevariant);
+      end;
+
+    function tcallcandidates.choose_best(var bestpd:tabstractprocdef; out bestps : tpropertysym; singlevariant: boolean):integer;
       var
         pd: tprocdef;
         besthpstart,
@@ -3422,6 +3766,7 @@ implementation
         { Setup the first procdef as best, only count it as a result
           when it is valid }
         bestpd:=FCandidateProcs^.data;
+        bestps:=FCandidateProcs^.prop;
         if FCandidateProcs^.invalid then
          cntpd:=0
         else
@@ -3446,6 +3791,7 @@ implementation
                   end;
                  { besthpstart is already set to hp }
                  bestpd:=besthpstart^.data;
+                 bestps:=besthpstart^.prop;
                  cntpd:=1;
                end
               else
@@ -3473,7 +3819,7 @@ implementation
           begin
             for res:=0 to FIgnoredCandidateProcs.count-1 do
               begin
-                pd:=tprocdef(FIgnoredCandidateProcs[res]);
+                pd:=tprocoverloadentry(FIgnoredCandidateProcs[res]).pd;
                 { stop searching when we start comparing methods of parent of
                   the struct in which the current best method was found }
                 if assigned(pd.struct) and
@@ -3486,10 +3832,13 @@ implementation
                   begin
                     { first one encountered is closest in terms of visibility }
                     bestpd:=pd;
+                    bestps:=tprocoverloadentry(FIgnoredCandidateProcs[res]).ps;
                     break;
                   end;
               end;
           end;
+        if assigned(operator_not_overloadable) and (bestps = nil) then
+          bestps:=operator_not_overloadable;
         result:=cntpd;
       end;
 

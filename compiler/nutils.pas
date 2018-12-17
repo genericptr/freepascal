@@ -27,7 +27,7 @@ interface
 
   uses
     globtype,constexp,
-    symtype,symsym,symbase,symtable,
+    symtype,symsym,symbase,symtable,symconst,
     node;
 
   const
@@ -153,15 +153,172 @@ interface
     { include or exclude cs from p.localswitches }
     procedure node_change_local_switch(p : tnode;cs : tlocalswitch;enable : boolean);
 
+    { inserts read property access node }
+    procedure handle_read_property(propsym : tpropertysym;st : TSymtable;var p1 : tnode);
+
+    { inserts write property access node }
+    procedure handle_write_property(propsym : tpropertysym;st : TSymtable;var p1 : tnode;p2 : tnode);
+
+    { inserts property access node for expression }
+    function try_default_read_property(var expr:tnode;required_types:tdeftyps):boolean;
+
+    function maybe_load_methodpointer(st:TSymtable;var p1:tnode):boolean;
+
 implementation
 
     uses
       cutils,verbose,globals,compinnr,
-      symconst,symdef,
+      symdef,
       defcmp,defutil,
       nbas,ncon,ncnv,nld,nflw,nset,ncal,nadd,nmem,ninl,
       cpubase,cgbase,procinfo,
       pass_1;
+
+  function maybe_load_methodpointer(st:TSymtable;var p1:tnode):boolean;
+    var
+      pd: tprocdef;
+    begin
+      maybe_load_methodpointer:=false;
+      if not assigned(p1) then
+       begin
+         case st.symtabletype of
+           withsymtable :
+             begin
+               if (st.defowner.typ=objectdef) then
+                 p1:=tnode(twithsymtable(st).withrefnode).getcopy;
+             end;
+           ObjectSymtable,
+           recordsymtable:
+             begin
+               { Escape nested procedures }
+               if assigned(current_procinfo) then
+                 begin
+                   pd:=current_procinfo.get_normal_proc.procdef;
+                   { We are calling from the static class method which has no self node }
+                   if assigned(pd) and pd.no_self_node then
+                     if st.symtabletype=recordsymtable then
+                       p1:=ctypenode.create(pd.struct)
+                     else
+                       p1:=cloadvmtaddrnode.create(ctypenode.create(pd.struct))
+                   else
+                     p1:=load_self_node;
+                 end
+               else
+                 p1:=load_self_node;
+               { We are calling a member }
+               maybe_load_methodpointer:=true;
+             end;
+         end;
+       end;
+    end;
+
+  procedure handle_write_property(propsym : tpropertysym;st : TSymtable;var p1 : tnode;p2 : tnode);
+    var
+       membercall : boolean;
+       callflags  : tcallnodeflags;
+       propaccesslist : tpropaccesslist;
+       sym: tsym;
+    begin
+      if propsym.getpropaccesslist(palt_write,propaccesslist) then
+        begin
+           sym:=propaccesslist.firstsym^.sym;
+           case sym.typ of
+             procsym :
+               begin
+                callflags:=[];
+                { generate the method call }
+                membercall:=maybe_load_methodpointer(st,p1);
+                if membercall then
+                  include(callflags,cnf_member_call);
+                p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                addsymref(sym);
+                tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
+               end;
+             fieldvarsym :
+               begin
+                 { generate access code }
+                 if not handle_staticfield_access(sym,p1) then
+                   propaccesslist_to_node(p1,st,propaccesslist);
+                 p1:=cassignmentnode.create(p1,p2);
+              end
+            else
+              begin
+                p1:=cerrornode.create;
+                Message(parser_e_no_procedure_to_access_property);
+              end;
+          end;
+        end
+      else
+        begin
+           p1:=cerrornode.create;
+           Message(parser_e_no_procedure_to_access_property);
+        end;
+    end;
+
+  procedure handle_read_property(propsym : tpropertysym;st : TSymtable;var p1 : tnode);
+    var
+       membercall : boolean;
+       callflags  : tcallnodeflags;
+       propaccesslist : tpropaccesslist;
+       sym: tsym;
+    begin
+       if propsym.getpropaccesslist(palt_read,propaccesslist) then
+         begin
+            sym := propaccesslist.firstsym^.sym;
+            case sym.typ of
+              fieldvarsym :
+                begin
+                  { generate access code }
+                  if not handle_staticfield_access(sym,p1) then
+                    propaccesslist_to_node(p1,st,propaccesslist);
+                end;
+              procsym :
+                begin
+                   callflags:=[];
+                   { generate the method call }
+                   membercall:=maybe_load_methodpointer(st,p1);
+                   if membercall then
+                     include(callflags,cnf_member_call);
+                   p1:=ccallnode.create(nil,tprocsym(sym),st,p1,callflags,nil);
+                end
+              else
+                begin
+                   p1:=cerrornode.create;
+                   Message(type_e_mismatch);
+                end;
+           end;
+         end
+       else
+         begin
+            { error, no function to read property }
+            p1:=cerrornode.create;
+            Message(parser_e_no_procedure_to_access_property);
+         end;
+    end;
+
+  function try_default_read_property(var expr:tnode;required_types:tdeftyps):boolean;
+    var
+      structh: tabstractrecorddef;
+      propsym: tpropertysym;
+      i: integer;
+    begin
+      result:=false;
+      if is_struct(expr.resultdef) then
+        begin
+          structh := tabstractrecorddef(expr.resultdef);
+          if structh.has_default_property_access then
+            for i := high(structh.default_props) downto 0 do
+              begin
+                propsym := tpropertysym(structh.default_props[i]);
+                if not (ppo_defaultproperty in propsym.propoptions) or
+                  not propsym.has_access(palt_read) or
+                  not (propsym.propdef.typ in required_types) then
+                  continue;
+                handle_read_property(propsym,structh.symtable,expr);
+                exit(true);
+              end;
+        end;
+    end;
 
   function foreachnode(procmethod : tforeachprocmethod;var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
 

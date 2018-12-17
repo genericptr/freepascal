@@ -160,6 +160,9 @@ var
 
 procedure DoneCompiler;
 begin
+  // note: ryan
+  print_debug_summary;
+
   if not CompilerInited then
    exit;
 { Free compiler if args are read }

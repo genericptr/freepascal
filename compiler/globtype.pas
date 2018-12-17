@@ -23,7 +23,7 @@ unit globtype;
 {$i fpcdefs.inc}
 
 interface
-
+      
     const
        maxidlen = 127;
 
@@ -794,7 +794,31 @@ interface
   { hide Sysutils.ExecuteProcess in units using this one after SysUtils}
   const
     ExecuteProcess = 'Do not use' deprecated 'Use cfileutil.RequotedExecuteProcess instead, ExecuteProcess cannot deal with single quotes as used by Unix command lines';
+  
+  // note: ryan   
+  { debugging tests } 
+  type
+    tdebugstats = record
+      call_count: Longword;
+      call_cand_start,call_cand_time: double;
+    end;
+  var
+    debugstats : tdebugstats = (
+      call_count: 0; 
+      call_cand_start: 0; 
+      call_cand_time: 0
+      );
+
+procedure print_debug_summary;
 
 implementation
+uses
+  sysutils;
+
+procedure print_debug_summary; 
+begin
+  writeln('call_count: ',debugstats.call_count);
+  writeln('call_cand_time: ',floattostr(debugstats.call_cand_time));
+end;
 
 end.

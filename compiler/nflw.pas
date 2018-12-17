@@ -844,8 +844,6 @@ implementation
         current: tpropertysym;
         storefilepos: tfileposinfo;
         propsym: tpropertysym;
-        structh: tabstractrecorddef;
-        i: integer;
       begin
         storefilepos:=current_filepos;
         current_filepos:=hloopvar.fileinfo;
@@ -929,27 +927,12 @@ implementation
                 else
                   begin
                     // note: ryan
-                    { search default properties for compiler type that supports enumeration }
-                    if is_struct(expr.resultdef) then
+                    // pass read access. this could be used for various statments
+                    { try default read property for possible built-in iterator types }
+                    if try_default_read_property(expr,[stringdef,arraydef,setdef]) then
                       begin
-                        structh := tabstractrecorddef(expr.resultdef);
-                        if structh.has_default_property_access then
-                          for i := high(structh.default_props) downto 0 do
-                            begin
-                              propsym := tpropertysym(structh.default_props[i]);
-                              { property is not default }
-                              if not (ppo_defaultproperty in propsym.propoptions) then
-                                continue;
-                              { property doesn't have read access }
-                              if propsym.propaccesslist[palt_read].firstsym = nil then
-                                continue;
-                              { property doesn't support enumeration }
-                              if not (propsym.propdef.typ in [stringdef,arraydef,setdef]) then
-                                continue;
-                              handle_default_read_property(propsym,structh.symtable,expr);
-                              if expr.resultdef = nil then
-                                do_typecheckpass(expr);
-                            end;
+                        if expr.resultdef = nil then
+                          do_typecheckpass(expr);
                       end;
                     { prefer set if loop var could be a set var and the loop
                       expression can indeed be a set }

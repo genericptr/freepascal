@@ -3472,6 +3472,31 @@ implementation
           end;
       end;
 
+    // note: ryan
+    // TODO: put this into tcallparanode once we're certain of it
+    function get_proc_overload_key(para:tcallparanode;flags:longint): toverloadname;
+      function def_id_str(def:tdef): string;
+        begin
+          // TODO: can we hash this value and set it back in the def?
+          result:=def.typename;
+          //result:=tostr(def.defid);
+        end;
+      var
+        pt:tcallparanode;
+        parastr:toverloadname;
+      begin
+        parastr:='';
+        pt:=tcallparanode(para);
+        while assigned(pt) do
+          begin
+            if parastr='' then
+              parastr:=def_id_str(pt.resultdef)
+            else
+              parastr:=parastr+'$'+def_id_str(pt.resultdef);
+            pt:=tcallparanode(pt.right);
+          end;
+        result:=parastr+'$'+tostr(flags);
+      end;  
 
     function tcallnode.pass_typecheck:tnode;
       var
@@ -3488,6 +3513,7 @@ implementation
         statements : tstatementnode;
         converted_result_data : ttempcreatenode;
         calltype: tdispcalltype;
+        cand_key: toverloadname;
       begin
          result:=nil;
          candidates:=nil;
@@ -3595,120 +3621,141 @@ implementation
                            exit;
                          end;
                      end;
-                   { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
-                   ignorevisibility:=(nf_isproperty in flags) or
-                                     ((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
-                                     (cnf_ignore_visibility in callnodeflags);
-                   candidates:=tcallcandidates.create(symtableprocentry,symtableproc,left,ignorevisibility,
-                     not(nf_isproperty in flags),cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
-                     callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,spezcontext);
 
-                   { no procedures found? then there is something wrong
-                     with the parameter size or the procedures are
-                     not accessible }
-                   if candidates.count=0 then
-                    begin
-                      { when it's an auto inherited call and there
-                        is no procedure found, but the procedures
-                        were defined with overload directive and at
-                        least two procedures are defined then we ignore
-                        this inherited by inserting a nothingn. Only
-                        do this ugly hack in Delphi mode as it looks more
-                        like a bug. It's also not documented }
-                      if (m_delphi in current_settings.modeswitches) and
-                         (cnf_anon_inherited in callnodeflags) and
-                         (symtableprocentry.owner.symtabletype=ObjectSymtable) and
-                         (po_overload in tprocdef(symtableprocentry.ProcdefList[0]).procoptions) and
-                         (symtableprocentry.ProcdefList.Count>=2) then
-                        result:=cnothingnode.create
-                      else
+                   // note: ryan
+                   cand_key:='';
+                   if not assigned(spezcontext) then
+                     begin
+                       //cand_key:=get_proc_overload_key(tcallparanode(left),longint(callnodeflags));
+                       //if restore_proc_overload(symtableprocentry,cand_key,tprocdef(procdefinition)) then
+                       //  begin
+                       //    writeln('restored: "',symtableprocentry.name,'" "',cand_key,'" ', procdefinition.owner.symtabletype, ' ', hexstr(procdefinition.owner));
+                       //    { assign procdefinition }
+                       //    if symtableproc=nil then
+                       //      symtableproc:=procdefinition.owner;
+                       //  end;
+                     end;
+
+                   if not assigned(procdefinition) then
+                     begin
+                       { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
+                       ignorevisibility:=(nf_isproperty in flags) or
+                                         ((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
+                                         (cnf_ignore_visibility in callnodeflags);
+                       candidates:=tcallcandidates.create(symtableprocentry,symtableproc,left,ignorevisibility,
+                         not(nf_isproperty in flags),cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
+                         callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,false,spezcontext);
+
+                       { no procedures found? then there is something wrong
+                         with the parameter size or the procedures are
+                         not accessible }
+                       if candidates.count=0 then
                         begin
-                          { in tp mode we can try to convert to procvar if
-                            there are no parameters specified }
-                          if not(assigned(left)) and
-                             not(cnf_inherited in callnodeflags) and
-                             ((m_tp_procvar in current_settings.modeswitches) or
-                              (m_mac_procvar in current_settings.modeswitches)) and
-                             (not assigned(methodpointer) or
-                              (methodpointer.nodetype <> typen)) then
-                            begin
-                              hpt:=cloadnode.create(tprocsym(symtableprocentry),symtableproc);
-                              if assigned(methodpointer) then
-                                tloadnode(hpt).set_mp(methodpointer.getcopy);
-                              typecheckpass(hpt);
-                              result:=hpt;
-                            end
+                          { when it's an auto inherited call and there
+                            is no procedure found, but the procedures
+                            were defined with overload directive and at
+                            least two procedures are defined then we ignore
+                            this inherited by inserting a nothingn. Only
+                            do this ugly hack in Delphi mode as it looks more
+                            like a bug. It's also not documented }
+                          if (m_delphi in current_settings.modeswitches) and
+                             (cnf_anon_inherited in callnodeflags) and
+                             (symtableprocentry.owner.symtabletype=ObjectSymtable) and
+                             (po_overload in tprocdef(symtableprocentry.ProcdefList[0]).procoptions) and
+                             (symtableprocentry.ProcdefList.Count>=2) then
+                            result:=cnothingnode.create
                           else
                             begin
-                              CGMessagePos1(fileinfo,parser_e_wrong_parameter_size,symtableprocentry.realname);
-                              symtableprocentry.write_parameter_lists(nil);
+                              { in tp mode we can try to convert to procvar if
+                                there are no parameters specified }
+                              if not(assigned(left)) and
+                                 not(cnf_inherited in callnodeflags) and
+                                 ((m_tp_procvar in current_settings.modeswitches) or
+                                  (m_mac_procvar in current_settings.modeswitches)) and
+                                 (not assigned(methodpointer) or
+                                  (methodpointer.nodetype <> typen)) then
+                                begin
+                                  hpt:=cloadnode.create(tprocsym(symtableprocentry),symtableproc);
+                                  if assigned(methodpointer) then
+                                    tloadnode(hpt).set_mp(methodpointer.getcopy);
+                                  typecheckpass(hpt);
+                                  result:=hpt;
+                                end
+                              else
+                                begin
+                                  CGMessagePos1(fileinfo,parser_e_wrong_parameter_size,symtableprocentry.realname);
+                                  symtableprocentry.write_parameter_lists(nil);
+                                end;
                             end;
+                          candidates.free;
+                          exit;
                         end;
-                      candidates.free;
-                      exit;
-                    end;
 
-                   { Retrieve information about the candidates }
-                   candidates.get_information;
+                       { Retrieve information about the candidates }
+                       candidates.get_information;
 {$ifdef EXTDEBUG}
-                   { Display info when multiple candidates are found }
-                   if candidates.count>1 then
-                     candidates.dump_info(V_Debug);
+                       { Display info when multiple candidates are found }
+                       if candidates.count>1 then
+                         candidates.dump_info(V_Debug);
 {$endif EXTDEBUG}
 
-                   { Choose the best candidate and count the number of
-                     candidates left }
-                   cand_cnt:=candidates.choose_best(procdefinition,
-                     assigned(left) and
-                     not assigned(tcallparanode(left).right) and
-                     (tcallparanode(left).left.resultdef.typ=variantdef));
+                       { Choose the best candidate and count the number of
+                         candidates left }
+                       cand_cnt:=candidates.choose_best(procdefinition,
+                         assigned(left) and
+                         not assigned(tcallparanode(left).right) and
+                         (tcallparanode(left).left.resultdef.typ=variantdef));
 
-                   { All parameters are checked, check if there are any
-                     procedures left }
-                   if cand_cnt>0 then
-                    begin
-                      { Multiple candidates left? }
-                      if cand_cnt>1 then
-                       begin
-                         CGMessage(type_e_cant_choose_overload_function);
+                       { All parameters are checked, check if there are any
+                         procedures left }
+                       if cand_cnt>0 then
+                        begin
+                          { Multiple candidates left? }
+                          if cand_cnt>1 then
+                           begin
+                             CGMessage(type_e_cant_choose_overload_function);
 {$ifdef EXTDEBUG}
-                         candidates.dump_info(V_Hint);
+                             candidates.dump_info(V_Hint);
 {$else EXTDEBUG}
-                         candidates.list(false);
+                             candidates.list(false);
 {$endif EXTDEBUG}
-                         { we'll just use the first candidate to make the
-                           call }
-                       end;
+                             { we'll just use the first candidate to make the
+                               call }
+                           end;
 
-                      { assign procdefinition }
-                      if symtableproc=nil then
-                        symtableproc:=procdefinition.owner;
-                    end
-                   else
-                    begin
-                      { No candidates left, this must be a type error,
-                        because wrong size is already checked. procdefinition
-                        is filled with the first (random) definition that is
-                        found. We use this definition to display a nice error
-                        message that the wrong type is passed }
-                      candidates.find_wrong_para;
-                      candidates.list(true);
+                          { assign procdefinition }
+                          if symtableproc=nil then
+                            symtableproc:=procdefinition.owner;
+                          { cache results }
+                          //if cand_key<>'' then
+                          //  remember_proc_overload(cand_key,tprocdef(procdefinition));
+                        end
+                       else
+                        begin
+                          { No candidates left, this must be a type error,
+                            because wrong size is already checked. procdefinition
+                            is filled with the first (random) definition that is
+                            found. We use this definition to display a nice error
+                            message that the wrong type is passed }
+                          candidates.find_wrong_para;
+                          candidates.list(true);
 {$ifdef EXTDEBUG}
-                      candidates.dump_info(V_Hint);
+                          candidates.dump_info(V_Hint);
 {$endif EXTDEBUG}
 
-                      { We can not proceed, release all procs and exit }
-                      candidates.free;
-                      exit;
-                    end;
+                          { We can not proceed, release all procs and exit }
+                          candidates.free;
+                          exit;
+                        end;
 
-                   { if the final procedure definition is not yet owned,
-                     ensure that it is }
-                   procdefinition.register_def;
-                   if procdefinition.is_specialization and (procdefinition.typ=procdef) then
-                     maybe_add_pending_specialization(procdefinition);
+                       { if the final procedure definition is not yet owned,
+                         ensure that it is }
+                       procdefinition.register_def;
+                       if procdefinition.is_specialization and (procdefinition.typ=procdef) then
+                         maybe_add_pending_specialization(procdefinition);
 
-                   candidates.free;
+                       candidates.free;
+                     end;
                  end; { end of procedure to call determination }
              end;
 
@@ -4130,7 +4177,6 @@ implementation
             hpcurr:=tcallparanode(hpcurr.right);
           end;
       end;
-
 
     procedure tcallnode.check_stack_parameters;
       var

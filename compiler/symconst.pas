@@ -653,7 +653,8 @@ type
     filedef,formaldef,setdef,procvardef,floatdef,
     classrefdef,forwarddef,variantdef,undefineddef
   );
-
+  tdeftyps = set of tdeftyp;
+  
   { possible types for symtable entries }
   tsymtyp = (abstractsym,
     staticvarsym,localvarsym,paravarsym,fieldvarsym,

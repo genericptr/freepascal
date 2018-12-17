@@ -303,6 +303,7 @@ interface
           function RttiName: string;
           // note: ryan
           function has_default_property_access: boolean;
+          function get_default_write_property: tsym;
           procedure add_defaultprop(p:tsym);
 
           { enumerator support }
@@ -1202,7 +1203,7 @@ interface
     function is_record(def: tdef): boolean;
     { "struct" is any: class, object or record }
     function is_struct(def:TDefEntry): boolean;
-    function struct_has_property_access(def: tdefentry): boolean;
+    function struct_has_default_property_access(def:TDefEntry): boolean;
 
     function is_javaclass(def: tdef): boolean;
     function is_javaclassref(def: tdef): boolean;
@@ -4078,6 +4079,31 @@ implementation
         default_props[high(default_props)] := p;
       end;
 
+    function tabstractrecorddef.get_default_write_property: tsym;
+      var
+        pd:tabstractrecorddef;
+        sym:tpropertysym;
+        i:integer;
+      begin
+        if not is_struct(self) then
+          exit(nil);
+        result := nil;
+        pd:=self;
+        while assigned(pd) do
+         begin
+           for i := 0 to high(pd.default_props) do
+             begin
+               sym:=tpropertysym(pd.default_props[i]);
+               if sym.has_access(palt_write) then
+                exit(sym);
+             end;
+            if pd.typ=objectdef then
+              pd:=tobjectdef(pd).childof
+            else
+              pd:=nil;
+          end;
+      end;
+
     function tabstractrecorddef.has_default_property_access: boolean;
       var
         pd:tabstractrecorddef;
@@ -4096,7 +4122,6 @@ implementation
             else
               pd:=nil;
           end;
-        //result := Length(default_props) > 0;
       end;
 
     function tabstractrecorddef.RttiName: string;
@@ -8200,11 +8225,11 @@ implementation
         result := def.typ in [objectdef,recorddef];
       end;
 
-    function struct_has_property_access(def: tdefentry): boolean;
+    function struct_has_default_property_access(def:TDefEntry): boolean;
       begin
         result := is_struct(def) and tabstractrecorddef(def).has_default_property_access;
       end;
-
+      
     function is_javaclass(def: tdef): boolean;
       begin
         result:=
