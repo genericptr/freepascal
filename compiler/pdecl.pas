@@ -151,10 +151,6 @@ implementation
                     else
                       Message1(parser_e_interface_has_no_guid,tobjectdef(p.resultdef).objrealname^);
                  end
-               // note: ryan
-               { replace the generic parameter type with a temporary constant sym }
-               else if p.resultdef.typ = undefineddef then
-                 hp:=cconstsym.create_undefined(orgname,cundefinedtype)
                else 
                  Message(parser_e_illegal_expression);
              end;

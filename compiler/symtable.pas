@@ -2781,7 +2781,7 @@ implementation
 
     function generate_objectpascal_helper_key(def:tdef):string;
       begin
-        if not assigned(def) then
+        if not assigned(def) or (def.typ = errordef) then
           internalerror(2013020501);
         if def.typ in [recorddef,objectdef] then
           result:=make_mangledname('',tabstractrecorddef(def).symtable,'')

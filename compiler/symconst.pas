@@ -693,7 +693,6 @@ type
     constord,conststring,constreal,
     constset,constpointer,constnil,
     constresourcestring,constwstring,constguid,
-    // note: ryan
     constundefined
   );
 
