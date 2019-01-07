@@ -103,7 +103,6 @@ uses
       var
         sym : tconstsym;
         setdef : tsetdef;
-        enumdef : tenumdef;
         enumsym : tsym;
         enumname : string;
         sp : pchar;
@@ -145,17 +144,19 @@ uses
               ps^:=tsetconstnode(node).value_set^;
               sym:=cconstsym.create_ptr(undefinedname,constset,ps,fromdef);
               setdef:=tsetdef(tsetconstnode(node).resultdef);
-              enumdef:=tenumdef(setdef.elementdef);
               prettyname:='[';
               for i := setdef.setbase to setdef.setmax do
                 if i in tsetconstnode(node).value_set^ then
                   begin
-                    enumsym:=enumdef.int2enumsym(i);
+                    if setdef.elementdef.typ=enumdef then
+                      enumsym:=tenumdef(setdef.elementdef).int2enumsym(i)
+                    else
+                      enumsym:=nil;
                     if assigned(enumsym) then
                       enumname:=enumsym.realname
-                    else if (enumdef.typ=orddef) then
+                    else if setdef.elementdef.typ=orddef then
                       begin
-                        if torddef(enumdef).ordtype=uchar then
+                        if torddef(setdef.elementdef).ordtype=uchar then
                           enumname:=chr(i)
                         else
                           enumname:=tostr(i);
@@ -520,7 +521,7 @@ uses
                           internalerror(2016112802);
                         namepart:='_$'+hexstr(module.moduleid,8)+'$$'+typeparam.resultdef.unique_id_str;
                         if constprettyname <> '' then
-                          namepart+='$$'+constprettyname;
+                          namepart:=namepart+'$$'+constprettyname;
                         { we use the full name of the type to uniquely identify it }
                         if (symtablestack.top.symtabletype=parasymtable) and
                             (symtablestack.top.defowner.typ=procdef) and
@@ -537,7 +538,7 @@ uses
                         if not first then
                           prettyname:=prettyname+',';
                         if constprettyname <> '' then
-                          prettyname+=constprettyname
+                          prettyname:=prettyname+constprettyname
                         else
                           prettyname:=prettyname+prettynamepart+typeparam.resultdef.typesym.prettyname;
                       end;
