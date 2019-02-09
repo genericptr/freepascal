@@ -323,6 +323,9 @@ implementation
           else
             internalerror(200205103);
         end;
+        { transfer generic param flag from symbol to node }
+        if sp_generic_para in p.symoptions then
+          include(p1.flags,nf_generic_para);
         genconstsymtree:=p1;
       end;
 

@@ -1436,7 +1436,9 @@ implementation
                                  highval:=tordconstnode(trangenode(pt).right).value;
                                  if highval<lowval then
                                   begin
-                                    Message(parser_e_array_lower_less_than_upper_bound);
+                                    { ignore error if node is generic param }
+                                    if not (nf_generic_para in pt.flags) then
+                                      Message(parser_e_array_lower_less_than_upper_bound);
                                     highval:=lowval;
                                   end
                                  else if (lowval<int64(low(asizeint))) or

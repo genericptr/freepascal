@@ -273,10 +273,13 @@ interface
          nf_block_with_exit,
 
          { tloadvmtaddrnode }
-         nf_ignore_for_wpo  { we know that this loadvmtaddrnode cannot be used to construct a class instance }
+         nf_ignore_for_wpo,  { we know that this loadvmtaddrnode cannot be used to construct a class instance }
 
-         { WARNING: there are now 31 elements in this type, and a set of this
-             type is written to the PPU. So before adding more than 32 elements,
+         { node is derived from generic parameter }
+         nf_generic_para
+
+         { WARNING: there are now 32 elements in this type, and a set of this
+             type is written to the PPU. So before adding more elements,
              either move some flags to specific nodes, or stream a normalset
              to the ppu
          }
@@ -1079,7 +1082,12 @@ implementation
     constructor tbinarynode.create(t:tnodetype;l,r : tnode);
       begin
          inherited create(t,l);
-         right:=r
+         { transfer generic paramater flag }
+         if assigned(l) and (nf_generic_para in l.flags) then
+           include(flags,nf_generic_para)
+         else if assigned(r) and (nf_generic_para in r.flags) then
+           include(flags,nf_generic_para);
+         right:=r;
       end;
 
 

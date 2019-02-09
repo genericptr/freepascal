@@ -67,7 +67,7 @@ uses
   { global }
   globals,tokens,verbose,finput,constexp,
   { symtable }
-  symconst,symsym,symtable,defcmp,procinfo,
+  symconst,symsym,symtable,defcmp,defutil,procinfo,
   { modules }
   fmodule,
   node,nobj,ncon,
@@ -89,12 +89,49 @@ uses
           result := ttypesym(sym).typedef;
       end;
 
-    function get_generic_param_consttype(sym:tsym):tconsttyp;
+    function is_generic_param_const(sym:tsym):boolean;
       begin
         if sym.typ = constsym then
-          result := tconstsym(sym).consttyp
+          result := tconstsym(sym).consttyp<>constundefined
         else
-          result := constundefined;
+          result := false;
+      end;
+
+    function compare_orddef_by_range(param1,param2:torddef;value:tconstvalue): boolean;
+      begin
+        if (value.len<param2.low) or (value.len>param2.high) then
+          result:=false
+        else
+          result:=true;
+      end;
+
+    function compare_generic_params(param1,param2:tdef;constparamsym:tconstsym):boolean;
+      begin
+        if (param1.typ=orddef) and (param2.typ=orddef) then
+          begin
+            if is_boolean(param2) then
+              result:=is_boolean(param1)
+            else if is_char(param2) then
+              result:=is_char(param1)
+            else if compare_orddef_by_range(torddef(param1),torddef(param2),constparamsym.value) then
+              result:=true
+            else
+              result:=false;
+          end
+        { arraydef is string constant so it's compatible with stringdef }
+        else if (param1.typ=arraydef) and (param2.typ=stringdef) then
+          result:=true
+        { integer ords are compatible with float }
+        else if (param1.typ=orddef) and is_integer(param1) and (param2.typ=floatdef) then
+          result:=true
+        { undefined def is compatible with all types }
+        else if param2.typ=undefineddef then
+          result:=true
+        { sets require stricter checks }
+        else if is_set(param2) then
+          result:=equal_defs(param1,param2)
+        else
+          result:=param1.typ=param2.typ;
       end;
 
     function create_generic_constsym(fromdef:tdef;node:tnode;out prettyname:string):tconstsym;
@@ -217,12 +254,13 @@ uses
         intfcount : longint;
         formaldef,
         paradef : tstoreddef;
+        genparadef : tdef;
         objdef,
         paraobjdef,
         formalobjdef : tobjectdef;
         intffound : boolean;
         filepos : tfileposinfo;
-        paratype : tconsttyp;
+        //paratype : tconsttyp;
         is_const : boolean;
       begin
         { check whether the given specialization parameters fit to the eventual
@@ -238,8 +276,8 @@ uses
           begin
             filepos:=pfileposinfo(poslist[i])^;
             paradef:=tstoreddef(get_generic_param_def(tsym(paramlist[i])));
-            paratype:=get_generic_param_consttype(tsym(paramlist[i]));
-            is_const:=paratype <> constundefined;
+            is_const:=is_generic_param_const(tsym(paramlist[i]));
+            genparadef:=genericdef.get_generic_param_def(i);
             { validate const params }
             if not genericdef.is_generic_param_const(i) and is_const then
               begin
@@ -248,183 +286,187 @@ uses
               end
             else if genericdef.is_generic_param_const(i) then
               begin
-                { type constrained param doesn't match type }
-                if (genericdef.get_generic_param_type(i) <> constundefined) and (genericdef.get_generic_param_type(i) <> paratype) then
-                  begin
-                    MessagePos(filepos,type_e_mismatch);
-                    exit(false);
-                  end;
                 { param type mismatch (type <> const) }
                  if genericdef.is_generic_param_const(i) <> is_const then
                    begin
                     MessagePos(filepos,type_e_mismatch);
                     exit(false);
                   end;
+                { type constrained param doesn't match type }
+                if not compare_generic_params(paradef,genericdef.get_generic_param_def(i),tconstsym(paramlist[i])) then
+                  begin
+                    MessagePos2(filepos,type_e_incompatible_types,FullTypeName(paradef,genparadef),FullTypeName(genparadef,paradef));
+                    exit(false);
+                  end;
               end;
-            formaldef:=tstoreddef(ttypesym(genericdef.genericparas[i]).typedef);
-            if formaldef.typ=undefineddef then
-              { the parameter is of unspecified type, so no need to check }
-              continue;
-            if not (df_genconstraint in formaldef.defoptions) or
-                not assigned(formaldef.genconstraintdata) then
-              internalerror(2013021602);
-            { undefineddef is compatible with anything }
-            if formaldef.typ=undefineddef then
-              continue;
-            if paradef.typ<>formaldef.typ then
+            { test constraints for non-const params }
+            if not genericdef.is_generic_param_const(i) then
               begin
-                case formaldef.typ of
-                  recorddef:
-                    { delphi has own fantasy about record constraint
-                      (almost non-nullable/non-nilable value type) }
-                    if m_delphi in current_settings.modeswitches then
-                      case paradef.typ of
-                        floatdef,enumdef,orddef:
-                          continue;
-                        objectdef:
-                          if tobjectdef(paradef).objecttype=odt_object then
-                            continue
-                          else
-                            MessagePos(filepos,type_e_record_type_expected);
+                formaldef:=tstoreddef(ttypesym(genericdef.genericparas[i]).typedef);
+                if formaldef.typ=undefineddef then
+                  { the parameter is of unspecified type, so no need to check }
+                  continue;
+                if not (df_genconstraint in formaldef.defoptions) or
+                    not assigned(formaldef.genconstraintdata) then
+                  internalerror(2013021602);
+                { undefineddef is compatible with anything }
+                if formaldef.typ=undefineddef then
+                  continue;
+                if paradef.typ<>formaldef.typ then
+                  begin
+                    case formaldef.typ of
+                      recorddef:
+                        { delphi has own fantasy about record constraint
+                          (almost non-nullable/non-nilable value type) }
+                        if m_delphi in current_settings.modeswitches then
+                          case paradef.typ of
+                            floatdef,enumdef,orddef:
+                              continue;
+                            objectdef:
+                              if tobjectdef(paradef).objecttype=odt_object then
+                                continue
+                              else
+                                MessagePos(filepos,type_e_record_type_expected);
+                            else
+                              MessagePos(filepos,type_e_record_type_expected);
+                          end
                         else
                           MessagePos(filepos,type_e_record_type_expected);
-                      end
-                    else
-                      MessagePos(filepos,type_e_record_type_expected);
-                  objectdef:
-                    case tobjectdef(formaldef).objecttype of
-                      odt_class,
-                      odt_javaclass:
-                        MessagePos1(filepos,type_e_class_type_expected,paradef.typename);
-                      odt_interfacecom,
-                      odt_interfacecorba,
-                      odt_dispinterface,
-                      odt_interfacejava:
-                        MessagePos1(filepos,type_e_interface_type_expected,paradef.typename);
-                      else
-                        internalerror(2012101003);
-                    end;
-                  errordef:
-                    { ignore }
-                    ;
-                  else
-                    internalerror(2012101004);
-                end;
-                result:=false;
-              end
-            else
-              begin
-                { the paradef types are the same, so do special checks for the
-                  cases in which they are needed }
-                if formaldef.typ=objectdef then
-                  begin
-                    paraobjdef:=tobjectdef(paradef);
-                    formalobjdef:=tobjectdef(formaldef);
-                    if not (formalobjdef.objecttype in [odt_class,odt_javaclass,odt_interfacecom,odt_interfacecorba,odt_interfacejava,odt_dispinterface]) then
-                      internalerror(2012101102);
-                    if formalobjdef.objecttype in [odt_interfacecom,odt_interfacecorba,odt_interfacejava,odt_dispinterface] then
-                      begin
-                        { this is either a concerete interface or class type (the
-                          latter without specific implemented interfaces) }
-                        case paraobjdef.objecttype of
+                      objectdef:
+                        case tobjectdef(formaldef).objecttype of
+                          odt_class,
+                          odt_javaclass:
+                            MessagePos1(filepos,type_e_class_type_expected,paradef.typename);
                           odt_interfacecom,
                           odt_interfacecorba,
-                          odt_interfacejava,
-                          odt_dispinterface:
-                            begin
-                              if (oo_is_forward in paraobjdef.objectoptions) and
-                                  (paraobjdef.objecttype=formalobjdef.objecttype) and
-                                  (df_genconstraint in formalobjdef.defoptions) and
-                                  (
-                                    (formalobjdef.objecttype=odt_interfacecom) and
-                                    (formalobjdef.childof=interface_iunknown)
-                                  )
-                                  or
-                                  (
-                                    (formalobjdef.objecttype=odt_interfacecorba) and
-                                    (formalobjdef.childof=nil)
-                                  ) then
-                                continue;
-                              if not def_is_related(paraobjdef,formalobjdef.childof) then
+                          odt_dispinterface,
+                          odt_interfacejava:
+                            MessagePos1(filepos,type_e_interface_type_expected,paradef.typename);
+                          else
+                            internalerror(2012101003);
+                        end;
+                      errordef:
+                        { ignore }
+                        ;
+                      else
+                        internalerror(2012101004);
+                    end;
+                    result:=false;
+                  end
+                else
+                  begin
+                    { the paradef types are the same, so do special checks for the
+                      cases in which they are needed }
+                    if formaldef.typ=objectdef then
+                      begin
+                        paraobjdef:=tobjectdef(paradef);
+                        formalobjdef:=tobjectdef(formaldef);
+                        if not (formalobjdef.objecttype in [odt_class,odt_javaclass,odt_interfacecom,odt_interfacecorba,odt_interfacejava,odt_dispinterface]) then
+                          internalerror(2012101102);
+                        if formalobjdef.objecttype in [odt_interfacecom,odt_interfacecorba,odt_interfacejava,odt_dispinterface] then
+                          begin
+                            { this is either a concerete interface or class type (the
+                              latter without specific implemented interfaces) }
+                            case paraobjdef.objecttype of
+                              odt_interfacecom,
+                              odt_interfacecorba,
+                              odt_interfacejava,
+                              odt_dispinterface:
                                 begin
-                                  MessagePos2(filepos,type_e_incompatible_types,paraobjdef.typename,formalobjdef.childof.typename);
+                                  if (oo_is_forward in paraobjdef.objectoptions) and
+                                      (paraobjdef.objecttype=formalobjdef.objecttype) and
+                                      (df_genconstraint in formalobjdef.defoptions) and
+                                      (
+                                        (formalobjdef.objecttype=odt_interfacecom) and
+                                        (formalobjdef.childof=interface_iunknown)
+                                      )
+                                      or
+                                      (
+                                        (formalobjdef.objecttype=odt_interfacecorba) and
+                                        (formalobjdef.childof=nil)
+                                      ) then
+                                    continue;
+                                  if not def_is_related(paraobjdef,formalobjdef.childof) then
+                                    begin
+                                      MessagePos2(filepos,type_e_incompatible_types,paraobjdef.typename,formalobjdef.childof.typename);
+                                      result:=false;
+                                    end;
+                                end;
+                              odt_class,
+                              odt_javaclass:
+                                begin
+                                  objdef:=paraobjdef;
+                                  intffound:=false;
+                                  while assigned(objdef) do
+                                    begin
+                                      for j:=0 to objdef.implementedinterfaces.count-1 do
+                                        if timplementedinterface(objdef.implementedinterfaces[j]).intfdef=formalobjdef.childof then
+                                          begin
+                                            intffound:=true;
+                                            break;
+                                          end;
+                                      if intffound then
+                                        break;
+                                      objdef:=objdef.childof;
+                                    end;
+                                  result:=intffound;
+                                  if not result then
+                                    MessagePos2(filepos,parser_e_class_doesnt_implement_interface,paraobjdef.typename,formalobjdef.childof.typename);
+                                end;
+                              else
+                                begin
+                                  MessagePos1(filepos,type_e_class_or_interface_type_expected,paraobjdef.typename);
                                   result:=false;
                                 end;
                             end;
-                          odt_class,
-                          odt_javaclass:
-                            begin
-                              objdef:=paraobjdef;
-                              intffound:=false;
-                              while assigned(objdef) do
-                                begin
-                                  for j:=0 to objdef.implementedinterfaces.count-1 do
-                                    if timplementedinterface(objdef.implementedinterfaces[j]).intfdef=formalobjdef.childof then
-                                      begin
-                                        intffound:=true;
-                                        break;
-                                      end;
-                                  if intffound then
-                                    break;
-                                  objdef:=objdef.childof;
-                                end;
-                              result:=intffound;
-                              if not result then
-                                MessagePos2(filepos,parser_e_class_doesnt_implement_interface,paraobjdef.typename,formalobjdef.childof.typename);
-                            end;
-                          else
-                            begin
-                              MessagePos1(filepos,type_e_class_or_interface_type_expected,paraobjdef.typename);
-                              result:=false;
-                            end;
-                        end;
-                      end
-                    else
-                      begin
-                        { this is either a "class" or a concrete instance with
-                          or without implemented interfaces }
-                        if not (paraobjdef.objecttype in [odt_class,odt_javaclass]) then
+                          end
+                        else
                           begin
-                            MessagePos1(filepos,type_e_class_type_expected,paraobjdef.typename);
-                            result:=false;
-                            continue;
-                          end;
-                        { for forward declared classes we allow pure TObject/class declarations }
-                        if (oo_is_forward in paraobjdef.objectoptions) and
-                            (df_genconstraint in formaldef.defoptions) then
-                          begin
-                            if (formalobjdef.childof=class_tobject) and
-                                not formalobjdef.implements_any_interfaces then
-                              continue;
-                          end;
-                        if assigned(formalobjdef.childof) and
-                            not def_is_related(paradef,formalobjdef.childof) then
-                          begin
-                            MessagePos2(filepos,type_e_incompatible_types,paraobjdef.typename,formalobjdef.childof.typename);
-                            result:=false;
-                          end;
-                        intfcount:=0;
-                        for j:=0 to formalobjdef.implementedinterfaces.count-1 do
-                          begin
-                            objdef:=paraobjdef;
-                            while assigned(objdef) do
+                            { this is either a "class" or a concrete instance with
+                              or without implemented interfaces }
+                            if not (paraobjdef.objecttype in [odt_class,odt_javaclass]) then
                               begin
-                                intffound:=assigned(
-                                             find_implemented_interface(objdef,
-                                               timplementedinterface(formalobjdef.implementedinterfaces[j]).intfdef
-                                             )
-                                           );
-                                if intffound then
-                                  break;
-                                objdef:=objdef.childof;
+                                MessagePos1(filepos,type_e_class_type_expected,paraobjdef.typename);
+                                result:=false;
+                                continue;
                               end;
-                            if intffound then
-                              inc(intfcount)
-                            else
-                              MessagePos2(filepos,parser_e_class_doesnt_implement_interface,paraobjdef.typename,timplementedinterface(formalobjdef.implementedinterfaces[j]).intfdef.typename);
+                            { for forward declared classes we allow pure TObject/class declarations }
+                            if (oo_is_forward in paraobjdef.objectoptions) and
+                                (df_genconstraint in formaldef.defoptions) then
+                              begin
+                                if (formalobjdef.childof=class_tobject) and
+                                    not formalobjdef.implements_any_interfaces then
+                                  continue;
+                              end;
+                            if assigned(formalobjdef.childof) and
+                                not def_is_related(paradef,formalobjdef.childof) then
+                              begin
+                                MessagePos2(filepos,type_e_incompatible_types,paraobjdef.typename,formalobjdef.childof.typename);
+                                result:=false;
+                              end;
+                            intfcount:=0;
+                            for j:=0 to formalobjdef.implementedinterfaces.count-1 do
+                              begin
+                                objdef:=paraobjdef;
+                                while assigned(objdef) do
+                                  begin
+                                    intffound:=assigned(
+                                                 find_implemented_interface(objdef,
+                                                   timplementedinterface(formalobjdef.implementedinterfaces[j]).intfdef
+                                                 )
+                                               );
+                                    if intffound then
+                                      break;
+                                    objdef:=objdef.childof;
+                                  end;
+                                if intffound then
+                                  inc(intfcount)
+                                else
+                                  MessagePos2(filepos,parser_e_class_doesnt_implement_interface,paraobjdef.typename,timplementedinterface(formalobjdef.implementedinterfaces[j]).intfdef.typename);
+                              end;
+                            if intfcount<>formalobjdef.implementedinterfaces.count then
+                              result:=false;
                           end;
-                        if intfcount<>formalobjdef.implementedinterfaces.count then
-                          result:=false;
                       end;
                   end;
               end;
@@ -934,7 +976,7 @@ uses
             if not (sp_generic_para in srsym.symoptions) then
               internalerror(2013092602);
             { set the generic param name of the constsym }
-            if get_generic_param_consttype(tsym(context.paramlist[i])) <> constundefined then
+            if is_generic_param_const(tsym(context.paramlist[i])) then
               tsym(context.paramlist[i]).realname := srsym.realname;
             generictypelist.add(srsym.realname,context.paramlist[i]);
           end;
@@ -1373,7 +1415,7 @@ uses
           if try_to_consume(_CONST) then
             begin
               { last param was const without semicolon terminator }
-              if (result.count > 0) and last_is_const and (last_token <> _SEMICOLON) then
+              if (result.count>0) and last_is_const and (last_token<>_SEMICOLON) then
                 MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
               is_const := true;
               const_list_index := result.count;
@@ -1383,14 +1425,14 @@ uses
               if is_const then
                 begin
                   { last param was type without semicolon terminator }
-                  if (result.count > 0) and not last_is_const and (last_token <> _SEMICOLON) then
+                  if (result.count>0) and not last_is_const and (last_token<>_SEMICOLON) then
                     MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
                   generictype:=tconstsym.create_undefined(orgpattern,cundefinedtype);
                 end
               else
                 begin
                   { last param was const without semicolon terminator }
-                  if (result.count > 0) and last_is_const and (last_token <> _SEMICOLON) then
+                  if (result.count>0) and last_is_const and (last_token<>_SEMICOLON) then
                     MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
                   generictype:=ttypesym.create(orgpattern,cundefinedtype,false);
                 end;
@@ -1401,16 +1443,17 @@ uses
               last_is_const:=is_const;
             end;
           consume(_ID);
-          { const type restriction }
+          { const restriction }
           if is_const then
             begin
               if try_to_consume(_COLON) then
                 begin
                   def := nil;
                   { parse the type and assign the const type to generictype  }
-                  single_type(def, []);
-                  for i := const_list_index to result.count - 1 do
+                  single_type(def,[]);
+                  for i:=const_list_index to result.count-1 do
                     begin
+                      { finalize constant information once type is known }
                       if assigned(def) and (def.typ in tgeneric_param_const_types) then
                         begin
                           case def.typ of
@@ -1425,8 +1468,6 @@ uses
                             { pointer always refers to nil with constants }
                             pointerdef:
                               tconstsym(result[i]).consttyp:=constnil;
-                            otherwise
-                              internalerror(1);
                           end;
                           tconstsym(result[i]).constdef:=def;
                         end
@@ -1437,6 +1478,7 @@ uses
                   is_const:=false;
                 end;
             end
+          { type restriction }
           else if try_to_consume(_COLON) then
             begin
               if not allowconstraints then
@@ -1578,10 +1620,11 @@ uses
                 begin
                   { two different typeless parameters are considered as incompatible }
                   for i:=firstidx to result.count-1 do
-                    begin
-                      ttypesym(result[i]).typedef:=cundefineddef.create(false);
-                      ttypesym(result[i]).typedef.typesym:=ttypesym(result[i]);
-                    end;
+                    if tsym(result[i]).typ<>constsym then
+                      begin
+                        ttypesym(result[i]).typedef:=cundefineddef.create(false);
+                        ttypesym(result[i]).typedef.typesym:=ttypesym(result[i]);
+                      end;
                   { a semicolon terminates a type parameter group }
                   firstidx:=result.count;
                 end;
@@ -1593,10 +1636,11 @@ uses
         until not (try_to_consume(_COMMA) or try_to_consume(_SEMICOLON));
         { two different typeless parameters are considered as incompatible }
         for i:=firstidx to result.count-1 do
-          begin
-            ttypesym(result[i]).typedef:=cundefineddef.create(false);
-            ttypesym(result[i]).typedef.typesym:=ttypesym(result[i]);
-          end;
+          if tsym(result[i]).typ<>constsym then
+            begin
+              ttypesym(result[i]).typedef:=cundefineddef.create(false);
+              ttypesym(result[i]).typedef.typesym:=ttypesym(result[i]);
+            end;
         block_type:=old_block_type;
       end;
 
@@ -1636,7 +1680,7 @@ uses
                 if generictype.typ = typesym then
                   sym:=ctypesym.create(genericlist.nameofindex(i),generictype.typedef,true)
                 else if generictype.typ = constsym then
-                  { generictype is a constsym that was created in tgenericparamdef 
+                  { generictype is a constsym that was created in create_generic_constsym 
                     so we pass this directly without copying. }
                   sym:=generictype
                 else

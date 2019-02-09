@@ -131,7 +131,7 @@ interface
           function is_specialization:boolean;inline;
           { generic utilities }
           function is_generic_param_const(index:integer):boolean;inline;
-          function get_generic_param_type(index:integer):tconsttyp;inline;
+          function get_generic_param_def(index:integer):tdef;inline;
           { registers this def in the unit's deflist; no-op if already registered }
           procedure register_def; override;
           { add the def to the top of the symtable stack if it's not yet owned
@@ -2213,10 +2213,13 @@ implementation
        result := tsym(genericparas[index]).typ = constsym;
      end;  
 
-   function tstoreddef.get_generic_param_type(index:integer):tconsttyp;
+   function tstoreddef.get_generic_param_def(index:integer):tdef;
      begin
-       result := tconstsym(genericparas[index]).consttyp;
-     end;  
+       if tsym(genericparas[index]).typ = constsym then
+         result := tconstsym(genericparas[index]).constdef
+       else
+         result := ttypesym(genericparas[index]).typedef;
+     end;
 
    function tstoreddef.is_specialization: boolean;
      var

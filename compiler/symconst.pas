@@ -232,7 +232,10 @@ type
       because we have to access this information in the symtable unit }
     df_llvm_no_struct_packing,
     { internal def that's not for any export }
-    df_internal
+    df_internal,
+    { the def was derived with generic type or const fields so the size
+      of the def can not be determined }
+    df_has_generic_fields
   );
   tdefoptions=set of tdefoption;
 

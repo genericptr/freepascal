@@ -446,6 +446,9 @@ implementation
                   { no packed bit support for these things }
                   if l=in_bitsizeof_x then
                     statement_syssym:=caddnode.create(muln,statement_syssym,cordconstnode.create(8,sinttype,true));
+                  { type sym is a generic parameter }
+                  if assigned(p1.resultdef.typesym) and (sp_generic_para in p1.resultdef.typesym.symoptions) then
+                    include(statement_syssym.flags,nf_generic_para);
                 end
               else
                begin
@@ -466,6 +469,9 @@ implementation
                    end
                  else
                    statement_syssym:=cordconstnode.create(p1.resultdef.packedbitsize,sinttype,true);
+                 { type def is a struct with generic fields }
+                 if df_has_generic_fields in p1.resultdef.defoptions then
+                    include(statement_syssym.flags,nf_generic_para);
                  { p1 not needed !}
                  p1.destroy;
                end;
@@ -4078,7 +4084,10 @@ implementation
                 gendef:=generate_specialization_phase2(spezcontext,tstoreddef(gendef),false,'');
                 spezcontext.free;
                 spezcontext:=nil;
-                gensym:=gendef.typesym;
+                if gendef.typ=errordef then
+                  gensym:=generrorsym
+                else
+                  gensym:=gendef.typesym;
               end;
             procdef:
               begin

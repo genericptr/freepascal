@@ -179,6 +179,9 @@ implementation
            else
              Message(parser_e_illegal_expression);
         end;
+        { transfer generic param flag from node to symbol }
+        if nf_generic_para in p.flags then
+          include(hp.symoptions,sp_generic_para);
         current_tokenpos:=storetokenpos;
         p.free;
         readconstant:=hp;
