@@ -175,7 +175,6 @@ implementation
       symtable,symsym,symcpu,
       defutil,symutil;
 
-
     function compare_defs_ext(def_from,def_to : tdef;
                               fromtreetype : tnodetype;
                               var doconv : tconverttype;
@@ -340,6 +339,10 @@ implementation
                      if not (symfrom.typ in [typesym,constsym]) or not (symto.typ in [typesym,constsym]) then
                        internalerror(2012121401);
                      if symto.typ <> symfrom.typ then
+                       diff:=true
+                     { TODO: make a better function actually compare const values
+                       but for now use a prettyname string compare }
+                     else if (symfrom.typ=constsym) and (symto.typ=constsym) and (def_from.typesym.prettyname<>def_to.typesym.prettyname) then
                        diff:=true
                      else if not equal_defs(ttypesym(symfrom).typedef,ttypesym(symto).typedef) then
                        diff:=true;
