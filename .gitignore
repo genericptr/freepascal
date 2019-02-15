@@ -1,8 +1,16 @@
-# Ignore everything
-*
+# files
+pp
+fpmake
+rtl/darwin/fpcmade.x86_64-darwin
+fpmake_proc1 copy.inc
 
-# But not these files...
-!.gitignore
-!.pas
-!.pp
-!ryan_*.lpi
+# directories
+lazbuild/
+x86_64-darwin/
+
+# patterns
+*.app
+*.o
+*.ppu
+*.fpm
+*.rsj
