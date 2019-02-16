@@ -1,8 +1,5 @@
-{%PASS}
-
 {$mode objfpc}
 {$modeswitch advancedrecords}
-
 program tgenconst3;
 
 type

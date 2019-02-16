@@ -1,7 +1,4 @@
-{%PASS}
-
 {$mode delphi}
-
 program tgenconst6;
 
 type

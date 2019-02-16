@@ -1,7 +1,5 @@
 {%FAIL}
-
 {$mode objfpc}
-
 program tgenconst9;
 
 type

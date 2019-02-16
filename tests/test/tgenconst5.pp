@@ -1,7 +1,4 @@
-{%PASS}
-
 {$mode objfpc}
-
 program tgenconst5;
 
 type

@@ -3,10 +3,16 @@ pp
 fpmake
 rtl/darwin/fpcmade.x86_64-darwin
 fpmake_proc1 copy.inc
+tests/*.x86_64-darwin
+rtl/Package.fpc
+tests/createlst
+tests/gparmake
 
 # directories
 lazbuild/
 x86_64-darwin/
+tests/tstunits/
+tests/utils
 
 # patterns
 *.app
@@ -14,3 +20,4 @@ x86_64-darwin/
 *.ppu
 *.fpm
 *.rsj
+*.lst

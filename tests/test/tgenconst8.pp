@@ -1,7 +1,5 @@
 {%FAIL}
-
 {$mode objfpc}
-
 program tgenconst8;
 
 type

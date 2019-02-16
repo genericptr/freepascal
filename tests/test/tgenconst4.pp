@@ -1,7 +1,4 @@
-{%PASS}
-
 {$mode objfpc}
-
 program tgenconst4;
 
 generic procedure DoThis<T;const U:string>(msg:string = U);
