@@ -213,9 +213,10 @@ uses
               sym:=cconstsym.create_ord(undefinedname,constnil,0,fromdef);
               prettyname:='nil';
             end;
-          otherwise
-            internalerror(0);
+          else
+            internalerror(2019021601);
         end;
+        { the sym needs an owner for later checks so us the typeparam owner }
         sym.owner:=fromdef.owner;
         result:=sym;
       end;
@@ -565,16 +566,19 @@ uses
                         if constprettyname <> '' then
                           namepart:=namepart+'$$'+constprettyname;
                         { we use the full name of the type to uniquely identify it }
-                        if (symtablestack.top.symtabletype=parasymtable) and
-                            (symtablestack.top.defowner.typ=procdef) and
-                            (typeparam.resultdef.owner=symtablestack.top) then
+                        if typeparam.nodetype = typen then
                           begin
-                            { special handling for specializations inside generic function declarations }
-                            prettynamepart:=tdef(symtablestack.top.defowner).fullownerhierarchyname(true)+tprocdef(symtablestack.top.defowner).procsym.prettyname;
-                          end
-                        else
-                          begin
-                            prettynamepart:=typeparam.resultdef.fullownerhierarchyname(true);
+                            if (symtablestack.top.symtabletype=parasymtable) and
+                                (symtablestack.top.defowner.typ=procdef) and
+                                (typeparam.resultdef.owner=symtablestack.top) then
+                              begin
+                                { special handling for specializations inside generic function declarations }
+                                prettynamepart:=tdef(symtablestack.top.defowner).fullownerhierarchyname(true)+tprocdef(symtablestack.top.defowner).procsym.prettyname;
+                              end
+                            else
+                              begin
+                                prettynamepart:=typeparam.resultdef.fullownerhierarchyname(true);
+                              end;
                           end;
                         specializename:=specializename+namepart;
                         if not first then
@@ -975,9 +979,6 @@ uses
             srsym:=tsym(genericdef.genericparas[i]);
             if not (sp_generic_para in srsym.symoptions) then
               internalerror(2013092602);
-            { set the generic param name of the constsym }
-            if is_generic_param_const(tsym(context.paramlist[i])) then
-              tsym(context.paramlist[i]).realname := srsym.realname;
             generictypelist.add(srsym.realname,context.paramlist[i]);
           end;
 
@@ -1648,7 +1649,8 @@ uses
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
       var
         i : longint;
-        generictype : ttypesym;
+        generictype : tstoredsym;
+        generictypedef : tdef;
         sym : tsym;
         st : tsymtable;
       begin
@@ -1674,17 +1676,22 @@ uses
           def.genericparas:=tfphashobjectlist.create(false);
         for i:=0 to genericlist.count-1 do
           begin
-            generictype:=ttypesym(genericlist[i]);
+            generictype:=tstoredsym(genericlist[i]);
             if assigned(generictype.owner) then
               begin
-                if generictype.typ = typesym then
-                  sym:=ctypesym.create(genericlist.nameofindex(i),generictype.typedef,true)
-                else if generictype.typ = constsym then
+                if generictype.typ=typesym then
+                  sym:=ctypesym.create(genericlist.nameofindex(i),ttypesym(generictype).typedef,true)
+                else if generictype.typ=constsym then
                   { generictype is a constsym that was created in create_generic_constsym 
-                    so we pass this directly without copying. }
-                  sym:=generictype
+                    during phase 1 so we pass this directly without copying }
+                  begin
+                    sym:=generictype;
+                    { the sym name is still undefined so we set it to match
+                      the generic param name so it's accessible }
+                    sym.realname:=genericlist.nameofindex(i);
+                  end
                 else
-                  internalerror(1);
+                  internalerror(2019021602);
                 { type parameters need to be added as strict private }
                 sym.visibility:=vis_strictprivate;
                 st.insert(sym);
@@ -1692,13 +1699,17 @@ uses
               end
             else
               begin
-                if (generictype.typedef.typ=undefineddef) and (generictype.typedef<>cundefinedtype) then
+                if generictype.typ=typesym then
                   begin
-                    { the generic parameters were parsed before the genericdef existed thus the
-                      undefineddefs were added as part of the parent symtable }
-                    if assigned(generictype.typedef.owner) then
-                      generictype.typedef.owner.DefList.Extract(generictype.typedef);
-                    generictype.typedef.changeowner(st);
+                    generictypedef:=ttypesym(generictype).typedef;
+                    if (generictypedef.typ=undefineddef) and (generictypedef<>cundefinedtype) then
+                      begin
+                        { the generic parameters were parsed before the genericdef existed thus the
+                          undefineddefs were added as part of the parent symtable }
+                        if assigned(generictypedef.owner) then
+                          generictypedef.owner.DefList.Extract(generictypedef);
+                        generictypedef.changeowner(st);
+                      end;
                   end;
                 st.insert(generictype);
                 include(generictype.symoptions,sp_generic_para);

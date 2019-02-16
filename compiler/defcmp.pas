@@ -340,7 +340,7 @@ implementation
                        internalerror(2012121401);
                      if symto.typ <> symfrom.typ then
                        diff:=true
-                     { TODO: make a better function actually compare const values
+                     { TODO: make a better function to actually compare const values
                        but for now use a prettyname string compare }
                      else if (symfrom.typ=constsym) and (symto.typ=constsym) and (def_from.typesym.prettyname<>def_to.typesym.prettyname) then
                        diff:=true

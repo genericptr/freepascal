@@ -510,8 +510,9 @@ implementation
                { we are not freeing the type parameters, so register them }
                for i:=0 to generictypelist.count-1 do
                  begin
-                    ttypesym(generictypelist[i]).register_sym;
-                    tstoreddef(ttypesym(generictypelist[i]).typedef).register_def;
+                    tstoredsym(generictypelist[i]).register_sym;
+                    if tstoredsym(generictypelist[i]).typ=typesym then
+                      tstoreddef(ttypesym(generictypelist[i]).typedef).register_def;
                  end;
 
                str(generictypelist.Count,s);

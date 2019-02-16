@@ -2242,7 +2242,6 @@ implementation
                if sym.owner.defowner<>self then
                  exit(true);
              end;
-           result:=false;
          end;
      end;
 
