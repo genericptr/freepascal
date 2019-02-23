@@ -340,9 +340,7 @@ implementation
                        internalerror(2012121401);
                      if symto.typ <> symfrom.typ then
                        diff:=true
-                     { TODO: make a better function to actually compare const values
-                       but for now use a prettyname string compare }
-                     else if (symfrom.typ=constsym) and (symto.typ=constsym) and (def_from.typesym.prettyname<>def_to.typesym.prettyname) then
+                     else if (symfrom.typ=constsym) and (symto.typ=constsym) and not equal_constsym(tconstsym(symfrom),tconstsym(symto),true) then
                        diff:=true
                      else if not equal_defs(ttypesym(symfrom).typedef,ttypesym(symto).typedef) then
                        diff:=true;
