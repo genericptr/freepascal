@@ -3696,6 +3696,8 @@ implementation
         srsymtable:=nil;
       end;
 
+    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable):boolean;forward;
+
     function searchsym_in_helper(classh,contextclassh:tobjectdef;const s: TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;
       var
         hashedid      : THashedIDString;
@@ -3757,10 +3759,17 @@ implementation
               end;
             parentclassh:=parentclassh.childof;
           end;
+        { now search in the parents of the extended class (with helpers!) }
         if is_class(classh.extendeddef) then
-          { now search in the parents of the extended class (with helpers!) }
-          result:=searchsym_in_class(tobjectdef(classh.extendeddef).childof,contextclassh,s,srsym,srsymtable,flags+[ssf_search_helper]);
-          { addsymref is already called by searchsym_in_class }
+          begin
+            result:=searchsym_in_class(tobjectdef(classh.extendeddef).childof,contextclassh,s,srsym,srsymtable,flags+[ssf_search_helper]);
+            { addsymref is already called by searchsym_in_class }
+            if result then
+              exit;
+          end;
+        { now search all helpers using the extendeddef as the starting point }
+        if m_multi_helpers in current_settings.modeswitches then
+          result:=search_best_objectpascal_helper(s,classh.extendeddef,contextclassh,srsym,srsymtable);
       end;
 
     function search_specific_assignment_operator(assignment_type:ttoken;from_def,to_def:Tdef):Tprocdef;
@@ -4107,7 +4116,7 @@ implementation
 
         { if there is no class helper for the class then there is no need to
           search further }
-        if m_multiscope_helpers in current_settings.modeswitches then
+        if m_multi_helpers in current_settings.modeswitches then
           result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
         else
           begin
