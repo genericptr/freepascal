@@ -3768,7 +3768,7 @@ implementation
               exit;
           end;
         { now search all helpers using the extendeddef as the starting point }
-        if (m_multi_helpers in current_settings.modeswitches) and not (m_delphi in current_settings.modeswitches) then
+        if m_multi_helpers in current_settings.modeswitches then
           result:=search_best_objectpascal_helper(s,classh.extendeddef,contextclassh,srsym,srsymtable);
       end;
 
@@ -4116,7 +4116,7 @@ implementation
 
         { if there is no class helper for the class then there is no need to
           search further }
-        if (m_multi_helpers in current_settings.modeswitches) and not (m_delphi in current_settings.modeswitches) then
+        if m_multi_helpers in current_settings.modeswitches then
           result := search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
         else
           begin
