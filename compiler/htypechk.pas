@@ -2290,7 +2290,7 @@ implementation
                )
                and searchhelpers then
              begin
-               if (m_multi_helpers in current_settings.modeswitches) then
+               if (m_multi_helpers in current_settings.modeswitches) and not (m_delphi in current_settings.modeswitches) then
                  begin
                    helperlist:=get_objectpascal_helpers(structdef);
                    if assigned(helperlist) and (helperlist.count>0) then
