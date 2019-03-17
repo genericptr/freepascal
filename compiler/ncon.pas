@@ -304,11 +304,26 @@ implementation
           constwstring :
             p1:=cstringconstnode.createunistr(pcompilerwidestring(p.value.valueptr));
           constreal :
-            p1:=crealconstnode.create(pbestreal(p.value.valueptr)^,p.constdef);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=crealconstnode.create(default(bestreal),p.constdef)
+              else
+                p1:=crealconstnode.create(pbestreal(p.value.valueptr)^,p.constdef);
+            end;
           constset :
-            p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=csetconstnode.create(default(pconstset),p.constdef)
+              else
+                p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
+            end;
           constpointer :
-            p1:=cpointerconstnode.create(p.value.valueordptr,p.constdef);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=cpointerconstnode.create(default(tconstptruint),p.constdef)
+              else
+                p1:=cpointerconstnode.create(p.value.valueordptr,p.constdef);
+            end;
           constnil :
             p1:=cnilnode.create;
           { constundefined is a placeholder for unrestricted generic const params
@@ -319,7 +334,12 @@ implementation
               p1.resultdef := p.constdef;
             end;
           constguid :
-            p1:=cguidconstnode.create(pguid(p.value.valueptr)^);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=cguidconstnode.create(default(tguid))
+              else
+                p1:=cguidconstnode.create(pguid(p.value.valueptr)^);
+            end;
           else
             internalerror(200205103);
         end;

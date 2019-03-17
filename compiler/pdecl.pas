@@ -126,9 +126,14 @@ implementation
              end;
            setconstn :
              begin
-               new(ps);
-               ps^:=tsetconstnode(p).value_set^;
-               hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
+               if nf_generic_para in p.flags then
+                 hp:=cconstsym.create_ptr(orgname,constset,nil,p.resultdef)
+               else
+                 begin
+                   new(ps);
+                   ps^:=tsetconstnode(p).value_set^;
+                   hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
+                 end;
              end;
            pointerconstn :
              begin
