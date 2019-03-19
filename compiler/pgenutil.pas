@@ -78,26 +78,26 @@ uses
   type
     tdeftypeset = set of tdeftyp;
   const
-    tgeneric_param_const_types:tdeftypeset = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef,undefineddef];
-    tgeneric_param_nodes: tnodetypeset = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
+    tgeneric_param_const_types : tdeftypeset = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef,undefineddef];
+    tgeneric_param_nodes : tnodetypeset = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
 
     function get_generic_param_def(sym:tsym):tdef;
       begin
-        if sym.typ = constsym then
-          result := tconstsym(sym).constdef
+        if sym.typ=constsym then
+          result:=tconstsym(sym).constdef
         else
-          result := ttypesym(sym).typedef;
+          result:=ttypesym(sym).typedef;
       end;
 
     function is_generic_param_const(sym:tsym):boolean;
       begin
-        if sym.typ = constsym then
-          result := tconstsym(sym).consttyp<>constundefined
+        if sym.typ=constsym then
+          result:=tconstsym(sym).consttyp<>constundefined
         else
-          result := false;
+          result:=false;
       end;
 
-    function compare_orddef_by_range(param1,param2:torddef;value:tconstvalue): boolean;
+    function compare_orddef_by_range(param1,param2:torddef;value:tconstvalue):boolean;
       begin
         if (value.len<param2.low) or (value.len>param2.high) then
           result:=false
@@ -147,7 +147,7 @@ uses
         pd : ^bestreal;
         i : integer;
       begin
-        if node = nil then
+        if node=nil then
           begin
             sym:=cconstsym.create_undefined(undefinedname,fromdef);
             sym.owner:=fromdef.owner;

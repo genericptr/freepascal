@@ -987,6 +987,9 @@ implementation
     constructor tunarynode.create(t:tnodetype;l : tnode);
       begin
          inherited create(t);
+         { transfer generic paramater flag }
+         if assigned(l) and (nf_generic_para in l.flags) then
+           include(flags,nf_generic_para);
          left:=l;
       end;
 

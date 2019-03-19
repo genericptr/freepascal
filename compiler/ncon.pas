@@ -279,6 +279,7 @@ implementation
         p1  : tnode;
         len : longint;
         pc  : pchar;
+        value_set : pconstset;
       begin
         p1:=nil;
         case p.consttyp of
@@ -313,7 +314,10 @@ implementation
           constset :
             begin
               if sp_generic_para in p.symoptions then
-                p1:=csetconstnode.create(default(pconstset),p.constdef)
+                begin
+                  new(value_set);
+                  p1:=csetconstnode.create(value_set,p.constdef);
+                end
               else
                 p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
             end;
@@ -331,7 +335,7 @@ implementation
           constundefined :
             begin
               p1:=cnilnode.create;
-              p1.resultdef := p.constdef;
+              p1.resultdef:=p.constdef;
             end;
           constguid :
             begin

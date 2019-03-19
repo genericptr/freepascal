@@ -182,7 +182,15 @@ implementation
                end;
              end;
            else
-             Message(parser_e_illegal_expression);
+             begin
+               { the node is from a generic parameter constant and is 
+                 untyped so we need to pass a placeholder constant 
+                 instead of givng an error }
+               if nf_generic_para in p.flags then 
+                 hp:=cconstsym.create_ord(orgname,constnil,0,p.resultdef)
+               else
+                 Message(parser_e_illegal_expression);
+             end;
         end;
         { transfer generic param flag from node to symbol }
         if nf_generic_para in p.flags then
