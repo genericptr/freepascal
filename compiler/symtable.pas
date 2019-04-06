@@ -3982,7 +3982,7 @@ implementation
           end;
       end;
 
-    function search_objectdef(const s: string;classh : tobjectdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable): boolean;
+    function search_sym_in_helperdef(const s: string;classh : tobjectdef;contextclassh : tabstractrecorddef;out srsym: tsym; out srsymtable: tsymtable): boolean;
       var
         hashedid  : THashedIDString;
         pdef: tprocdef;
@@ -4078,7 +4078,7 @@ implementation
               result:=(odef.owner.symtabletype in [staticsymtable,globalsymtable]) or
                       is_visible_for_object(tobjectdef(list[i]).typesym,contextclassh);
               if result then
-                result := search_objectdef(name,odef,contextclassh,srsym,srsymtable);
+                result := search_sym_in_helperdef(name,odef,contextclassh,srsym,srsymtable);
               dec(i);
             until result or (i<0);
           end;
@@ -4121,7 +4121,7 @@ implementation
         else
           begin
             if search_last_objectpascal_helper(pd,contextclassh,classh) and
-               search_objectdef(s,classh,contextclassh,srsym,srsymtable) then
+               search_sym_in_helperdef(s,classh,contextclassh,srsym,srsymtable) then
                 result:=true;
           end;
 

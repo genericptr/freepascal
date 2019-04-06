@@ -76,7 +76,7 @@ implementation
        fmodule,ppu,
        { pass 1 }
        pass_1,
-       nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,htypechk,
+       nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,
        { parser }
        scanner,
        pbase,pinline,ptype,pgenutil,procinfo,cpuinfo
@@ -961,6 +961,7 @@ implementation
            end;
          end;
       end;
+
 
     { reads the parameter for a subroutine call }
     procedure do_proc_call(sym:tsym;st:TSymtable;obj:tabstractrecorddef;getaddr:boolean;var again : boolean;var p1:tnode;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
@@ -1931,7 +1932,6 @@ implementation
                   def:=voidpointertype
                 else
                   def:=node.resultdef;
-              { allow multiscope searches }
               result:=search_objectpascal_helper(def,nil,pattern,srsym,srsymtable);
               if result then
                 begin

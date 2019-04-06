@@ -4,7 +4,7 @@
 
 program tmshlp8;
 uses
-	tmshlp7;
+	umshlp1;
 
 type
 	TClassHelper = class helper for TObject
@@ -30,5 +30,5 @@ var
 begin
 	obj := TObject.Create;
 	obj.DoThis;
-	writeln(str.Length);
+	writeln(str.Length + str.LengthTimesTwo);
 end.

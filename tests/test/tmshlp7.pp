@@ -1,27 +1,36 @@
-{$mode objfpc}
-{$modeswitch advancedrecords}
-{$modeswitch typehelpers}
+{$mode delphi}
+{$modeswitch multihelpers}
 
-unit tmshlp7;
-interface
+program tmshlp7;
 
 type
-	TExtClassHelper = class helper for TObject
-		procedure DoThisExt;
+	TMyObject = class
+		procedure DoThis_1;
 	end;
-	TExtStringHelper = type helper for String
-		function LengthExt: integer;
+	THelper1 = class helper for TMyObject
+		procedure DoThis_2;
+	end;
+	THelper2 = class helper for TMyObject
+		procedure DoThis_3;
 	end;
 
-implementation
-	
-procedure TExtClassHelper.DoThisExt;
-begin	
-end;
-
-function TExtStringHelper.LengthExt: integer;
+procedure TMyObject.DoThis_1;
 begin
-	result := System.Length(self);
 end;
 
+procedure THelper1.DoThis_2;
+begin
+end;
+
+procedure THelper2.DoThis_3;
+begin
+end;
+
+var
+	obj: TMyObject;
+begin
+	obj := TMyObject.Create;
+	obj.DoThis_1;
+	obj.DoThis_2;
+	obj.DoThis_3;
 end.

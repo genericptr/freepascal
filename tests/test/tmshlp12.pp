@@ -1,37 +1,43 @@
-{%FAIL}
-{$mode delphi}
+{$mode objfpc}
 {$modeswitch multihelpers}
 
 program tmshlp12;
 
 type
 	TMyObject = class
-		procedure DoThis_1;
+		procedure DoThis;
 	end;
 	THelper1 = class helper for TMyObject
-		procedure DoThis_2;
+		procedure DoThis;
 	end;
 	THelper2 = class helper for TMyObject
-		procedure DoThis_3;
+		procedure DoThis;
 	end;
 
-procedure TMyObject.DoThis_1;
+var
+	Res: integer;
+
+procedure TMyObject.DoThis;
 begin
+	Res := 1;
 end;
 
-procedure THelper1.DoThis_2;
+procedure THelper1.DoThis;
 begin
+	Res := 2;
 end;
 
-procedure THelper2.DoThis_3;
+procedure THelper2.DoThis;
 begin
+	Res := 3;
 end;
 
 var
 	obj: TMyObject;
 begin
 	obj := TMyObject.Create;
-	obj.DoThis_1;
-	obj.DoThis_2;
-	obj.DoThis_3;
+	obj.DoThis;
+	writeln(Res);
+	if Res <> 3 then
+		Halt(1);
 end.
