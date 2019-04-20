@@ -883,7 +883,8 @@ implementation
       begin
         case token of
           _PROCEDURE,
-          _FUNCTION:
+          _FUNCTION,
+          _OPERATOR:
             begin
               if (astruct.symtable.currentvisibility=vis_published) and
                  not(oo_can_have_published in astruct.objectoptions) then
@@ -1088,7 +1089,7 @@ implementation
           consume(_CLASS);
           { class modifier is only allowed for procedures, functions, }
           { constructors, destructors, fields and properties          }
-          if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR]) or (token=_CONSTRUCTOR)) then
+          if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR,_OPERATOR]) or (token=_CONSTRUCTOR)) then
             Message(parser_e_procedure_or_function_expected);
 
           { Java interfaces can contain final class vars }
@@ -1341,6 +1342,19 @@ implementation
                 fields_allowed:=false;
                 is_classdef:=false;
                 hadgeneric:=false;
+              end;
+            _OPERATOR :
+              begin
+                { operators must be class methods }
+                if not is_classdef then
+                  break
+                else
+                  begin
+                    method_dec(current_structdef,is_classdef,hadgeneric);
+                    fields_allowed:=false;
+                    is_classdef:=false;
+                    hadgeneric:=false;
+                  end;
               end;
             _END :
               begin
