@@ -2443,12 +2443,13 @@ implementation
         else
         if (FOperator<>NOTOKEN) then
           begin
-            { check operands and if they contain records then search in records,
+            { check operands and if they contain structs then search in structs,
               then search in unit }
             pt:=tcallparanode(FParaNode);
             while assigned(pt) do
               begin
-                if (pt.resultdef.typ in [recorddef,objectdef]) and
+                if ((pt.resultdef.typ=recorddef) or 
+                   ((m_class_operators in current_settings.modeswitches) and (pt.resultdef.typ=objectdef))) and
                    (sto_has_operator in tabstractrecorddef(pt.resultdef).symtable.tableoptions) then
                   collect_overloads_in_struct(tabstractrecorddef(pt.resultdef),ProcdefOverloadList,searchhelpers,anoninherited,spezcontext);
                 pt:=tcallparanode(pt.right);

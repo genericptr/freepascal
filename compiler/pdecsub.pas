@@ -1480,6 +1480,11 @@ implementation
                       (tparavarsym(pd.parast.SymList[1]).varspez<>vs_var)
                      ) then
                     Message(parser_e_overload_impossible);
+                  
+                  { management operators are not overloadable in classes }
+                  if (m_class_operators in current_settings.modeswitches) 
+                     and (assigned(pd.struct) and (pd.struct.typ=objectdef)) then
+                    Message(parser_e_overload_impossible);
 
                   trecordsymtable(pd.procsym.Owner).includemanagementoperator(
                     token2managementoperator(optoken));

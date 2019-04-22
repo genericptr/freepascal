@@ -1087,9 +1087,11 @@ implementation
           is_classdef:=false;
           { read class method/field/property }
           consume(_CLASS);
-          { class modifier is only allowed for procedures, functions, }
-          { constructors, destructors, fields and properties          }
-          if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR,_OPERATOR]) or (token=_CONSTRUCTOR)) then
+          { class modifier is only allowed for procedures, functions,
+            constructors, destructors, fields, properties and operators if m_class_operators is enabled }
+          if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR]) or 
+             (token=_CONSTRUCTOR) or
+             ((token=_OPERATOR) and (m_class_operators in current_settings.modeswitches))) then
             Message(parser_e_procedure_or_function_expected);
 
           { Java interfaces can contain final class vars }
@@ -1344,18 +1346,16 @@ implementation
                 hadgeneric:=false;
               end;
             _OPERATOR :
-              begin
-                { operators must be class methods }
-                if not is_classdef then
-                  break
-                else
-                  begin
-                    method_dec(current_structdef,is_classdef,hadgeneric);
-                    fields_allowed:=false;
-                    is_classdef:=false;
-                    hadgeneric:=false;
-                  end;
-              end;
+              { operators must be class methods and enabled via mode switch }
+              if (m_class_operators in current_settings.modeswitches) and is_classdef then
+                begin
+                  method_dec(current_structdef,is_classdef,hadgeneric);
+                  fields_allowed:=false;
+                  is_classdef:=false;
+                  hadgeneric:=false;
+                end
+              else
+                consume(_ID);
             _END :
               begin
                 consume(_END);

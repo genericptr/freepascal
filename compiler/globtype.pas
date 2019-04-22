@@ -446,7 +446,8 @@ interface
          m_isolike_io,          { I/O as it required by an ISO compatible compiler }
          m_isolike_program_para, { program parameters as it required by an ISO compatible compiler }
          m_isolike_mod,         { mod operation as it is required by an iso compatible compiler }
-         m_array_operators      { use Delphi compatible array operators instead of custom ones ("+") }
+         m_array_operators,     { use Delphi compatible array operators instead of custom ones ("+") }
+         m_class_operators      { allow "class operator" methods in classes (same syntax as advanced records)}
        );
        tmodeswitches = set of tmodeswitch;
 
@@ -597,7 +598,7 @@ interface
 
        cstylearrayofconst = [pocall_cdecl,pocall_cppdecl,pocall_mwpascal,pocall_sysv_abi_cdecl,pocall_ms_abi_cdecl];
 
-       modeswitchstr : array[tmodeswitch] of string[18] = ('',
+       modeswitchstr : array[tmodeswitch] of string[19] = ('',
          '','','','','','','',
          {$ifdef gpc_mode}'',{$endif}
          { more specific }
@@ -635,7 +636,8 @@ interface
          'ISOIO',
          'ISOPROGRAMPARAS',
          'ISOMOD',
-         'ARRAYOPERATORS'
+         'ARRAYOPERATORS',
+         'CLASSOPERATORS'
          );
 
 
