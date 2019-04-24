@@ -1346,9 +1346,12 @@ implementation
                 hadgeneric:=false;
               end;
             _OPERATOR :
-              { operators must be class methods and enabled via mode switch }
-              if (m_class_operators in current_settings.modeswitches) and is_classdef then
-                begin
+              { operators must be class methods and enabled via mode switch.
+                class helpers like record helpers are not allowed to contain operators }
+              if (m_class_operators in current_settings.modeswitches) and 
+                 is_classdef and 
+                 not is_classhelper(current_structdef) then
+                begin                    
                   method_dec(current_structdef,is_classdef,hadgeneric);
                   fields_allowed:=false;
                   is_classdef:=false;
