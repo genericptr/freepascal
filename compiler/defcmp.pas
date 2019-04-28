@@ -182,6 +182,30 @@ implementation
                               var operatorpd : tprocdef;
                               cdoptions:tcompare_defs_options):tequaltype;
 
+      function are_compatible_headers(pd1, pd2: tprocdef): boolean;
+        begin     // TODO: revise the check
+          result :=
+            (compare_paras(pd1.paras,pd2.paras,cp_all,[cpo_ignorehidden{,cpo_comparedefaultvalue,cpo_ignoreuniv}])>=te_equal)
+            and (compare_defs(pd1.returndef,pd2.returndef,nothingn)>=te_equal)
+            and (pd1.proccalloption=pd2.proccalloption)
+            and (pd1.proctypeoption=pd2.proctypeoption)
+            and (pd1.procoptions-[po_global{TODO:why?}]=pd2.procoptions);
+        end;
+
+      // TODO: allow explicit coercion for any interfaces, not just for nameless ones?
+      function are_compatible_interfaces(l, r: tobjectdef): boolean;
+        begin
+          result :=
+            (oo_is_anonym in r.objectoptions)
+            and (l.childof = r.childof) // are they derived from the same interface?
+            // TODO: exclude nested types etc (but types are not allowed)
+            and (l.symtable.DefList.Count <= r.symtable.DefList.Count) // Left cannot have more methods than Right
+            and (r.symtable.DefList.Count = 1) // TODO:! Also, l.defcount can be 0
+            and are_compatible_headers(l.symtable.DefList[0] as tprocdef,
+                                       r.symtable.DefList[0] as tprocdef) // TODO:!
+            ;
+        end;
+
       { tordtype:
            uvoid,
            u8bit,u16bit,u32bit,u64bit,
@@ -1739,6 +1763,15 @@ implementation
                        runtime support for them in Variants (sergei) }
                        doconv:=tc_variant_2_interface;
                        eq:=te_convert_l2;
+                     end
+                   { interface coercion }
+                   else if (def_from.typ=objectdef) and
+                           (tobjectdef(def_from).objecttype=odt_interfacecom) and
+                           (tobjectdef(def_to).objecttype=odt_interfacecom) and
+                           are_compatible_interfaces(tobjectdef(def_to),tobjectdef(def_from)) then
+                     begin
+                       doconv:=tc_equal;
+                       eq:=te_convert_l1;
                      end
                    { ugly, but delphi allows it (enables typecasting ordinals/
                      enums of any size to pointer-based object defs) }

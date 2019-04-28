@@ -79,7 +79,8 @@ implementation
        nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,
        { parser }
        scanner,
-       pbase,pinline,ptype,pgenutil,procinfo,cpuinfo
+       pbase,pinline,ptype,pgenutil,panonym,
+       procinfo,cpuinfo
        ;
 
     function sub_expr(pred_level:Toperator_precedence;flags:texprflags;factornode:tnode):tnode;forward;
@@ -951,7 +952,7 @@ implementation
                        else
                          p1:=cloadvmtaddrnode.create(ctypenode.create(pd.struct))
                      else
-                       p1:=load_self_node;
+                       p1:=load_contextual_self(pd);
                    end
                  else
                    p1:=load_self_node;
@@ -2644,6 +2645,78 @@ implementation
           else
             begin
               { is this a procedure variable ? }
+              if assigned(p1.resultdef) then
+                case p1.resultdef.typ of
+                  // TODO: why do we get here for VAR X: TINTERFACE?
+                  objectdef:
+                    if token=_LKLAMMER then
+                      begin
+                        structh:=tabstractrecorddef(p1.resultdef);
+                        // TODO: inline get_operator_invoke
+                        {
+                        if oo_is_invokable in obj.objectoptions then begin
+                          result := obj.symtable.find(invokable_method_name) as tprocsym;
+                          if result = nil then internalerror(2015020201);
+                        end else begin
+                          // TODO: "Type is not invokable" ?
+                          result := nil;
+                        end
+                        }
+                        srsym:=get_operator_invoke(structh);
+                        if assigned(srsym) then
+                          do_proc_call(srsym,srsym.owner,structh,false,again,p1,[],nil)
+                        else
+                          // TODO: ONLY WHEN "Type is not invokable" IS NOT GENERATED?
+                          again:=false;
+                      end
+                    else
+                      again:=false;
+                  procvardef:
+                    begin
+                      { Typenode for typecasting or expecting a procvar }
+                      if (p1.nodetype=typen) or
+                         (
+                          assigned(getprocvardef) and
+                          equal_defs(p1.resultdef,getprocvardef)
+                         ) then
+                        begin
+                          if try_to_consume(_LKLAMMER) then
+                            begin
+                              p1:=comp_expr([ef_accept_equal]);
+                              consume(_RKLAMMER);
+                              p1:=ctypeconvnode.create_explicit(p1,p1.resultdef);
+                            end
+                          else
+                            again:=false
+                        end
+                      else
+                        begin
+                          if try_to_consume(_LKLAMMER) then
+                            begin
+                              p2:=parse_paras(false,false,_RKLAMMER);
+                              consume(_RKLAMMER);
+                              p1:=ccallnode.create_procvar(p2,p1);
+                              { proc():= is never possible }
+                              if token=_ASSIGNMENT then
+                                begin
+                                  Message(parser_e_illegal_expression);
+                                  p1.free;
+                                  p1:=cerrornode.create;
+                                  again:=false;
+                                end;
+                            end
+                          else
+                            again:=false;
+                        end;
+                    end;
+                  else
+                    again:=false;
+                end
+              else
+                again:=false;
+
+              { is this a procedure variable ? }
+              (*
               if assigned(p1.resultdef) and
                  (p1.resultdef.typ=procvardef) then
                 begin
@@ -2685,6 +2758,7 @@ implementation
                 end
               else
                 again:=false;
+              *)
              end;
         end;
 
@@ -3064,7 +3138,7 @@ implementation
                                   if assigned(pd) and pd.no_self_node then
                                     p1:=cloadvmtaddrnode.create(ctypenode.create(pd.struct))
                                   else
-                                    p1:=load_self_node;
+                                    p1:=load_contextual_self(pd);
                                 end
                               else
                                 p1:=load_self_node;
@@ -3080,8 +3154,15 @@ implementation
                           p1:=csubscriptnode.create(srsym,p1);
                       end
                     else
-                      { regular non-field load }
-                      p1:=cloadnode.create(srsym,srsymtable);
+                      begin
+                        if srsym.typ in [localvarsym,paravarsym] then
+                          p1:=handle_possible_capture(current_procinfo,tabstractnormalvarsym(srsym))
+                        else
+                          p1:=nil;
+                        { regular non-field load }
+                        if not assigned(p1) then
+                          p1:=cloadnode.create(srsym,srsymtable);
+                      end;
                   end;
 
                 syssym :
@@ -3159,11 +3240,29 @@ implementation
                     { check if it's a method/class method }
                     if is_member_read(srsym,srsymtable,p1,hdef) then
                       begin
+
+                        // TODO: is this block correct or did it change?
+                        (*
                         { if we are accessing a owner procsym from the nested }
                         { class we need to call it as a class member          }
                         if (srsymtable.symtabletype in [ObjectSymtable,recordsymtable]) and
                           assigned(current_structdef) and (current_structdef<>hdef) and is_owned_by(current_structdef,hdef) then
                           p1:=cloadvmtaddrnode.create(ctypenode.create(hdef));
+                        *)
+                        { if we are accessing a owner propertysym from the nested }
+                        { class or from a static class method we need to call }
+                        { it as a class member                                }
+                        if (assigned(current_structdef) and (current_structdef<>hdef) and is_owned_by(current_structdef,hdef)) or
+                           (assigned(current_procinfo) and current_procinfo.get_normal_proc.procdef.no_self_node) then
+                          begin
+                            p1:=ctypenode.create(hdef);
+                            if not is_record(hdef) then
+                              p1:=cloadvmtaddrnode.create(p1);
+                          end
+                        else
+                          // TODO: Assigned(current_procinfo)?!
+                          p1:=load_contextual_self(current_procinfo.get_normal_proc.procdef);
+
                         { not srsymtable.symtabletype since that can be }
                         { withsymtable as well                          }
                         if (srsym.owner.symtabletype in [ObjectSymtable,recordsymtable]) then
@@ -3331,14 +3430,16 @@ implementation
            factor_read_set:=buildp;
          end;
 
-         function can_load_self_node: boolean;
+         function can_load_self_node(out toplevel_context: tprocdef): boolean;
          begin
            result:=false;
            if (block_type in [bt_const,bt_type,bt_const_type,bt_var_type]) or
               not assigned(current_structdef) or
               not assigned(current_procinfo) then
              exit;
-           result:=not current_procinfo.get_normal_proc.procdef.no_self_node;
+           toplevel_context:=current_procinfo.get_normal_proc.procdef;
+           result:=not toplevel_context.no_self_node;
+           //result:=not current_procinfo.get_normal_proc.procdef.no_self_node;
          end;
 
 
@@ -3380,9 +3481,9 @@ implementation
          begin
            again:=true;
            { Handle references to self }
-           if (idtoken=_SELF) and can_load_self_node then
+           if (idtoken=_SELF) and can_load_self_node(pd) then
              begin
-               p1:=load_self_node;
+               p1:=load_contextual_self(pd);
                consume(_ID);
                again:=true;
              end
@@ -3920,7 +4021,18 @@ implementation
                  consume(_RKLAMMER);
                  p1:=cinlinenode.create(in_objc_protocol_x,false,p1);
                end;
-
+              _PROCEDURE,_FUNCTION:
+                begin
+                  if m_anonymous_functions in current_settings.modeswitches then
+                   begin
+                     if assigned(current_procinfo) then
+                       p1:=parse_nameless_routine(current_procinfo.procdef)
+                     else
+                       internalerror(2012012101);
+                   end
+                 else
+                   consume(token);
+                end;
              else
                begin
                  Message(parser_e_illegal_expression);

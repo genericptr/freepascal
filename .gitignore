@@ -1,0 +1,24 @@
+# files
+pp
+fpmake
+rtl/darwin/fpcmade.x86_64-darwin
+fpmake_proc1 copy.inc
+tests/*.x86_64-darwin
+rtl/Package.fpc
+tests/createlst
+tests/gparmake
+compiler/ryan_ppcx64.lpi
+
+# directories
+lazbuild/
+x86_64-darwin/
+tests/tstunits/
+tests/utils
+
+# patterns
+*.app
+*.o
+*.ppu
+*.fpm
+*.rsj
+*.lst

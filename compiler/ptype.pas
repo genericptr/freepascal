@@ -82,7 +82,7 @@ implementation
        nset,ncnv,ncon,nld,
        { parser }
        scanner,
-       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil
+       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil,panonym
 {$ifdef jvm}
        ,pjvm
 {$endif}
@@ -1615,6 +1615,7 @@ implementation
         stitem: psymtablestackitem;
         sym: tsym;
         st: tsymtable;
+        pd: tprocdef;
       begin
          def:=nil;
          v:=0;
@@ -1943,6 +1944,39 @@ implementation
                           if assigned(def) and
                              (def.typ=procvardef) then
                             include(tprocvardef(def).procoptions,po_is_function_ref);
+                        end
+                      else if m_anonymous_functions in current_settings.modeswitches then
+                        begin
+                          {
+                            - get rid of parse_method_reference(); instead integrate the code into 
+                            procvar_dec() and have that return the interface def based on a boolean 
+                            flag (Note: your code as is would result in wrong parsing if modeswitch 
+                            blocks would be activated in mode Delphi)
+
+                            - based on the above point you can also get rid of the 
+                            ppm_method_reference flag; the remaining ppm_nameless_routine I'd 
+                            instead convert into a set together with the isgeneric parameter
+                          }
+                          //def:=parse_method_reference(name)
+                          consume(_REFERENCE);
+                          consume(_TO);
+                          if token in [_PROCEDURE,_FUNCTION] then
+                            begin
+                              def:=declare_invokable_interface(name);
+                              symtablestack.push(tobjectdef(def).symtable);
+                              // TODO: ptype.pas parses procvars directly, using parse_parameter_dec
+                              // TODO: remmove ppm_method_reference and make a new set for "isgeneric"
+                              // and "isanonym"
+                              pd:=parse_proc_dec(false,tabstractrecorddef(def),false,ppm_method_reference);
+                              // TODO: do we need this?
+                              handle_calling_convention(pd);
+                              { add procdef to itself }
+                              tprocsym(pd.procsym).ProcdefList.Add(pd);
+                              include(pd.procoptions,po_virtualmethod);
+                              symtablestack.pop(tobjectdef(def).symtable);
+                            end
+                          else
+                            consume(_PROCEDURE);// TODO: better error?
                         end
                       else
                         expr_type;

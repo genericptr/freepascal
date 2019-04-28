@@ -44,7 +44,10 @@ interface
            Be really carefull when using this flag! }
          loadnf_isinternal_ignoreconst,
 
-         loadnf_only_uninitialized_hint
+         loadnf_only_uninitialized_hint,
+         { the node loads a captured formal parameter from its original location;
+           such node is marked so, so it will not get rewritten during the first pass }
+         loadnf_captured_param
         );
 
        tloadnode = class(tunarynode)
@@ -181,7 +184,7 @@ implementation
       symtable,
       defutil,defcmp,
       cpuinfo,
-      htypechk,pass_1,procinfo,paramgr,
+      htypechk,pass_1,procinfo,paramgr,panonym,
       ncon,ninl,ncnv,nmem,ncal,nutils,
       cgbase
       ;
@@ -416,6 +419,20 @@ implementation
             localvarsym,
             paravarsym :
               begin
+                if symtableentry.typ in [localvarsym,paravarsym] then
+                  begin
+                    { if the variable has been captured after the creation of this node,
+                      then this node is no longer relevant,
+                      and we shall load the variable's new location instead.
+                      the exception is the case when we access the original location
+                      in order to copy the value into the capturer }
+                    if tabstractnormalvarsym(symtableentry).is_captured and not
+                       (loadnf_captured_param in loadnodeflags) then
+                      begin
+                        result:=reload_captured_sym(current_procinfo.procdef,tabstractnormalvarsym(symtableentry));
+                        exit;
+                      end;
+                  end;
                 if assigned(left) then
                   firstpass(left);
                 if not is_addr_param_load and

@@ -28,7 +28,8 @@ interface
     uses
       globals,
       node,nbas,
-      symdef,procinfo,optdfa;
+      symdef,procinfo,optdfa,
+      pdecsub;
 
     type
       tcgprocinfo = class(tprocinfo)
@@ -80,7 +81,7 @@ interface
     { reads any routine in the implementation, or a non-method routine
       declaration in the interface (depending on whether or not parse_only is
       true) }
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    function read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean;procparsemode:tprocparsemode=ppm_normal) : tprocdef;
 
     { parses only the body of a non nested routine; needs a correctly setup pd }
     procedure read_proc_body(pd:tprocdef);
@@ -113,7 +114,7 @@ implementation
 {$endif}
        { parser }
        scanner,gendef,
-       pbase,pstatmnt,pdecl,pdecsub,pexports,pgenutil,pparautl,
+       pbase,pstatmnt,pdecl,pexports,pgenutil,pparautl,panonym,
        { codegen }
        tgobj,cgbase,cgobj,hlcgobj,hlcgcpu,dbgbase,
 {$ifdef llvm}
@@ -581,6 +582,8 @@ implementation
           end;
         if m_non_local_goto in current_settings.modeswitches then
           tsymtable(current_procinfo.procdef.localst).SymList.ForEachCall(@add_label_init,@newstatement);
+
+        initialise_capturer(current_procinfo.procdef,newstatement);
       end;
 
 
@@ -1357,6 +1360,11 @@ implementation
         flowcontrol:=[];
         do_firstpass(code);
 
+        { this cannot be done before the first pass because there are tloadnodes that reference original symbols.
+          such nodes have just been overwritten in tloadnode.pass_1.
+          we delete these vars ASAP; otherwise, for example, managed initialisations would be generated for them. }
+        delete_captured_variables(procdef);
+
 {$if defined(i386) or defined(i8086)}
         if node_resources_fpu(code)>0 then
           include(flags,pi_uses_fpu);
@@ -1757,6 +1765,8 @@ implementation
       begin
         { insert symtables for the class, but only if it is no nested function }
         if assigned(procdef.struct) and
+           { members of TCapturer are never exposed }
+           not (po_anonym in procdef.procoptions) and
            not(assigned(parent) and
                assigned(parent.procdef) and
                assigned(parent.procdef.struct)) then
@@ -1787,6 +1797,7 @@ implementation
 
         { remove symtables for the class, but only if it is no nested function }
         if assigned(procdef.struct) and
+           not (po_anonym in procdef.procoptions) and
            not(assigned(parent) and
                assigned(parent.procdef) and
                assigned(parent.procdef.struct)) then
@@ -1892,6 +1903,8 @@ implementation
 
          { parse the code ... }
          code:=block(current_module.islibrary);
+
+         postprocess_capturer(procdef);
 
          if recordtokens then
            begin
@@ -2011,6 +2024,7 @@ implementation
       }
 
       var
+        parent_procinfo  : tprocinfo;
         oldfailtokenmode : tmodeswitches;
         isnestedproc     : boolean;
       begin
@@ -2018,7 +2032,12 @@ implementation
         oldfailtokenmode:=[];
 
         { create a new procedure }
-        current_procinfo:=cprocinfo.create(old_current_procinfo);
+        { whereas nested textually, anonymous routines are not nested logically }
+        if po_anonym in pd.procoptions then
+          parent_procinfo:=nil
+        else
+          parent_procinfo:=old_current_procinfo;
+        current_procinfo:=cprocinfo.create(parent_procinfo);
         current_module.procinfo:=current_procinfo;
         current_procinfo.procdef:=pd;
         isnestedproc:=(current_procinfo.procdef.parast.symtablelevel>normal_function_level);
@@ -2086,7 +2105,7 @@ implementation
         { release procinfo }
         if tprocinfo(current_module.procinfo)<>current_procinfo then
           internalerror(200304274);
-        current_module.procinfo:=current_procinfo.parent;
+        current_module.procinfo:=old_current_procinfo;
 
         { For specialization we didn't record the last semicolon. Moving this parsing
           into the parse_body routine is not done because of having better file position
@@ -2095,6 +2114,7 @@ implementation
             (
               not assigned(current_procinfo.procdef.struct) or
               not (df_specialization in current_procinfo.procdef.struct.defoptions)
+              or (po_anonym in pd.procoptions)
               or not (
                 assigned(current_procinfo.procdef.owner) and
                 (current_procinfo.procdef.owner.defowner=current_procinfo.procdef.struct)
@@ -2123,7 +2143,7 @@ implementation
       end;
 
 
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    function read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean;procparsemode:tprocparsemode=ppm_normal) : tprocdef;
       {
         Parses the procedure directives, then parses the procedure body, then
         generates the code for it
@@ -2154,7 +2174,7 @@ implementation
 
          if not assigned(usefwpd) then
            { parse procedure declaration }
-           pd:=parse_proc_dec(isclassmethod,old_current_structdef,isgeneric)
+           pd:=parse_proc_dec(isclassmethod,old_current_structdef,isgeneric,procparsemode)
          else
            pd:=usefwpd;
 
@@ -2194,7 +2214,7 @@ implementation
            end;
 
          { search for forward declarations }
-         if not proc_add_definition(pd) then
+         if not((procparsemode=ppm_anonym_routine) or proc_add_definition(pd)) then
            begin
              { A method must be forward defined (in the object declaration) }
              if assigned(pd.struct) and
@@ -2271,6 +2291,9 @@ implementation
          { compile procedure when a body is needed }
          if (pd_body in pdflags) then
            begin
+            { members of TCapturer are never exposed  }
+            if procparsemode=ppm_anonym_routine then
+              symtablestack.pop(pd.owner);          
              read_proc_body(old_current_procinfo,pd);
            end
          else
@@ -2332,6 +2355,8 @@ implementation
          current_genericdef:=old_current_genericdef;
          current_specializedef:=old_current_specializedef;
          current_procinfo:=old_current_procinfo;
+
+         result:=pd;
       end;
 
 

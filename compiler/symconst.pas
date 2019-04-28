@@ -414,7 +414,11 @@ type
     { procedure is an automatically generated property getter }
     po_is_auto_getter,
     { procedure is an automatically generated property setter }
-    po_is_auto_setter
+    po_is_auto_setter,
+    { anonymous routine (including closure) }
+    po_anonym,
+    { has at least one closure declared in the body }
+    po_has_closure
   );
   tprocoptions=set of tprocoption;
 
@@ -527,8 +531,10 @@ type
     oo_is_classhelper,    { objcclasses that represent categories, and Delpi-style class helpers, are marked like this }
     oo_has_class_constructor, { the object/class has a class constructor }
     oo_has_class_destructor,  { the object/class has a class destructor  }
-    oo_is_enum_class,     { the class represents an enum (JVM) }
-    oo_has_new_destructor { the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_is_enum_class,      { the class represents an enum (JVM) }
+    oo_has_new_destructor, { the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_is_anonym,
+    oo_is_invokable
   );
   tobjectoptions=set of tobjectoption;
 
@@ -1019,7 +1025,9 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_function_ref',{po_is_function_ref}
       'C-style blocks',{po_is_block}
       'po_is_auto_getter',{po_is_auto_getter}
-      'po_is_auto_setter'{po_is_auto_setter}
+      'po_is_auto_setter',{po_is_auto_setter}
+      'po_anonym',        {po_anonym}
+      'po_has_closure'    {po_has_closure}
     );
 
 implementation

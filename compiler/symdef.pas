@@ -486,6 +486,8 @@ interface
           function check_objc_types: boolean;
           { C++ }
           procedure finish_cpp_data;
+          { this should be called when this class implements an interface }
+          procedure register_implemented_interface(intfdef: tobjectdef);
        end;
        tobjectdefclass = class of tobjectdef;
 
@@ -1359,6 +1361,9 @@ implementation
            prefix:=tabstractrecorddef(st.defowner).objname^+'_$_'+prefix;
            st:=st.defowner.owner;
          end;
+        // TODO: why?
+        if st.symtabletype = localsymtable then
+          internalerror(0);
         { symtable must now be static or global }
         if not(st.symtabletype in [staticsymtable,globalsymtable]) then
           internalerror(200204175);
@@ -7606,6 +7611,14 @@ implementation
         self.symtable.DefList.ForEachCall(@do_cpp_import_info,nil);
       end;
 
+
+    procedure tobjectdef.register_implemented_interface(intfdef: tobjectdef);
+      begin
+        { allocate the GUID only if the class implements at least one interface }
+        if ImplementedInterfaces.count = 0 then
+          prepareguid;
+        ImplementedInterfaces.Add(TImplementedInterface.Create(intfdef));
+      end;
 
 {****************************************************************************
                              TImplementedInterface
