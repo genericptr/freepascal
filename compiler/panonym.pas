@@ -37,7 +37,7 @@ interface
   // TODO: this depends on a many other functions, how can it be moved??
   {
   - analogous for load_contextual_self(); maybe even move that to a new 
-  unit altogether as this doesn't really deal with anonym/anonym 
+  unit altogether as this doesn't really deal with anonym 
   functions, but more with the closure part of the concept (so either 
   nutils.pas or a new nclosure.pas as it's dealing more with nodes than 
   parsing)
@@ -148,15 +148,15 @@ implementation
   function load_capturer(capturer: tabstractnormalvarsym): tnode; inline;
     begin
       // TODO: load_self_node for loadnf_is_self? WHEN capturer IS A $SELF?!
-      result := cloadnode.create(capturer, capturer.owner)
+      result:=cloadnode.create(capturer,capturer.owner)
     end;
 
   function load_capturer_field(capturer: tabstractnormalvarsym; field: tfieldvarsym): tnode;
     begin
-      assert(field.owner.defowner = capturer.vardef);
-      result:=csubscriptnode.create(field, load_capturer(capturer));
+      // TODO: use internalerror
+      assert(field.owner.defowner=capturer.vardef);
+      result:=csubscriptnode.create(field,load_capturer(capturer));
     end;
-
 
   function parse_anonym_proc(enclosing_routine: tprocdef): tnode;
     var
@@ -174,7 +174,7 @@ implementation
       // Popping happens in read_proc right before calling read_proc_body
       // TODO: Find a way of not pushing this?
       symtablestack.push(capturer_def.symtable);
-      pd:=read_proc(false, nil, false, ppm_anonym_routine);
+      pd:=read_proc(false,nil,false,ppm_anonym_routine);
       {pd.}add_to_procsym(pd);
       current_structdef:=prev_struct;
 
@@ -260,23 +260,24 @@ implementation
   function declare_capturer(symtable: TSymTable): tcapturersym; inline;
     const
       capturer_class_name = 'Capturer';
+      capturer_superclass_name = 'TINTERFACEDOBJECT';
     var
       capturer_def: tobjectdef;
       capturer_sym: ttypesym;
       superclass: ttypesym;
     begin
-      // create class "type TCapturer = class(TInterfacedObject)"
-      superclass:=search_system_type('TINTERFACEDOBJECT');
+      { create class "type TCapturer = class(TInterfacedObject)" }
+      superclass:=search_system_type(capturer_superclass_name);
       if not assigned(superclass) then
         internalerror(2019042801);
       capturer_def:=tobjectdef.create(odt_class,capturer_class_name,tobjectdef(superclass.typedef), true);
 
-      // symbol is required for tdef.mangledparaname, which is now used by tobjectdef.vmt_def
+      { symbol is required for tdef.mangledparaname, which is now used by tobjectdef.vmt_def }
       capturer_sym:=ttypesym.create('$T'+capturer_class_name,capturer_def,true);
       inc(capturer_sym.refs);
       symtable.insert(capturer_sym);
 
-      // create "var $Capturer: TCapturer"
+      { create "var $Capturer: TCapturer" }
       result:=tcapturersym.create('$'+capturer_var_name, vs_value, capturer_def, [], true);
       // TODO: ^-- fileinfo:=current_tokenpos!
       symtable.insert(result);
@@ -319,7 +320,7 @@ implementation
       captured_into: tfieldvarsym;
     begin
       // TODO: use internal errors
-      assert( outer_sym.captured_into = nil );
+      assert(outer_sym.captured_into = nil);
 
       sym_owner_routine:=outer_sym.owner.defowner as tprocdef;
       enclosing_routine:=get_enclosing_routine(anonym_routine);
@@ -452,69 +453,54 @@ implementation
       result:=load_captured_sym(routine,sym.captured_into);
     end;
 
-  procedure remove_captured_variable(v: tobject; unused: pointer);
-    var
-      sym: tabstractnormalvarsym absolute v;
-    begin
-      writeln(sym.RealName);
-      if (sym.typ=localvarsym) and assigned(sym.captured_into) then 
-        begin
-          writeln(#9'deleted ', sym.RealName);
-          sym.Owner.Delete(sym);
-        end;
-    end;
-
   { Without this, for example, initialisations will be generated for captured managed variables,
     but Initialise(ManagedVar) is transformed into Initialise(Capturer.ManagedField),
     and Capturer is not created until after managed variables are initialised. }
   procedure delete_captured_variables(routine: tprocdef);
     var
-      st: TSymTable;
-      I: Integer;
-      SL: TFPHashObjectList;
-      S: TSymEntry;
+      index: integer;
+      sl: TFPHashObjectList;
+      sym: tsymentry;
     begin
       writeln('delete_captured_variables in ', routine.fullprocname(true));
-      st := routine.localst;
-      //st.SymList.ForEachCall(remove_captured_variable,nil);
-
       // TODO: what about debugging? how to expose such vars?
-      SL := st.SymList;
-      I := SL.Count;
-      while I > 0 do begin
-        dec(I);
-        S := SL.Items[I] as TSymEntry;
-
-        // TODO: what about params by value that are created/inited same way as managed localvar?!
-        if (S.typ=localvarsym) and tlocalvarsym(S).is_captured then begin
-          writeln(#9'deleting ', S.RealName);
-          S.Owner.Delete(S) // TODO: ACTUALLY DESTROYS?
+      sl:=routine.localst.SymList;
+      index:=sl.count;
+      while index > 0 do 
+        begin
+          dec(index);
+          sym:=sl.items[index] as tsymentry;
+          // TODO: what about params by value that are created/inited same way as managed localvar?!
+          if (sym.typ=localvarsym) and tlocalvarsym(sym).is_captured then 
+            begin
+              writeln(#9'deleting ',sym.RealName);
+              sym.owner.delete(sym); // TODO: ACTUALLY DESTROYS?
+            end;
         end;
-      end;
     end;
 
 
   procedure generate_capturer_vmt(capturer_def: tobjectdef); inline;
     begin
-      with TVMTBuilder.Create(capturer_def) do begin
-        generate_vmt;// TODO: same @ WHERE? -- extract
-        Destroy;
-      end;
+      with TVMTBuilder.Create(capturer_def) do
+        begin
+          generate_vmt;// TODO: same @ WHERE? -- extract
+          Destroy;
+        end;
     end;
 
   procedure postprocess_capturer(routine: tprocdef); inline;
     var
       capturer_def: tobjectdef;
     begin
-      if not (po_has_closure in routine.procoptions) then exit;
-
+      if not (po_has_closure in routine.procoptions) then
+        exit;
       writeln('postprocess_capturer @ ', routine.procsym.RealName);
-
       capturer_def := tobjectdef( find_capturer(routine).vardef );
-      // These two are delayed until this point because
-      // ... we have been adding fields on-the-fly
+      { These two are delayed until this point because
+        ... we have been adding fields on-the-fly }
       tabstractrecordsymtable(capturer_def.symtable).addalignmentpadding;
-      // ... we have been adding interfaces on-the-fly
+      { ... we have been adding interfaces on-the-fly }
       generate_capturer_vmt(capturer_def);
     end;
 
