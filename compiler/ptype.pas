@@ -1947,6 +1947,7 @@ implementation
                         end
                       else if m_anonymous_functions in current_settings.modeswitches then
                         begin
+                          // TODO: I don't see how sven thinks we can do this
                           {
                             - get rid of parse_method_reference(); instead integrate the code into 
                             procvar_dec() and have that return the interface def based on a boolean 
@@ -1954,10 +1955,9 @@ implementation
                             blocks would be activated in mode Delphi)
 
                             - based on the above point you can also get rid of the 
-                            ppm_method_reference flag; the remaining ppm_nameless_routine I'd 
+                            ppm_method_reference flag; the remaining ppm_anonym_routine I'd 
                             instead convert into a set together with the isgeneric parameter
                           }
-                          //def:=parse_method_reference(name)
                           consume(_REFERENCE);
                           consume(_TO);
                           if token in [_PROCEDURE,_FUNCTION] then
@@ -1965,8 +1965,6 @@ implementation
                               def:=declare_invokable_interface(name);
                               symtablestack.push(tobjectdef(def).symtable);
                               // TODO: ptype.pas parses procvars directly, using parse_parameter_dec
-                              // TODO: remmove ppm_method_reference and make a new set for "isgeneric"
-                              // and "isanonym"
                               pd:=parse_proc_dec(false,tabstractrecorddef(def),false,ppm_method_reference);
                               // TODO: do we need this?
                               handle_calling_convention(pd);

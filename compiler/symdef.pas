@@ -1327,10 +1327,14 @@ implementation
         s,
         prefix : TSymStr;
         crc : dword;
+      label
+        AGAIN;
       begin
         prefix:='';
         if not assigned(st) then
          internalerror(200204212);
+        // TODO: temporary!
+        AGAIN:
         { sub procedures }
         while (st.symtabletype in [localsymtable,parasymtable]) do
          begin
@@ -1362,8 +1366,8 @@ implementation
            st:=st.defowner.owner;
          end;
         // TODO: why?
-        if st.symtabletype = localsymtable then
-          internalerror(0);
+        if st.symtabletype=localsymtable then
+          goto AGAIN;
         { symtable must now be static or global }
         if not(st.symtabletype in [staticsymtable,globalsymtable]) then
           internalerror(200204175);

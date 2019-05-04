@@ -4026,7 +4026,7 @@ implementation
                   if m_anonymous_functions in current_settings.modeswitches then
                    begin
                      if assigned(current_procinfo) then
-                       p1:=parse_nameless_routine(current_procinfo.procdef)
+                       p1:=parse_anonym_proc(current_procinfo.procdef)
                      else
                        internalerror(2012012101);
                    end

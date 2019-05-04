@@ -1,5 +1,5 @@
 {
-    Copyright (c) .....
+    Copyright (c) 2011-2015 Blaise.ru
 
     .....
 
@@ -31,16 +31,31 @@ interface
     psub,procinfo,
     node,nbas;
 
-  function get_operator_invoke(obj: tabstractrecorddef): tprocsym; inline;
-  function parse_nameless_routine(enclosing_routine: tprocdef): tnode;
-  procedure initialise_capturer(routine: tprocdef; var stmt: tstatementnode); inline;
+  // TODO: this is the only parsing function it could be inlined
+  function parse_anonym_proc(enclosing_routine: tprocdef): tnode;
+
+  // TODO: this depends on a many other functions, how can it be moved??
+  {
+  - analogous for load_contextual_self(); maybe even move that to a new 
+  unit altogether as this doesn't really deal with anonym/anonym 
+  functions, but more with the closure part of the concept (so either 
+  nutils.pas or a new nclosure.pas as it's dealing more with nodes than 
+  parsing)
+  }
   function load_contextual_self(context: tprocdef): tnode;
+
+  { invokable interface }
+  function get_operator_invoke(obj: tabstractrecorddef): tprocsym; inline;
+  function declare_invokable_interface(name: string): tobjectdef;
+
+  { capturing }
   function handle_possible_capture(ctx: tprocinfo; sym: tabstractnormalvarsym): tnode;
   function reload_captured_sym(routine: tprocdef; sym: tabstractnormalvarsym): tnode;
+
+  procedure initialise_capturer(routine: tprocdef; var stmt: tstatementnode); inline;
   procedure postprocess_capturer(routine: tprocdef); inline;
   procedure delete_captured_variables(routine: tprocdef);
 
-  function declare_invokable_interface(name: string): tobjectdef;
 
 implementation
 
@@ -53,12 +68,6 @@ implementation
     defcmp,
     nld,ncnv,nmem,ncal,nobj,nutils;
 
-  function declare_invokable_interface(name: string): tobjectdef;
-    begin
-      result:=tobjectdef.create(odt_interfacecom, name, interface_iunknown, true);
-      result.objectoptions:=result.objectoptions+[oo_has_virtual,oo_is_invokable];
-    end;
-
   procedure {tprocdef.}add_to_procsym(self: tprocdef); overload; inline;
     begin
       tprocsym(self.procsym).ProcdefList.Add(self);
@@ -70,21 +79,31 @@ implementation
       add_to_procsym(self);
     end;
 
+  function declare_invokable_interface(name: string): tobjectdef;
+    begin
+      result:=tobjectdef.create(odt_interfacecom,name,interface_iunknown,true);
+      result.objectoptions:=result.objectoptions+[oo_has_virtual,oo_is_invokable];
+    end;
+
   const
     invokable_method_name = 'INVOKE';
 
   function get_operator_invoke(obj: tabstractrecorddef): tprocsym; inline;
     begin
-      if oo_is_invokable in obj.objectoptions then begin
-        result := obj.symtable.find(invokable_method_name) as tprocsym;
-        if result = nil then internalerror(2015020201);
-      end else begin
-        // TODO: "Type is not invokable" ?
-        result := nil;
-      end
+      if oo_is_invokable in obj.objectoptions then
+        begin
+          result:=obj.symtable.find(invokable_method_name) as tprocsym;
+          if result=nil then 
+            internalerror(2015020201);
+        end
+      else 
+        begin
+          // TODO: "Type is not invokable" ?
+          result:=nil;
+        end;
     end;
 
-  function create_nameless_interface(capturer_def: tobjectdef; nameless_routine: tprocdef): tobjectdef;
+  function create_anonym_interface(capturer_def: tobjectdef; anonym_routine: tprocdef): tobjectdef;
     var
       intf_def: tobjectdef;
       invoke_sym: tprocsym;
@@ -92,36 +111,37 @@ implementation
       i: integer;
     begin
       // declare a new interface
-      intf_def:=declare_invokable_interface('I'+nameless_routine.procsym.RealName);
-      include(intf_def.objectoptions, oo_is_anonym);
+      intf_def:=declare_invokable_interface('I'+anonym_routine.procsym.RealName);
+      include(intf_def.objectoptions,oo_is_anonym);
 
       invoke_sym:=tprocsym.create(invokable_method_name);
       intf_def.symtable.insert(invoke_sym);
       symtablestack.push(intf_def.symtable);
-      invoke:=tprocdef.create(normal_function_level, true);
-      invoke.struct := intf_def;
+      invoke:=tprocdef.create(normal_function_level,true);
+      invoke.struct:=intf_def;
       symtablestack.pop(intf_def.symtable);
       {invoke.}add_to_procsym(invoke, invoke_sym);
 
       include(invoke.procoptions, po_virtualmethod);
-      invoke.returndef:=nameless_routine.returndef;
+      invoke.returndef:=anonym_routine.returndef;
       //invoke.calcparas;
       invoke.paras:=tparalist.create(false);
-      invoke.paras.count:=nameless_routine.paras.count;
-      for i:=0 to nameless_routine.paras.count-1 do
-        invoke.paras[i]:=nameless_routine.paras[i];// TODO: WHO OWNS?!
+      invoke.paras.count:=anonym_routine.paras.count;
+      for i:=0 to anonym_routine.paras.count-1 do
+        invoke.paras[i]:=anonym_routine.paras[i];// TODO: WHO OWNS?!
 
-      invoke.proccalloption:=nameless_routine.proccalloption;
-      invoke.proctypeoption:=nameless_routine.proctypeoption;
+      invoke.proccalloption:=anonym_routine.proccalloption;
+      invoke.proctypeoption:=anonym_routine.proctypeoption;
       // implement it on TCapture
       capturer_def.register_implemented_interface(intf_def);
       // add mapping
-      find_implemented_interface(capturer_def,intf_def).AddMapping(intf_def.objname^+'.'+invokable_method_name,nameless_routine.procsym.Name{todo?});
+      find_implemented_interface(capturer_def,intf_def).AddMapping(intf_def.objname^+'.'+invokable_method_name,anonym_routine.procsym.Name{todo?});
 
       result:=intf_def;
     end;
 
-  type tcapturersym = tlocalvarsym;
+  type
+    tcapturersym = tlocalvarsym;
 
   function get_capturer(routine: tprocdef): tcapturersym; forward;
 
@@ -138,7 +158,7 @@ implementation
     end;
 
 
-  function parse_nameless_routine(enclosing_routine: tprocdef): tnode;
+  function parse_anonym_proc(enclosing_routine: tprocdef): tnode;
     var
       pd: tprocdef;
       capturer: tcapturersym;
@@ -158,10 +178,10 @@ implementation
       {pd.}add_to_procsym(pd);
       current_structdef:=prev_struct;
 
-      // for every nameless method we create an Invoke-interface
-      nm_intf:=create_nameless_interface(capturer_def{TODO: obtain from pd?}, pd);
+      // for every anonym method we create an Invoke-interface
+      nm_intf:=create_anonym_interface(capturer_def,pd);
 
-      result:=ctypeconvnode.create(load_capturer(capturer), nm_intf);
+      result:=ctypeconvnode.create(load_capturer(capturer),nm_intf);
     end;
 
 
@@ -176,7 +196,7 @@ implementation
       sym:=routine.localst.Find(capturer_var_name);
       if not assigned(sym) then
         internalerror(2015031001);
-      result := tcapturersym(sym);
+      result:=tcapturersym(sym);
     end;
 
 
@@ -190,13 +210,13 @@ implementation
       capturer_sym:=find_capturer(routine);
       capturer_def:=tobjectdef(capturer_sym.vardef);
 
-      // Neither TInterfacedObject, nor TCapturer have a custom constructor
+      { neither tinterfacedobject, nor tcapturer have a custom constructor }
       ctor:=class_tobject.symtable.Find('CREATE') as tprocsym;
 
-      // Insert "Capturer := TCapturer.Create()" as the first statement of the routine
+      { insert "capturer := tcapturer.create()" as the first statement of the routine }
       result:=cloadvmtaddrnode.create(ctypenode.create(capturer_def));
-      result:=ccallnode.create(nil, ctor, capturer_def.symtable, result, [], nil);
-      result:=cassignmentnode.create(load_capturer(capturer_sym), result);
+      result:=ccallnode.create(nil,ctor,capturer_def.symtable,result,[],nil);
+      result:=cassignmentnode.create(load_capturer(capturer_sym),result);
     end;
 
 
@@ -215,7 +235,7 @@ implementation
           if p.is_captured then
             begin
               writeln(#9'initialise_captured_parameter ', p.RealName);
-              node:=cloadnode.create(p, p.owner);
+              node:=cloadnode.create(p,p.owner);
               tloadnode(node).loadnodeflags:=[loadnf_captured_param]; // otherwise, it will be rewritten later!
               node:=cassignmentnode.create(
                         load_capturer_field(capturer, p.captured_into),
@@ -231,7 +251,7 @@ implementation
     begin
       if po_has_closure in routine.procoptions then
         begin
-          addstatement(stmt, instantiate_capturer(routine));
+          addstatement(stmt,instantiate_capturer(routine));
           initialise_captured_parameters(routine, stmt);
         end;
     end;
@@ -243,25 +263,26 @@ implementation
     var
       capturer_def: tobjectdef;
       capturer_sym: ttypesym;
+      superclass: ttypesym;
     begin
       // create class "type TCapturer = class(TInterfacedObject)"
-      capturer_def:=tobjectdef.create(odt_class, capturer_class_name, search_system_type('TINTERFACEDOBJECT').typedef as tobjectdef, true);
+      superclass:=search_system_type('TINTERFACEDOBJECT');
+      if not assigned(superclass) then
+        internalerror(2019042801);
+      capturer_def:=tobjectdef.create(odt_class,capturer_class_name,tobjectdef(superclass.typedef), true);
 
-      // Symbol is required for tdef.mangledparaname, which is now used by tobjectdef.vmt_def
-      capturer_sym:=ttypesym.create('$T'+capturer_class_name, capturer_def, true);
+      // symbol is required for tdef.mangledparaname, which is now used by tobjectdef.vmt_def
+      capturer_sym:=ttypesym.create('$T'+capturer_class_name,capturer_def,true);
       inc(capturer_sym.refs);
       symtable.insert(capturer_sym);
 
-      // TODO: "vmtdef$TCapturer" -- see tdef.OwnerHierarchyName
-      //writeln('vmtdef$'+capturer_def.mangledparaname);
-
       // create "var $Capturer: TCapturer"
-      result:=tcapturersym.create('$'+capturer_var_name, vs_value, capturer_def, [{TODO:DEBUG:?vo_is_public-- see $self}], true);
-          // TODO: ^-- fileinfo:=current_tokenpos!
+      result:=tcapturersym.create('$'+capturer_var_name, vs_value, capturer_def, [], true);
+      // TODO: ^-- fileinfo:=current_tokenpos!
       symtable.insert(result);
 
-      // Actual initialisation happens in generate_bodyentry_block -> instantiate_capturer.
-      // We mark this prematurely, so that no warnings are reported during parse_body.
+      { actual initialisation happens in generate_bodyentry_block -> instantiate_capturer.
+        we mark this prematurely, so that no warnings are reported during parse_body. }
       result.varstate:=vs_initialised;
     end;
 
@@ -270,107 +291,110 @@ implementation
     begin
       if po_has_closure in routine.procoptions then
         result:=find_capturer(routine)
-      else begin
-        // so far, the routine had no nameless methods
-        include(routine.procoptions, po_has_closure);
-        writeln('declare_capturer @ ', routine.procsym.RealName);
-        result:=declare_capturer(routine.localst);
-      end
+      else
+        begin
+          // so far, the routine had no anonym methods
+          include(routine.procoptions,po_has_closure);
+          writeln('declare_capturer @ ',routine.procsym.RealName);
+          result:=declare_capturer(routine.localst);
+        end
     end;
 
   function get_self(routine: tprocdef): tabstractnormalvarsym; inline;
     begin
-      result := routine.parast.Find('self') as tabstractnormalvarsym;
+      result:=tabstractnormalvarsym(routine.parast.Find('self'));
     end;
 
-  function get_enclosing_routine(nameless_routine: tprocdef): tprocdef; inline;
+  function get_enclosing_routine(anonym_routine: tprocdef): tprocdef; inline;
     begin
-      result := nameless_routine.struct{capturer_def}.owner{localst}.defowner as tprocdef;
+      result:=tprocdef(anonym_routine.struct.owner.defowner);
     end;
 
-  // capture the variable into a field on the capture object
-  function capture_outer_sym(nameless_routine: tprocdef; outer_sym: tabstractnormalvarsym): tabstractnormalvarsym;
+  { capture the variable into a field on the capture object }
+  function capture_outer_sym(anonym_routine: tprocdef; outer_sym: tabstractnormalvarsym): tabstractnormalvarsym;
     var
       sym_owner_routine: tprocdef;
       enclosing_routine: tprocdef;
       capturer_symtable: tabstractrecordsymtable;
       captured_into: tfieldvarsym;
     begin
+      // TODO: use internal errors
       assert( outer_sym.captured_into = nil );
 
-      sym_owner_routine := outer_sym.owner.defowner as tprocdef;
-      enclosing_routine := get_enclosing_routine(nameless_routine);
+      sym_owner_routine:=outer_sym.owner.defowner as tprocdef;
+      enclosing_routine:=get_enclosing_routine(anonym_routine);
 
-      if sym_owner_routine <> enclosing_routine then begin
-        // currently, we do not allow reaching out through more than one nesting level;
-        // additional bookkeeping is required for such functionality
-        Comment(V_Error, 'capture_outer_sym: reaching too far -- cannot capture '+sym_owner_routine.procsym.RealName+'::'+outer_sym.RealName+' from '+enclosing_routine.procsym.RealName);
-        internalerror(2012012001);
-      end;
+      if sym_owner_routine<>enclosing_routine then
+        begin
+          { currently, we do not allow reaching out through more than one nesting level;
+            additional bookkeeping is required for such functionality }
+          Comment(V_Error, 'capture_outer_sym: reaching too far -- cannot capture '+sym_owner_routine.procsym.RealName+'::'+outer_sym.RealName+' from '+enclosing_routine.procsym.RealName);
+          internalerror(2012012001);
+        end;
 
       writeln('capturing ', outer_sym.RealName, ' whose refs = ', outer_sym.refs);
-      result := get_self(nameless_routine);
-      capturer_symtable := (result.vardef as tobjectdef).symtable as tabstractrecordsymtable;
+      result:=get_self(anonym_routine);
+      capturer_symtable:=tobjectdef(result.vardef).symtable as tabstractrecordsymtable;
 
-      captured_into := tfieldvarsym.create(outer_sym.RealName, vs_value, outer_sym.vardef, [], true);
+      captured_into:=tfieldvarsym.create(outer_sym.RealName,vs_value,outer_sym.vardef,[],true);
       capturer_symtable.insert(captured_into);
-      // ^-- after this, all subsequent "N" in THIS nameless routine will be resolved via $self automatically
-      capturer_symtable.addfield(captured_into, vis_public);
+      // ^-- after this, all subsequent "N" in THIS anonym routine will be resolved via $self automatically
+      capturer_symtable.addfield(captured_into,vis_public);
 
       outer_sym.captured_into := captured_into;
     end;
 
 
-  function capture_outer_self(nameless_routine: tprocdef; out captured_outer_self: tfieldvarsym): tabstractnormalvarsym; inline;
+  function capture_outer_self(anonym_routine: tprocdef; out captured_outer_self: tfieldvarsym): tabstractnormalvarsym; inline;
     var
       enclosing_routine: tprocdef;
       outer_self: tabstractnormalvarsym;
     begin
-      enclosing_routine := get_enclosing_routine(nameless_routine);
-      if (enclosing_routine = nil{PROGRAM}) or enclosing_routine.no_self_node then begin
-        Comment(V_Error, 'capture_outer_self: enclosing_routine has no $self');
-        internalerror(2015020401);
-      end;
-
-      outer_self := get_self(enclosing_routine);
-      if outer_self = nil then internalerror(2015020402);
-      result := capture_outer_sym(nameless_routine, outer_self);
-      captured_outer_self := outer_self.captured_into;
+      enclosing_routine := get_enclosing_routine(anonym_routine);
+      if (enclosing_routine = nil{PROGRAM}) or enclosing_routine.no_self_node then
+        begin
+          Comment(V_Error, 'capture_outer_self: enclosing_routine has no $self');
+          internalerror(2015020401);
+        end;
+      outer_self:=get_self(enclosing_routine);
+      if outer_self=nil then 
+        internalerror(2015020402);
+      result:=capture_outer_sym(anonym_routine, outer_self);
+      captured_outer_self:=outer_self.captured_into;
     end;
 
-  function load_outer_self(nameless_routine: tprocdef): tnode;
+  function load_outer_self(anonym_routine: tprocdef): tnode;
     var
       captured_outer_self: tfieldvarsym;
       capturer: tabstractnormalvarsym;
     begin
-      captured_outer_self := nameless_routine.owner.Find('self') as tfieldvarsym;
-
-      if captured_outer_self = nil then
-        capturer := capture_outer_self(nameless_routine, captured_outer_self)
+      captured_outer_self:=tfieldvarsym(anonym_routine.owner.Find('self'));
+      if captured_outer_self=nil then
+        capturer:=capture_outer_self(anonym_routine,captured_outer_self)
       else
-        capturer := get_self(nameless_routine);
-
-      result := load_capturer_field(capturer, captured_outer_self)
+        capturer:=get_self(anonym_routine);
+      result:=load_capturer_field(capturer,captured_outer_self)
     end;
 
-  function load_contextual_self(context: tprocdef): tnode; // todo: INLINE?
+  function load_contextual_self(context: tprocdef): tnode;
     begin
-      if po_anonym in context.procoptions then begin
-        if po_anonym in get_enclosing_routine(context).procoptions then begin
-          Comment(V_Error, 'load_outer_self: enclosing_routine is nameless -- cannot reach farther');
-          internalerror(2015072101);
-        end;
-        result := load_outer_self(context)
-      end else
-        result := load_self_node
+      if po_anonym in context.procoptions then
+        begin
+          if po_anonym in get_enclosing_routine(context).procoptions then
+            begin
+              Comment(V_Error, 'load_outer_self: enclosing_routine is anonym -- cannot reach farther');
+              internalerror(2015072101);
+            end;
+          result:=load_outer_self(context)
+        end
+      else
+        result:=load_self_node
     end;
-
 
   function load_captured_sym(routine: tprocdef; field: tfieldvarsym): tnode;
     begin
       result:=load_capturer_field(find_capturer(routine), field);
     end;
-
 
   function handle_possible_capture(ctx: tprocinfo; sym: tabstractnormalvarsym): tnode;
     var
@@ -378,60 +402,71 @@ implementation
       sym_owner: tprocdef;
       capturer: tabstractnormalvarsym;
     begin
-      context := ctx.procdef;
-      sym_owner := sym.owner.defowner as tprocdef;
-
+      context:=ctx.procdef;
+      sym_owner:=tprocdef(sym.owner.defowner);
+      writeln('handle_possible_capture:',sym.realname);
       if sym.is_captured then
-        // A captured symbol is being accessed ...
-        if context = sym_owner then begin
-          // 1) from its own routine after it is captured by an embedded nameless routine
-          writeln('load_captured_sym ', sym.RealName);
-          result:=load_captured_sym(context, sym.captured_into)
-        end else if context.struct = sym.captured_into.owner.defowner then
-          // 2) from an embedded nameless routine (including nested routines) that has already captured it earlier
-          result:=load_capturer_field(get_self(ctx.get_normal_proc.procdef), sym.captured_into)
-        else
-          internalerror(2011121001)
-      else if (context <> sym_owner) then begin
-        toplevel_context := ctx.get_normal_proc.procdef;
-        if po_anonym in toplevel_context.procoptions then
-          if context.struct <> sym_owner.struct then begin
-            // Either a nameless routine, or a routine nested in one, accesses a local symbol of the enclosing routine (sym_owner)
-            capturer:=capture_outer_sym(toplevel_context, sym);
-            result:=load_capturer_field(capturer, sym.captured_into)
-          end else
-            // Both routines are within the same chain of nesting (toplevel_context)
-            result := nil
-        else
-          // A nested routine accesses a local symbol of an enclosing routine
-          result := nil
-      end else
-        result:=nil
+        begin
+          if context=sym_owner then
+            begin
+              { from its own routine after it is captured by an embedded anonym routine }
+              writeln('load_captured_sym ', sym.RealName);
+              result:=load_captured_sym(context, sym.captured_into)
+            end
+          else if context.struct = sym.captured_into.owner.defowner then
+            begin
+              { from an embedded anonym routine (including nested routines) that has already captured it earlier }
+              result:=load_capturer_field(get_self(ctx.get_normal_proc.procdef), sym.captured_into)
+            end
+          else
+            internalerror(2011121001);
+        end
+      else if context<>sym_owner then
+        begin
+          toplevel_context := ctx.get_normal_proc.procdef;
+          if po_anonym in toplevel_context.procoptions then
+            begin
+              if context.struct<>sym_owner.struct then
+                begin
+                  { Either a anonym routine, or a routine nested in one, accesses a local symbol of the enclosing routine (sym_owner) }
+                  capturer:=capture_outer_sym(toplevel_context,sym);
+                  result:=load_capturer_field(capturer,sym.captured_into)
+                end
+              else
+                { both routines are within the same chain of nesting (toplevel_context) }
+                result := nil;
+            end
+          else
+            { A nested routine accesses a local symbol of an enclosing routine }
+            result := nil;
+        end
+      else
+        result:=nil;
     end;
-
 
   function reload_captured_sym(routine: tprocdef; sym: tabstractnormalvarsym): tnode;
     begin
       writeln('reload_captured_sym ', sym.RealName);
-      if routine <> sym.owner.defowner then
+      if routine<>sym.owner.defowner then
         internalerror(2011121002);
-
-      result:=load_captured_sym(routine,sym.captured_into)
+      result:=load_captured_sym(routine,sym.captured_into);
     end;
 
-  procedure remove_captured_variable(X: TObject; Unused: pointer);
-    var S: tabstractnormalvarsym absolute X;
+  procedure remove_captured_variable(v: tobject; unused: pointer);
+    var
+      sym: tabstractnormalvarsym absolute v;
     begin
-      writeln(S.RealName);
-      if (S.typ=localvarsym) and assigned(S.captured_into) then begin
-        writeln(#9'deleted ', S.RealName);
-        S.Owner.Delete(S) // !!cannot be deleted from foreach!!
-      end;
+      writeln(sym.RealName);
+      if (sym.typ=localvarsym) and assigned(sym.captured_into) then 
+        begin
+          writeln(#9'deleted ', sym.RealName);
+          sym.Owner.Delete(sym);
+        end;
     end;
 
-  // Without this, for example, initialisations will be generated for captured managed variables,
-  //   but Initialise(ManagedVar) is transformed into Initialise(Capturer.ManagedField),
-  //   and Capturer is not created until after managed variables are initialised.
+  { Without this, for example, initialisations will be generated for captured managed variables,
+    but Initialise(ManagedVar) is transformed into Initialise(Capturer.ManagedField),
+    and Capturer is not created until after managed variables are initialised. }
   procedure delete_captured_variables(routine: tprocdef);
     var
       st: TSymTable;
