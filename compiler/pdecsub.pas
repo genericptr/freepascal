@@ -122,7 +122,7 @@ implementation
        { parser }
        scanner,
        syscinfo,
-       pbase,pexpr,ptype,pdecl,pparautl,pgenutil
+       pbase,pexpr,ptype,pdecl,pparautl,pgenutil,panonym
 {$ifdef jvm}
        ,pjvm
 {$endif}
@@ -887,12 +887,12 @@ implementation
             case procparsemode of
               ppm_anonym_routine:
                 begin
-                  orgsp:='Nameless_'+tostr(procstartfilepos.line)+'_'+tostr(procstartfilepos.column);
+                  orgsp:=panonym.anonym_routine_name+'_'+tostr(procstartfilepos.line)+'_'+tostr(procstartfilepos.column);
                   sp:=upcase(orgsp);
                 end;
               ppm_method_reference:
                 begin
-                  orgsp:='Invoke';
+                  orgsp:=panonym.anonym_method_reference_name;
                   sp:=upcase(orgsp);
                 end;
               else

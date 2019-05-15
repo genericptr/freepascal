@@ -1966,7 +1966,6 @@ implementation
                               symtablestack.push(tobjectdef(def).symtable);
                               // TODO: ptype.pas parses procvars directly, using parse_parameter_dec
                               pd:=parse_proc_dec(false,tabstractrecorddef(def),false,ppm_method_reference);
-                              // TODO: do we need this?
                               handle_calling_convention(pd);
                               { add procdef to itself }
                               tprocsym(pd.procsym).ProcdefList.Add(pd);

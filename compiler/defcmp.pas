@@ -182,18 +182,18 @@ implementation
                               var operatorpd : tprocdef;
                               cdoptions:tcompare_defs_options):tequaltype;
 
-      function are_compatible_headers(pd1, pd2: tprocdef): boolean;
-        begin     // TODO: revise the check
-          result :=
-            (compare_paras(pd1.paras,pd2.paras,cp_all,[cpo_ignorehidden{,cpo_comparedefaultvalue,cpo_ignoreuniv}])>=te_equal)
-            and (compare_defs(pd1.returndef,pd2.returndef,nothingn)>=te_equal)
-            and (pd1.proccalloption=pd2.proccalloption)
-            and (pd1.proctypeoption=pd2.proctypeoption)
-            and (pd1.procoptions-[po_global{TODO:why?}]=pd2.procoptions);
-        end;
-
-      // TODO: allow explicit coercion for any interfaces, not just for nameless ones?
+      { compare interfaces }
+      // TODO: these names are wrong, they are closure specific so change the names
       function are_compatible_interfaces(l, r: tobjectdef): boolean;
+        function are_compatible_headers(pd1, pd2: tprocdef): boolean;
+          begin
+            result :=
+              (compare_paras(pd1.paras,pd2.paras,cp_all,[cpo_ignorehidden{,cpo_comparedefaultvalue,cpo_ignoreuniv}])>=te_equal)
+              and (compare_defs(pd1.returndef,pd2.returndef,nothingn)>=te_equal)
+              and (pd1.proccalloption=pd2.proccalloption)
+              and (pd1.proctypeoption=pd2.proctypeoption)
+              and (pd1.procoptions-[po_global{TODO:why?}]=pd2.procoptions);
+          end;
         begin
           result :=
             (oo_is_anonym in r.objectoptions)

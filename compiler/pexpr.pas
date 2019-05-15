@@ -2647,26 +2647,25 @@ implementation
               { is this a procedure variable ? }
               if assigned(p1.resultdef) then
                 case p1.resultdef.typ of
-                  // TODO: why do we get here for VAR X: TINTERFACE?
                   objectdef:
+                    // TODO: remove the () but how do we know this is a proc call?
+                    // "proc :=" or "proc: TFuncOfInt" could trigger this code
                     if token=_LKLAMMER then
                       begin
                         structh:=tabstractrecorddef(p1.resultdef);
-                        // TODO: inline get_operator_invoke
-                        {
-                        if oo_is_invokable in obj.objectoptions then begin
-                          result := obj.symtable.find(invokable_method_name) as tprocsym;
-                          if result = nil then internalerror(2015020201);
-                        end else begin
-                          // TODO: "Type is not invokable" ?
-                          result := nil;
-                        end
-                        }
-                        srsym:=get_operator_invoke(structh);
+                        { allow procedure variable calls on invokable structs }
+                        if oo_is_invokable in structh.objectoptions then
+                          begin
+                            srsym:=tprocsym(structh.symtable.find(panonym.invokable_method_name));
+                            if srsym=nil then 
+                              internalerror(2015020201);
+                          end
+                        else 
+                          srsym:=nil;
+
                         if assigned(srsym) then
                           do_proc_call(srsym,srsym.owner,structh,false,again,p1,[],nil)
                         else
-                          // TODO: ONLY WHEN "Type is not invokable" IS NOT GENERATED?
                           again:=false;
                       end
                     else

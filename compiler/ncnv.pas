@@ -2631,7 +2631,6 @@ implementation
                              exit;
                            end;
                        end
-
                       else
                        begin
                          { only if the same size or formal def, and }
