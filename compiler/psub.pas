@@ -2017,7 +2017,7 @@ implementation
       end;
 
 
-    procedure read_proc_body(old_current_procinfo:tprocinfo;pd:tprocdef);
+    procedure read_proc_body(old_current_procinfo:tprocinfo;pd:tprocdef;procparsemode:tprocparsemode=ppm_normal);
       {
         Parses the procedure directives, then parses the procedure body, then
         generates the code for it
@@ -2120,8 +2120,8 @@ implementation
                 (current_procinfo.procdef.owner.defowner=current_procinfo.procdef.struct)
               )
             ) then
-          consume(_SEMICOLON);
-
+          if not(procparsemode in [ppm_anonym_routine,ppm_method_reference]) then
+            consume(_SEMICOLON);
         if not isnestedproc then
           { current_procinfo is checked for nil later on }
           freeandnil(current_procinfo);
@@ -2294,7 +2294,7 @@ implementation
             { members of TCapturer are never exposed  }
             if procparsemode=ppm_anonym_routine then
               symtablestack.pop(pd.owner);          
-             read_proc_body(old_current_procinfo,pd);
+             read_proc_body(old_current_procinfo,pd,procparsemode);
            end
          else
            begin

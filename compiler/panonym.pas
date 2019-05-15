@@ -194,13 +194,12 @@ implementation
       symtable: tsymtable;
     begin
       { create class "type TCapturer = class(TInterfacedObject)" }
-      //superclass:=search_system_type(capturer_superclass_name);
-      if not searchsym_type(capturer_superclass_name,tsym(superclass),symtable) then
-        internalerror(2019042801);
+      superclass:=search_system_type(capturer_superclass_name);
       if not assigned(superclass) then
         internalerror(2019042802);
+      //if not searchsym_type(capturer_superclass_name,tsym(superclass),symtable) then
+      //  internalerror(2019042801);
       capturer_def:=tobjectdef.create(odt_class,capturer_class_name,tobjectdef(superclass.typedef),true);
-      writeln('declared capturer: ',capturer_class_name, ' in ', owner.realname^);
 
       { symbol is required for tdef.mangledparaname, which is now used by tobjectdef.vmt_def }
       capturer_sym:=ttypesym.create('$T'+capturer_class_name,capturer_def,true);

@@ -2648,28 +2648,27 @@ implementation
               if assigned(p1.resultdef) then
                 case p1.resultdef.typ of
                   objectdef:
-                    // TODO: remove the () but how do we know this is a proc call?
-                    // "proc :=" or "proc: TFuncOfInt" could trigger this code
-                    if token=_LKLAMMER then
-                      begin
-                        structh:=tabstractrecorddef(p1.resultdef);
-                        { allow procedure variable calls on invokable structs }
-                        if oo_is_invokable in structh.objectoptions then
-                          begin
-                            srsym:=tprocsym(structh.symtable.find(panonym.invokable_method_name));
-                            if srsym=nil then 
-                              internalerror(2015020201);
-                          end
-                        else 
-                          srsym:=nil;
+                    begin
+                      structh:=tabstractrecorddef(p1.resultdef);
+                      { allow procedure variable calls on invokable objects.
+                        in order to be callable the identifer must be followed by 
+                        _SEMICOLON or _LKLAMMER. }
+                      if (p1.nodetype=loadn) and 
+                         (oo_is_invokable in structh.objectoptions) and 
+                         (token in [_LKLAMMER,_SEMICOLON]) then
+                        begin
+                          srsym:=tprocsym(structh.symtable.find(panonym.invokable_method_name));
+                          if srsym=nil then 
+                            internalerror(2015020201);
+                        end
+                      else 
+                        srsym:=nil;
 
-                        if assigned(srsym) then
-                          do_proc_call(srsym,srsym.owner,structh,false,again,p1,[],nil)
-                        else
-                          again:=false;
-                      end
-                    else
-                      again:=false;
+                      if assigned(srsym) then
+                        do_proc_call(srsym,srsym.owner,structh,false,again,p1,[],nil)
+                      else
+                        again:=false;
+                    end;
                   procvardef:
                     begin
                       { Typenode for typecasting or expecting a procvar }
@@ -3438,7 +3437,6 @@ implementation
              exit;
            toplevel_context:=current_procinfo.get_normal_proc.procdef;
            result:=not toplevel_context.no_self_node;
-           //result:=not current_procinfo.get_normal_proc.procdef.no_self_node;
          end;
 
 
