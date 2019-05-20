@@ -1088,7 +1088,7 @@ implementation
           { read class method/field/property }
           consume(_CLASS);
           { class modifier is only allowed for procedures, functions,
-            constructors, destructors, fields, properties and operators if m_class_operators is enabled }
+            constructors, destructors, fields, properties and operators (if m_class_operators is enabled) }
           if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR]) or 
              (token=_CONSTRUCTOR) or
              ((token=_OPERATOR) and (m_class_operators in current_settings.modeswitches))) then

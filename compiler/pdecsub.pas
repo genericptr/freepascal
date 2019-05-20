@@ -1481,9 +1481,9 @@ implementation
                      ) then
                     Message(parser_e_overload_impossible);
                   
-                  { management operators are not overloadable in classes }
+                  { management operators are only possible in records }
                   if (m_class_operators in current_settings.modeswitches) 
-                     and (assigned(pd.struct) and (pd.struct.typ=objectdef)) then
+                     and (assigned(pd.struct) and not is_record(pd.struct)) then
                     Message(parser_e_overload_impossible);
 
                   trecordsymtable(pd.procsym.Owner).includemanagementoperator(
