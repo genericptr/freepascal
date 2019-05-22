@@ -3484,6 +3484,7 @@ begin
                end
              else
                begin
+                 readmanagementoperatoroptions(space);
                  {read the record definitions and symbols}
                  space:='    '+space;
                  readrecsymtableoptions;

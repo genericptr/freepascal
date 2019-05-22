@@ -6667,6 +6667,8 @@ implementation
            end
          else
            begin
+             if objecttype=odt_object then
+               ppufile.getsmallset(tObjectSymtable(symtable).managementoperators);
              ppuload_platform(ppufile);
              tObjectSymtable(symtable).ppuload(ppufile);
            end;
@@ -6852,7 +6854,9 @@ implementation
            end;
 
          if df_copied_def in defoptions then
-           ppufile.putderef(cloneddefderef);
+           ppufile.putderef(cloneddefderef)
+         else if (objecttype=odt_object)  then
+           ppufile.putsmallset(tObjectSymtable(symtable).managementoperators);
 
          writeentry(ppufile,ibobjectdef);
 
@@ -7243,10 +7247,20 @@ implementation
                 needs_inittable:=false;
               end;
             odt_object:
-              needs_inittable:=
-                tObjectSymtable(symtable).needs_init_final or
-                (assigned(childof) and
-                 childof.needs_inittable);
+              begin
+                hp:=self;
+                while assigned(hp) do
+                  begin
+                    if (tObjectSymtable(hp.symtable).managementoperators<>[]) or 
+                       (tObjectSymtable(hp.symtable).needs_init_final) then
+                      begin
+                        needs_inittable:=true;
+                        exit;
+                      end;
+                    hp:=hp.childof;
+                  end;
+                needs_inittable:=false;
+              end;
             odt_cppclass,
             odt_objcclass,
             odt_objcprotocol,

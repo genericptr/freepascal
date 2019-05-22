@@ -104,6 +104,7 @@ interface
           padalignment : shortint;   { size to a multiple of which the symtable has to be rounded up }
           recordalignmin,            { local equivalents of global settings, so that records can }
           maxCrecordalign: shortint; { be created with custom settings internally }
+          managementoperators : tmanagementoperators;
           constructor create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
           destructor destroy;override;
           procedure ppuload(ppufile:tcompilerppufile);override;
@@ -120,6 +121,7 @@ interface
           function is_packed: boolean;
           function has_single_field(out def:tdef): boolean;
           function get_unit_symtable: tsymtable;
+          procedure includemanagementoperator(mop:tmanagementoperator);
         protected
           { size in bytes including padding }
           _datasize      : asizeint;
@@ -141,14 +143,8 @@ interface
 
        trecordsymtable = class(tabstractrecordsymtable)
        public
-          { maybe someday is worth to move managementoperators to              }
-          { tabstractrecordsymtable to perform management class operators for  }
-          { object/classes. In XE5 and newer is possible to use class operator }
-          { for classes (like for Delphi .NET before) only for Delphi NEXTGEN  }
-          managementoperators : tmanagementoperators;
           constructor create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
           procedure insertunionst(unionst : trecordsymtable;offset : asizeint);
-          procedure includemanagementoperator(mop:tmanagementoperator);
        end;
 
        tObjectSymtable = class(tabstractrecordsymtable)
@@ -1089,8 +1085,9 @@ implementation
                if assigned(tabstractvarsym(sym).vardef) and
                   is_managed_type(tabstractvarsym(sym).vardef) then
                  include(tableoptions,sto_needs_init_final);
-               if is_record((tabstractvarsym(sym).vardef)) and
-                   (mop_initialize in trecordsymtable(trecorddef(tabstractvarsym(sym).vardef).symtable).managementoperators) then
+               if assigned(tabstractvarsym(sym).vardef) and
+                  (tabstractvarsym(sym).vardef.typ in [recorddef,objectdef]) and
+                  (mop_initialize in tabstractrecordsymtable(tabstractrecorddef(tabstractvarsym(sym).vardef).symtable).managementoperators) then
                  include(tableoptions,sto_has_non_trivial_init);
              end;
          end;
@@ -1684,6 +1681,13 @@ implementation
         Result:=assigned(current_module)and(current_module.moduleid=moduleid);
       end;
 
+    procedure tabstractrecordsymtable.includemanagementoperator(mop:tmanagementoperator);
+      begin
+        if mop in managementoperators then
+          exit;
+        include(managementoperators,mop);
+      end;
+
 {****************************************************************************
                               TRecordSymtable
 ****************************************************************************}
@@ -1800,14 +1804,6 @@ implementation
           special treatment for such records }
         if defowner.typ=recorddef then
           trecorddef(defowner).isunion:=true;
-      end;
-
-
-    procedure trecordsymtable.includemanagementoperator(mop:tmanagementoperator);
-      begin
-        if mop in managementoperators then
-          exit;
-        include(managementoperators,mop);
       end;
 
 
@@ -3873,7 +3869,7 @@ implementation
            (optoken>last_managment_operator) then
           internalerror(201602280);
         hashedid.id:=overloaded_names[optoken];
-        if not (pd.typ in [recorddef]) then
+        if not(pd.typ in [recorddef,objectdef]) then
           internalerror(201602281);
         sym:=Tprocsym(tabstractrecorddef(pd).symtable.FindWithHash(hashedid));
         if sym<>nil then

@@ -1141,52 +1141,51 @@ implementation
           tcb.end_anonymous_record;
         end;
 
-        procedure recorddef_rtti(def:trecorddef);
+        procedure write_record_operators(def: tabstractrecorddef);
+        var
+          rttilab: Tasmsymbol;
+          rttidef: tdef;
+          tcb: ttai_typedconstbuilder;
+          mop: tmanagementoperator;
+          procdef: tprocdef;
+        begin
+          rttilab := current_asmdata.DefineAsmSymbol(
+              internaltypeprefixName[itp_init_record_operators]+def.rtti_mangledname(rt),
+              AB_GLOBAL,AT_DATA,def);
+          tcb:=ctai_typedconstbuilder.create([tcalo_make_dead_strippable]);
 
-          procedure write_record_operators;
-          var
-            rttilab: Tasmsymbol;
-            rttidef: tdef;
-            tcb: ttai_typedconstbuilder;
-            mop: tmanagementoperator;
-            procdef: tprocdef;
+          tcb.begin_anonymous_record(
+            rttilab.Name,
+            defaultpacking,reqalign,
+            targetinfos[target_info.system]^.alignment.recordalignmin,
+            targetinfos[target_info.system]^.alignment.maxCrecordalign
+          );
+
+          { use "succ" to omit first enum item "mop_none" }
+          for mop := succ(low(tmanagementoperator)) to high(tmanagementoperator) do
           begin
-            rttilab := current_asmdata.DefineAsmSymbol(
-                internaltypeprefixName[itp_init_record_operators]+def.rtti_mangledname(rt),
-                AB_GLOBAL,AT_DATA,def);
-            tcb:=ctai_typedconstbuilder.create([tcalo_make_dead_strippable]);
-
-            tcb.begin_anonymous_record(
-              rttilab.Name,
-              defaultpacking,reqalign,
-              targetinfos[target_info.system]^.alignment.recordalignmin,
-              targetinfos[target_info.system]^.alignment.maxCrecordalign
-            );
-
-            { use "succ" to omit first enum item "mop_none" }
-            for mop := succ(low(tmanagementoperator)) to high(tmanagementoperator) do
-            begin
-              if not (mop in trecordsymtable(def.symtable).managementoperators) then
-                tcb.emit_tai(Tai_const.Create_nil_codeptr,voidcodepointertype)
-              else
-                begin
-                  procdef := search_management_operator(mop, def);
-                  if procdef = nil then
-                    internalerror(201603021)
-                  else
-                    tcb.emit_tai(Tai_const.Createname(procdef.mangledname,AT_FUNCTION,0),
-                      cprocvardef.getreusableprocaddr(procdef));
-                end;
-            end;
-
-            rttidef := tcb.end_anonymous_record;
-
-            current_asmdata.AsmLists[al_rtti].concatList(
-              tcb.get_final_asmlist(rttilab,rttidef,sec_rodata,rttilab.name,
-              sizeof(PInt)));
-            tcb.free;
+            if not (mop in tabstractrecordsymtable(def.symtable).managementoperators) then
+              tcb.emit_tai(Tai_const.Create_nil_codeptr,voidcodepointertype)
+            else
+              begin
+                procdef := search_management_operator(mop, def);
+                if procdef = nil then
+                  internalerror(201603021)
+                else
+                  tcb.emit_tai(Tai_const.Createname(procdef.mangledname,AT_FUNCTION,0),
+                    cprocvardef.getreusableprocaddr(procdef));
+              end;
           end;
 
+          rttidef := tcb.end_anonymous_record;
+
+          current_asmdata.AsmLists[al_rtti].concatList(
+            tcb.get_final_asmlist(rttilab,rttidef,sec_rodata,rttilab.name,
+            sizeof(PInt)));
+          tcb.free;
+        end;
+
+        procedure recorddef_rtti(def:trecorddef);
         var
           riif : byte;
         begin
@@ -1230,7 +1229,7 @@ implementation
 
            { write pointers to operators if needed }
            if (rt=initrtti) and (trecordsymtable(def.symtable).managementoperators<>[]) then
-             write_record_operators;
+             write_record_operators(def);
         end;
 
 
@@ -1342,7 +1341,6 @@ implementation
             end;
         end;
 
-
         procedure objectdef_rtti(def: tobjectdef);
 
           procedure objectdef_rtti_fields(def:tobjectdef);
@@ -1375,10 +1373,19 @@ implementation
                 if assigned(def.childof) and def.childof.has_non_trivial_init_child(true) then
                   riif:=riif or riifParentHasNonTrivialChild;
                 write_record_init_flag(tcb,riif);
-                tcb.emit_tai(Tai_const.Create_nil_dataptr,voidpointertype);
+                if (tObjectSymtable(def.symtable).managementoperators=[]) then
+                  tcb.emit_tai(Tai_const.Create_nil_dataptr,voidpointertype)
+                else
+                  tcb.emit_tai(Tai_const.Createname(
+                   internaltypeprefixName[itp_init_record_operators]+def.rtti_mangledname(rt),
+                   AT_DATA_FORCEINDIRECT,0),voidpointertype);
               end;
             { enclosing record takes care of alignment }
             fields_write_rtti_data(tcb,def,rt);
+
+            { write pointers to operators if needed }
+            if (rt=initrtti) and (tObjectSymtable(def.symtable).managementoperators<>[]) then
+              write_record_operators(def);
           end;
 
           procedure objectdef_rtti_interface_init(def:tobjectdef);

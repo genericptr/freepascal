@@ -1278,6 +1278,7 @@ implementation
         locationstr: string;
         i: integer;
         found: boolean;
+        hp: tobjectdef;
 
         procedure read_returndef(pd: tprocdef);
           var
@@ -1481,12 +1482,30 @@ implementation
                      ) then
                     Message(parser_e_overload_impossible);
                   
-                  { management operators are only possible in records }
-                  if (m_class_operators in current_settings.modeswitches) 
-                     and (assigned(pd.struct) and not is_record(pd.struct)) then
-                    Message(parser_e_overload_impossible);
+                  { management operators are only possible in records/objects }
+                  if (m_class_operators in current_settings.modeswitches) and assigned(pd.struct) then
+                    begin
+                      if is_class(pd.struct) then
+                        Message(parser_e_overload_impossible)
+                      else if is_object(pd.struct) then
+                        begin
+                          { management operators can not be overloaded so last operator
+                            takes precedence is inheritance heirarchy }
+                          hp:=tobjectdef(pd.struct).childof;
+                          while assigned(hp) do
+                            begin
+                              if search_management_operator(token2managementoperator(optoken),hp)<>nil then
+                                begin
+                                  // TODO: how do we remove mop in ppu loaded unit?
+                                  writeln('remove mop ',optoken,' from ',hp.symtable.realname^);
+                                  exclude(tabstractrecordsymtable(hp.symtable).managementoperators,token2managementoperator(optoken));
+                                end;
+                              hp:=hp.childof;
+                            end;
+                        end;
+                    end;
 
-                  trecordsymtable(pd.procsym.Owner).includemanagementoperator(
+                  tabstractrecordsymtable(pd.procsym.Owner).includemanagementoperator(
                     token2managementoperator(optoken));
                   pd.returndef:=voidtype
                 end
