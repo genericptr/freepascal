@@ -1277,15 +1277,6 @@ implementation
 
     { the ID token has to be consumed before calling this function }
     procedure do_member_read(structh:tabstractrecorddef;getaddr:boolean;sym:tsym;var p1:tnode;var again:boolean;callflags:tcallnodeflags;spezcontext:tspecializationcontext);
-
-      procedure handle_object_construction(proc:tprocsym;structh:tobjectdef;var node:tnode);
-        begin
-          node:=caddrnode.create(node);
-          node.fileinfo:=current_filepos;
-          { we can't pass typecheck on the node }
-          node.resultdef:=structh;
-        end;
-
       var
         isclassref:boolean;
         isrecordtype:boolean;
@@ -1756,34 +1747,6 @@ implementation
         do_member_read(classh,false,sym,p2,again,[cnf_dispose_call],nil);
         do_typecheckpass(p2);
         result:=p2;
-      end;
-
-    function handle_object_construction(p1,p2 : tnode):tnode;
-      var
-        classh: tobjectdef;
-        methodname: string;
-        proc: tsym;
-        sym: tsym;
-        again: boolean;
-        para:tnode;
-      begin
-        result:=nil;
-        classh:=tobjectdef(p2.resultdef);
-        proc:=tcallnode(p2).symtableprocentry;
-        methodname:=proc.name;
-        para:=tcallnode(p2).left;
-        sym:=search_struct_member(classh,methodname);
-        if assigned(sym) then
-          begin
-            p2:=cderefnode.create(p1.getcopy);
-            include(p2.flags,nf_no_checkpointer);
-            p2:=ccallnode.create(para,tprocsym(proc),classh.symtable,p2,[cnf_new_call],nil);
-            do_typecheckpass(p2);
-            p2.resultdef:=p1.resultdef;
-            result:=cassignmentnode.create(p1,p2);
-          end;
-        if not assigned(result) then
-          internalerror(0);
       end;
 
 {---------------------------------------------
@@ -2630,6 +2593,9 @@ implementation
                                 begin
                                    old_current_filepos:=current_filepos;
                                    consume(_ID);
+                                   // TODO: where should this be? it doesn't seem right that the parser
+                                   // would transform the node right here. probably in typecheck
+                                   // TODO: destructor syntax is not settled either so this may change in the future
                                    { the symbol is an object destructor which needs
                                      an inline calling convention }
                                    if (structh.typ=objectdef) and 
