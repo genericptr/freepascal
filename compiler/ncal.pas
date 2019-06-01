@@ -57,8 +57,7 @@ interface
          cnf_call_self_node_done,{ the call_self_node has been generated if necessary
                                    (to prevent it from potentially happening again in a wrong context in case of constant propagation or so) }
          cnf_ignore_visibility,  { internally generated call that should ignore visibility checks }
-         // note: ryan
-         cnf_object_constructor
+         cnf_object_constructor  { calling an object constructor }
        );
        tcallnodeflags = set of tcallnodeflag;
 
