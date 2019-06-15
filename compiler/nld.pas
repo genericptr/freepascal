@@ -779,6 +779,7 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
+        vec: tvecnode;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -839,6 +840,11 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
+           writeln('** copy assignment fpc_copy_proc:', left.nodetype, ' ', right.nodetype);
+           if left.nodetype=vecn then
+             vec:=tvecnode(left);
+           if right.nodetype=vecn then
+             vec:=tvecnode(right);
            hp:=ccallparanode.create(caddrnode.create_internal(
                   crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
                ccallparanode.create(ctypeconvnode.create_internal(
