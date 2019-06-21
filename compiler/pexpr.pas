@@ -1151,9 +1151,8 @@ implementation
 
 
     { the following procedure handles the access to a property symbol }
-    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;var p1 : tnode);
+    procedure handle_propertysym(propsym : tpropertysym;st : TSymtable;paras : tnode;var p1 : tnode);
       var
-         paras : tnode;
          p2    : tnode;
          membercall : boolean;
          callflags  : tcallnodeflags;
@@ -1162,8 +1161,7 @@ implementation
       begin
          { property parameters? read them only if the property really }
          { has parameters                                             }
-         paras:=nil;
-         if (ppo_hasparameters in propsym.propoptions) then
+         if not assigned(paras) and (ppo_hasparameters in propsym.propoptions) then
            begin
              if try_to_consume(_LECKKLAMMER) then
                begin
@@ -1410,7 +1408,7 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      handle_propertysym(tpropertysym(sym),sym.owner,p1);
+                      handle_propertysym(tpropertysym(sym),sym.owner,nil,p1);
                    end;
                  typesym:
                    begin
@@ -2019,6 +2017,7 @@ implementation
      strdef : tdef;
      spezcontext : tspecializationcontext;
      old_current_filepos : tfileposinfo;
+     paras : tnode;
     label
      skipreckklammercheck,
      skippointdefcheck;
@@ -2095,7 +2094,18 @@ implementation
                   is_javaclass(p1.resultdef) then
                  begin
                    { default property }
-                   protsym:=search_default_property(tabstractrecorddef(p1.resultdef));
+                   paras:=nil;
+                   if oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions then
+                     begin
+                       if try_to_consume(_LECKKLAMMER) then
+                         begin
+                           paras:=parse_paras(false,false,_RECKKLAMMER);
+                           consume(_RECKKLAMMER);
+                           protsym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
+                         end;
+                     end
+                   else
+                     protsym:=search_default_property(tabstractrecorddef(p1.resultdef),nil);
                    if not(assigned(protsym)) then
                      begin
                         p1.destroy;
@@ -2107,7 +2117,7 @@ implementation
                      begin
                        { The property symbol is referenced indirect }
                        protsym.IncRefCount;
-                       handle_propertysym(protsym,protsym.owner,p1);
+                       handle_propertysym(protsym,protsym.owner,paras,p1);
                      end;
                  end
                else
@@ -3277,7 +3287,7 @@ implementation
                     else
                     { no method pointer }
                       begin
-                        handle_propertysym(tpropertysym(srsym),srsymtable,p1);
+                        handle_propertysym(tpropertysym(srsym),srsymtable,nil,p1);
                       end;
                   end;
 

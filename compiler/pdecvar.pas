@@ -27,14 +27,14 @@ unit pdecvar;
 interface
 
     uses
-      cclasses,
+      globtype,cclasses,
       symtable,symsym,symdef,symtype;
 
     type
       tvar_dec_option=(vd_record,vd_object,vd_threadvar,vd_class,vd_final,vd_canreorder,vd_check_generic);
       tvar_dec_options=set of tvar_dec_option;
 
-    function  read_property_dec(is_classproperty:boolean;astruct:tabstractrecorddef):tpropertysym;
+    function  read_property_dec(is_classproperty:boolean;astruct:tabstractrecorddef;name_filepos:pfileposinfo=nil):tpropertysym;
 
     procedure read_var_decls(options:Tvar_dec_options;out had_generic:boolean);
 
@@ -53,7 +53,7 @@ implementation
        { common }
        cutils,
        { global }
-       globtype,globals,tokens,verbose,constexp,
+       globals,tokens,verbose,constexp,
        systems,
        { symtable }
        symconst,symbase,defutil,defcmp,symutil,symcreat,
@@ -71,7 +71,7 @@ implementation
        pbase,pexpr,ptype,ptconst,pdecsub,pparautl;
 
 
-    function read_property_dec(is_classproperty:boolean;astruct:tabstractrecorddef):tpropertysym;
+    function read_property_dec(is_classproperty:boolean;astruct:tabstractrecorddef;name_filepos:pfileposinfo=nil):tpropertysym;
 
         { convert a node tree to symlist and return the last
           symbol }
@@ -333,7 +333,7 @@ implementation
                   create_accessor_procsym(p,writepd,'put$',palt_write);
                 end;
             end;
-
+            
       var
          sym : tsym;
          srsymtable: tsymtable;
@@ -384,11 +384,18 @@ implementation
          p.default:=longint($80000000);
          if is_classproperty then
            include(p.symoptions, sp_static);
-         symtablestack.top.insert(p);
          consume(_ID);
+         if assigned(name_filepos) then
+           name_filepos^:=current_filepos;
          { property parameters ? }
          if try_to_consume(_LECKKLAMMER) then
            begin
+              { paramtered properties in structs can be default and
+                potentially allow duplicate names for overloading }
+              if assigned(astruct) then
+                symtablestack.top.insert(p,false)
+              else
+                symtablestack.top.insert(p);
               if (p.visibility=vis_published) and
                 not (m_delphi in current_settings.modeswitches) then
                 Message(parser_e_cant_publish_that_property);
@@ -446,7 +453,9 @@ implementation
                   p.add_accessor_parameters(readprocdef,writeprocdef);
                   include(p.propoptions,ppo_hasparameters);
                 end;
-           end;
+           end
+         else
+           symtablestack.top.insert(p);
          { overridden property ?                                 }
          { force property interface
              there is a property parameter

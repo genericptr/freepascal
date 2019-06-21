@@ -73,7 +73,6 @@ interface
           procedure checklabels;
           function  needs_init_final : boolean; virtual;
           function  has_non_trivial_init:boolean;virtual;
-          procedure testfordefaultproperty(sym:TObject;arg:pointer);
           procedure register_children;
        end;
 
@@ -387,7 +386,7 @@ interface
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
 
 {*** Object Helpers ***}
-    function search_default_property(pd : tabstractrecorddef) : tpropertysym;
+    function search_default_property(pd : tabstractrecorddef; paras: pointer) : tpropertysym;
     function maybe_find_real_class_definition(pd: tdef; erroronfailure: boolean): tdef;
     function find_real_class_definition(pd: tobjectdef; erroronfailure: boolean): tobjectdef;
 
@@ -485,7 +484,9 @@ implementation
       { ppu }
       entfile,
       { parser }
-      scanner
+      scanner,
+      { node }
+      node,ncal
       ;
 
 
@@ -1044,15 +1045,6 @@ implementation
             (ttypesym(sym).typedef.typesym=tsym(sym)) then
            tabstractrecorddef(ttypesym(sym).typedef).symtable.SymList.ForEachCall(@TestPrivate,nil);
       end;
-
-
-   procedure tstoredsymtable.testfordefaultproperty(sym:TObject;arg:pointer);
-     begin
-        if (tsym(sym).typ=propertysym) and
-           (ppo_defaultproperty in tpropertysym(sym).propoptions) then
-          ppointer(arg)^:=sym;
-     end;
-
 
    procedure tstoredsymtable.register_children;
      begin
@@ -4496,8 +4488,60 @@ implementation
                               Object Helpers
 ****************************************************************************}
 
-   function search_default_property(pd : tabstractrecorddef) : tpropertysym;
-   { returns the default property of a class, searches also anchestors }
+   function search_default_property(pd : tabstractrecorddef; paras: pointer) : tpropertysym;
+     
+     function find_best_property(pd: tabstractrecorddef; paras: tcallparanode): tpropertysym;
+       var
+         i: integer;
+         sym: tsym;
+         st: tsymtable;
+         pt: tcallparanode;
+         paraindex, paracount: integer;
+         parasym: tparavarsym;
+         eq: integer;
+       begin 
+         result:=nil;
+         pt:=tcallparanode(paras);
+         paracount:=0;
+         while assigned(pt) do
+           begin
+             pt:=tcallparanode(pt.nextpara);
+             paracount:=paracount+1;
+           end;
+         for i := 0 to pd.symtable.SymList.Count-1 do
+           begin
+             sym:=tsym(pd.symtable.SymList[i]);
+             if (sym.typ=propertysym) and
+                (ppo_defaultproperty in tpropertysym(sym).propoptions) then
+               begin
+                 st:=tpropertysym(sym).parast;
+                 { parameter count must match }
+                 if st.symlist.count<>paracount then
+                   continue;
+                 pt:=tcallparanode(paras);
+                 paraindex:=0;
+                 eq:=0;
+                 while assigned(pt) do
+                   begin
+                     { paranodes are in reverse order so we need to access
+                       the symtable list from back to front }
+                     parasym:=tparavarsym(st.symlist[(st.symlist.count-1)-paraindex]);
+                     if compare_defs(pt.paravalue.resultdef,parasym.vardef,nothingn)>=te_convert_l1 then
+                       inc(eq);
+                     { next parameter in the call tree }
+                     pt:=tcallparanode(pt.nextpara);
+                     paraindex:=paraindex+1;
+                   end;
+                 if eq=paracount then
+                   begin
+                     result:=tpropertysym(sym);
+                     exit;
+                   end;
+               end;
+           end;
+       end;
+
+     { returns the default property of a class, searches also anchestors }
      var
        _defaultprop : tpropertysym;
        helperpd : tobjectdef;
@@ -4507,7 +4551,7 @@ implementation
         if search_last_objectpascal_helper(pd,nil,helperpd) then
           while assigned(helperpd) do
             begin
-              helperpd.symtable.SymList.ForEachCall(@tstoredsymtable(helperpd.symtable).testfordefaultproperty,@_defaultprop);
+              _defaultprop:=find_best_property(pd,tcallparanode(paras));
               if assigned(_defaultprop) then
                 break;
               helperpd:=helperpd.childof;
@@ -4520,7 +4564,7 @@ implementation
         { now search in the type's hierarchy itself }
         while assigned(pd) do
           begin
-             pd.symtable.SymList.ForEachCall(@tstoredsymtable(pd.symtable).testfordefaultproperty,@_defaultprop);
+             _defaultprop:=find_best_property(pd,tcallparanode(paras));
              if assigned(_defaultprop) then
                break;
              if (pd.typ=objectdef) then
