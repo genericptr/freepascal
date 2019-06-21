@@ -79,7 +79,8 @@ type
 {$ifndef VER3_0}
   TRTTIRecVarOp=procedure(ARec: Pointer);
   TRTTIRecCopyOp=procedure(ASrc, ADest: Pointer);
-  TRTTIRecOpType=(rotAny, rotInitialize, rotFinalize, rotAddRef, rotCopy);
+  TRTTIRecMoveOp=procedure(ASrc, ADest: Pointer);
+  TRTTIRecOpType=(rotAny, rotInitialize, rotFinalize, rotAddRef, rotCopy, rotMove);
   PRTTIRecordOpVMT=^TRTTIRecordOpVMT;
   TRTTIRecordOpVMT=
 {$ifdef USE_PACKED}
@@ -90,6 +91,7 @@ type
     Finalize: TRTTIRecVarOp;
     AddRef: TRTTIRecVarOp;
     Copy: TRTTIRecCopyOp;
+    Move: TRTTIRecMoveOp;
   end;
 
   TRTTIRecordOpOffsetEntry =

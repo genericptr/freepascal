@@ -572,6 +572,7 @@ implementation
                     _FINALIZE:optoken:=_OP_FINALIZE;
                     _ADDREF:optoken:=_OP_ADDREF;
                     _COPY:optoken:=_OP_COPY;
+                    _MOVE:optoken:=_OP_MOVE;
                     else
                     if (m_delphi in current_settings.modeswitches) then
                       case lastidtoken of
@@ -1452,7 +1453,7 @@ implementation
                   consume(_ID);
                 end;
               { operators without result (management operators) }
-              if optoken in [_OP_INITIALIZE, _OP_FINALIZE, _OP_ADDREF, _OP_COPY] then
+              if optoken in [_OP_INITIALIZE,_OP_FINALIZE,_OP_ADDREF,_OP_COPY,_OP_MOVE] then
                 begin
                   { single var parameter to point the record }
                   if (optoken in [_OP_INITIALIZE, _OP_FINALIZE, _OP_ADDREF]) and
@@ -1463,7 +1464,7 @@ implementation
                      ) then
                     Message(parser_e_overload_impossible)
                   { constref (source) and var (dest) parameter to point the records }
-                  else if (optoken=_OP_COPY) and
+                  else if (optoken in [_OP_COPY,_OP_MOVE]) and
                      (
                       (pd.parast.SymList.Count<>2) or
                       (tparavarsym(pd.parast.SymList[0]).vardef<>pd.struct) or

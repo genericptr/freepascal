@@ -458,6 +458,7 @@ interface
     { _OP_FINALIZE   }  'finalize',
     { _OP_ADDREF     }  'addref',
     { _OP_COPY       }  'copy',
+    { _OP_MOVE       }  'move',
     { _OP_INC        }  'inc',
     { _OP_DEC        }  'dec');
 
@@ -466,7 +467,8 @@ interface
     { mop_initialize }  _OP_INITIALIZE,
     { mop_finalize   }  _OP_FINALIZE,
     { mop_addref     }  _OP_ADDREF,
-    { mop_copy       }  _OP_COPY
+    { mop_copy       }  _OP_COPY,
+    { mop_move       }  _OP_MOVE
     );
 
 

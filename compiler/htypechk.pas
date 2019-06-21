@@ -142,12 +142,13 @@ interface
         (tok:_OP_DEC     ;nod:inlinen;inr:in_dec_x;op_overloading_supported:true;minargs:1;maxargs:1)   { unary overloading supported }
       );
 
-      tok2ops=4;
+      tok2ops=5;
       tok2op: array[1..tok2ops] of ttok2oprec=(
         (tok:_OP_INITIALIZE; managementoperator: mop_initialize),
         (tok:_OP_FINALIZE  ; managementoperator: mop_finalize),
         (tok:_OP_ADDREF    ; managementoperator: mop_addref),
-        (tok:_OP_COPY      ; managementoperator: mop_copy)
+        (tok:_OP_COPY      ; managementoperator: mop_copy),
+        (tok:_OP_MOVE      ; managementoperator: mop_move)
       );
 
     function node2opstr(nt:tnodetype):string;

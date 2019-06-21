@@ -60,6 +60,7 @@ type
     _OP_FINALIZE,
     _OP_ADDREF,
     _OP_COPY,
+    _OP_MOVE,
     _OP_INC,
     _OP_DEC,
     { special chars }
@@ -141,6 +142,7 @@ type
     _FILE,
     _GOTO,
     _HUGE,
+    _MOVE,
     _NAME,
     _NEAR,
     _READ,
@@ -337,7 +339,7 @@ const
   last_overloaded  = _OP_DEC;
   last_operator = _GENERICSPECIALTOKEN;
   first_managment_operator = _OP_INITIALIZE;
-  last_managment_operator = _OP_COPY;
+  last_managment_operator = _OP_MOVE;
 
   highest_precedence = oppower;
 
@@ -401,6 +403,7 @@ const
       (str:'finalize'      ;special:true ;keyword:[m_none];op:NOTOKEN),
       (str:'addref'        ;special:true ;keyword:[m_none];op:NOTOKEN),
       (str:'copy'          ;special:true ;keyword:[m_none];op:NOTOKEN),
+      (str:'move'          ;special:true ;keyword:[m_none];op:NOTOKEN),
       (str:'inc'           ;special:true ;keyword:[m_none];op:NOTOKEN),
       (str:'dec'           ;special:true ;keyword:[m_none];op:NOTOKEN),
     { Special chars }
@@ -482,6 +485,7 @@ const
       (str:'FILE'          ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'GOTO'          ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'HUGE'          ;special:false;keyword:[m_none];op:NOTOKEN),
+      (str:'MOVE'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NAME'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NEAR'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'READ'          ;special:false;keyword:[m_none];op:NOTOKEN),

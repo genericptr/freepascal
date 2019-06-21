@@ -104,6 +104,7 @@ begin
               rotFinalize: hasManagementOp:=Assigned(RecordOp^.Finalize);
               rotAddRef: hasManagementOp:=Assigned(RecordOp^.AddRef);
               rotCopy: hasManagementOp:=Assigned(RecordOp^.Copy);
+              rotMove: hasManagementOp:=Assigned(RecordOp^.Move);
             end;
         end;
 {$else VER3_0}
@@ -451,6 +452,77 @@ begin
   fpc_copy_internal(src,dest,typeinfo);
 end;
 
+{ define alias for internal use in the system unit }
+Function fpc_Move_internal (Src, Dest, TypeInfo : Pointer) : SizeInt;[external name 'FPC_MOVE'];
+
+Function fpc_Move (Src, Dest, TypeInfo : Pointer) : SizeInt;[Public,alias : 'FPC_MOVE']; compilerproc;
+var
+  Temp: pbyte;
+  copiedsize,
+  expectedoffset,
+  count,
+  offset,
+  i: SizeInt;
+  info: pointer;
+begin
+  result:=sizeof(pointer);
+  case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+    tkobject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+    tkrecord:
+{$ifndef VER3_0}
+      { find init table }
+      with RTTIRecordOp(typeinfo, typeinfo)^ do
+{$endif VER3_0}
+      begin
+{$ifdef VER3_0}
+        typeInfo:=RTTIRecordRttiInfoToInitInfo(typeInfo);
+        Temp:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+{$else VER3_0}
+        Temp:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+{$endif VER3_0}
+{$ifndef VER3_0}
+        if Assigned(recordop) and Assigned(recordop^.Move) then
+          recordop^.Move(Src,Dest)
+        else
+          begin
+            Result:=Size;
+            Inc(PRecordInfoInit(Temp));
+{$else VER3_0}
+            Result:=PRecordInfoFull(Temp)^.Size;
+            Count:=PRecordInfoFull(Temp)^.Count;
+            Inc(PRecordInfoFull(Temp));
+{$endif VER3_0}
+            expectedoffset:=0;
+            { Process elements with rtti }
+            for i:=1 to Count Do
+              begin
+                Info:=PRecordElement(Temp)^.TypeInfo{$ifndef VER3_0}^{$endif};
+                Offset:=PRecordElement(Temp)^.Offset;
+                Inc(PRecordElement(Temp));
+                if Offset>expectedoffset then
+                  move((Src+expectedoffset)^,(Dest+expectedoffset)^,Offset-expectedoffset);
+                copiedsize:=fpc_Move_internal(Src+Offset,Dest+Offset,Info);
+                expectedoffset:=Offset+copiedsize;
+              end;
+            { elements remaining? }
+            if result>expectedoffset then
+              move((Src+expectedoffset)^,(Dest+expectedoffset)^,Result-expectedoffset);
+{$ifndef VER3_0}
+          end;
+{$endif VER3_0}
+      end;
+  end;
+end;
+
+{ For internal use by the compiler, because otherwise $x- can cause trouble. }
+{ Generally disabling extended syntax checking for all compilerprocs may     }
+{ have unintended side-effects                                               }
+procedure fpc_Move_proc (Src, Dest, TypeInfo : Pointer);compilerproc; inline;
+begin
+  fpc_move_internal(src,dest,typeinfo);
+end;
 
 procedure fpc_initialize_array(data,typeinfo : pointer;count : SizeInt); [public,alias:'FPC_INITIALIZE_ARRAY']; compilerproc;
   var

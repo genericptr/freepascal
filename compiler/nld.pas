@@ -786,6 +786,7 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
+        st: tsymtable;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -848,29 +849,19 @@ implementation
          begin
            // TODO: l-r values
            // TODO: add extra "is_static_memory" param to fpc_copy_proc
-           writeln('* copy assignment fpc_copy_proc:', left.nodetype, ' ', right.nodetype, ' is_static_memory:', right.is_static_memory);
-           if right.is_static_memory then
-             begin
-               hp:=ccallparanode.create(caddrnode.create_internal(
-                      crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
-                   ccallparanode.create(ctypeconvnode.create_internal(
-                     caddrnode.create_internal(left),voidpointertype),
-                   ccallparanode.create(ctypeconvnode.create_internal(
-                     caddrnode.create_internal(right),voidpointertype),
-                   nil)));
-               result:=ccallnode.createintern('fpc_copy_proc',hp);
-             end
+           writeln('* copy assignment:', left.nodetype, '<->', right.nodetype, ' is_static_memory:', right.is_static_memory);
+           st:=tabstractrecorddef(left.resultdef).symtable;
+           hp:=ccallparanode.create(caddrnode.create_internal(
+                  crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
+               ccallparanode.create(ctypeconvnode.create_internal(
+                 caddrnode.create_internal(left),voidpointertype),
+               ccallparanode.create(ctypeconvnode.create_internal(
+                 caddrnode.create_internal(right),voidpointertype),
+               nil)));
+           if (mop_move in trecordsymtable(st).managementoperators) and not right.is_static_memory then
+             result:=ccallnode.createintern('fpc_move_proc',hp)
            else
-             begin
-               hp:=ccallparanode.create(caddrnode.create_internal(
-                      crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
-                   ccallparanode.create(ctypeconvnode.create_internal(
-                     caddrnode.create_internal(left),voidpointertype),
-                   ccallparanode.create(ctypeconvnode.create_internal(
-                     caddrnode.create_internal(right),voidpointertype),
-                   nil)));
-               result:=ccallnode.createintern('fpc_copy_proc',hp);
-             end;
+             result:=ccallnode.createintern('fpc_copy_proc',hp);
            firstpass(result);
            left:=nil;
            right:=nil;

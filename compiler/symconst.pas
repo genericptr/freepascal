@@ -610,7 +610,8 @@ type
     mop_initialize,
     mop_finalize,
     mop_addref,
-    mop_copy
+    mop_copy,
+    mop_move
   );
   tmanagementoperators=set of tmanagementoperator;
 
