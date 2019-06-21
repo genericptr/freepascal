@@ -65,6 +65,7 @@ interface
           procedure derefimpl;override;
           procedure set_mp(p:tnode);
           function  is_addr_param_load:boolean;virtual;
+          function  is_static_memory : boolean;override;
           function  dogetcopy : tnode;override;
           function  pass_1 : tnode;override;
           function  pass_typecheck:tnode;override;
@@ -284,6 +285,12 @@ implementation
                 not(vo_has_local_copy in tparavarsym(symtableentry).varoptions) and
                 not(loadnf_load_self_pointer in loadnodeflags) and
                 paramanager.push_addr_param(tparavarsym(symtableentry).varspez,tparavarsym(symtableentry).vardef,tprocdef(symtable.defowner).proccalloption);
+      end;
+
+
+    function tloadnode.is_static_memory : boolean;
+      begin
+        result:=true;
       end;
 
 
@@ -779,7 +786,6 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
-        vec: tvecnode;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -840,19 +846,31 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
-           writeln('** copy assignment fpc_copy_proc:', left.nodetype, ' ', right.nodetype);
-           if left.nodetype=vecn then
-             vec:=tvecnode(left);
-           if right.nodetype=vecn then
-             vec:=tvecnode(right);
-           hp:=ccallparanode.create(caddrnode.create_internal(
-                  crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
-               ccallparanode.create(ctypeconvnode.create_internal(
-                 caddrnode.create_internal(left),voidpointertype),
-               ccallparanode.create(ctypeconvnode.create_internal(
-                 caddrnode.create_internal(right),voidpointertype),
-               nil)));
-           result:=ccallnode.createintern('fpc_copy_proc',hp);
+           // TODO: l-r values
+           // TODO: add extra "is_static_memory" param to fpc_copy_proc
+           writeln('* copy assignment fpc_copy_proc:', left.nodetype, ' ', right.nodetype, ' is_static_memory:', right.is_static_memory);
+           if right.is_static_memory then
+             begin
+               hp:=ccallparanode.create(caddrnode.create_internal(
+                      crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(left),voidpointertype),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(right),voidpointertype),
+                   nil)));
+               result:=ccallnode.createintern('fpc_copy_proc',hp);
+             end
+           else
+             begin
+               hp:=ccallparanode.create(caddrnode.create_internal(
+                      crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(left),voidpointertype),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(right),voidpointertype),
+                   nil)));
+               result:=ccallnode.createintern('fpc_copy_proc',hp);
+             end;
            firstpass(result);
            left:=nil;
            right:=nil;

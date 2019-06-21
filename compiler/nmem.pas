@@ -105,6 +105,7 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
+          function is_static_memory : boolean;override;
        end;
        tderefnodeclass = class of tderefnode;
 
@@ -121,6 +122,7 @@ interface
           function docompare(p: tnode): boolean; override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
+          function is_static_memory : boolean;override;
        end;
        tsubscriptnodeclass = class of tsubscriptnode;
 
@@ -133,6 +135,7 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
+          function is_static_memory : boolean;override;
        end;
        tvecnodeclass = class of tvecnode;
 
@@ -766,6 +769,11 @@ implementation
       include(flags,nf_write);
     end;
 
+    function tderefnode.is_static_memory : boolean;
+      begin
+        result:=left.is_static_memory;
+      end;
+
     function tderefnode.pass_1 : tnode;
       begin
          result:=nil;
@@ -849,6 +857,12 @@ implementation
           for data types being implicit pointers this does not apply as the object itself does not change }
         if not(is_implicit_pointer_object_type(left.resultdef)) then
           left.mark_write;
+      end;
+
+
+    function tsubscriptnode.is_static_memory : boolean;
+      begin
+        result:=left.is_static_memory;
       end;
 
 
@@ -1160,6 +1174,22 @@ implementation
         { see comment in tsubscriptnode.mark_write }
         if not(is_implicit_array_pointer(left.resultdef)) then
           left.mark_write;
+      end;
+
+
+    function tvecnode.is_static_memory : boolean;
+      begin
+        // TODO: if right is a constant and left is constant array we should in therory
+        // be able to determine at compile time if the value is mapped or not
+        if is_array_constructor(left.resultdef) or
+           is_dynamic_array(left.resultdef) or
+           is_open_array(left.resultdef) and
+           is_ordinal(right.resultdef) then
+          begin
+            result:=false;
+          end
+        else
+          result:=left.is_static_memory;
       end;
 
 

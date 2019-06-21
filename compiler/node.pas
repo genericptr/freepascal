@@ -385,6 +385,7 @@ interface
          procedure printnodetree(var t:text);virtual;
          procedure concattolist(l : tlinkedlist);virtual;
          function ischild(p : tnode) : boolean;virtual;
+         function is_static_memory : boolean;virtual;
 
          { ensures that the optimizer info record is allocated }
          function allocoptinfo : poptinfo;inline;
@@ -846,6 +847,12 @@ implementation
       end;
 
 
+    function tnode.is_static_memory : boolean;
+      begin
+        result:=false;
+      end;
+
+
     procedure tnode.mark_write;
       begin
 {$ifdef EXTDEBUG}
@@ -1137,7 +1144,6 @@ implementation
       begin
          ischild:=(p=right);
       end;
-
 
     function tbinarynode.docompare(p : tnode) : boolean;
       begin
