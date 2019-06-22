@@ -840,7 +840,6 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
-           writeln('* copy assignment:', left.nodetype, ' := ', right.nodetype, ' mem:', right.memory_mapping);
            hp:=ccallparanode.create(caddrnode.create_internal(
                   crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
                ccallparanode.create(ctypeconvnode.create_internal(
