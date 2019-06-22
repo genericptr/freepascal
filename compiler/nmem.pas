@@ -105,7 +105,7 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
-          function is_static_memory : boolean;override;
+          function memory_mapping : tnode_memory_mapping;override;
        end;
        tderefnodeclass = class of tderefnode;
 
@@ -122,7 +122,6 @@ interface
           function docompare(p: tnode): boolean; override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
-          function is_static_memory : boolean;override;
        end;
        tsubscriptnodeclass = class of tsubscriptnode;
 
@@ -135,7 +134,7 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
-          function is_static_memory : boolean;override;
+          function memory_mapping : tnode_memory_mapping;override;
        end;
        tvecnodeclass = class of tvecnode;
 
@@ -769,9 +768,9 @@ implementation
       include(flags,nf_write);
     end;
 
-    function tderefnode.is_static_memory : boolean;
+    function Tderefnode.memory_mapping : tnode_memory_mapping;
       begin
-        result:=left.is_static_memory;
+        result:=nmm_static;
       end;
 
     function tderefnode.pass_1 : tnode;
@@ -858,13 +857,6 @@ implementation
         if not(is_implicit_pointer_object_type(left.resultdef)) then
           left.mark_write;
       end;
-
-
-    function tsubscriptnode.is_static_memory : boolean;
-      begin
-        result:=left.is_static_memory;
-      end;
-
 
     function tsubscriptnode.pass_1 : tnode;
       begin
@@ -1177,7 +1169,7 @@ implementation
       end;
 
 
-    function tvecnode.is_static_memory : boolean;
+    function tvecnode.memory_mapping : tnode_memory_mapping;
       begin
         // TODO: if right is a constant and left is constant array we should in therory
         // be able to determine at compile time if the value is mapped or not
@@ -1186,10 +1178,10 @@ implementation
            is_open_array(left.resultdef) and
            is_ordinal(right.resultdef) then
           begin
-            result:=false;
+            result:=inherited memory_mapping;
           end
         else
-          result:=left.is_static_memory;
+          result:=left.memory_mapping;
       end;
 
 

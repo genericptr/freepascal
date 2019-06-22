@@ -90,6 +90,7 @@ interface
           function  pass1_normal:tnode;
           procedure register_created_object_types;
           function get_expect_loc: tcgloc;
+          function memory_mapping : tnode_memory_mapping;override;
        protected
           function safe_call_self_node: tnode;
           procedure gen_vmt_entry_load; virtual;
@@ -2562,6 +2563,10 @@ implementation
           result:=LOC_REFERENCE
       end;
 
+    function tcallnode.memory_mapping : tnode_memory_mapping;
+      begin
+        result:=nmm_temporary;
+      end;
 
     function tcallnode.safe_call_self_node: tnode;
       begin

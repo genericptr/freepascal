@@ -65,7 +65,6 @@ interface
           procedure derefimpl;override;
           procedure set_mp(p:tnode);
           function  is_addr_param_load:boolean;virtual;
-          function  is_static_memory : boolean;override;
           function  dogetcopy : tnode;override;
           function  pass_1 : tnode;override;
           function  pass_typecheck:tnode;override;
@@ -285,12 +284,6 @@ implementation
                 not(vo_has_local_copy in tparavarsym(symtableentry).varoptions) and
                 not(loadnf_load_self_pointer in loadnodeflags) and
                 paramanager.push_addr_param(tparavarsym(symtableentry).varspez,tparavarsym(symtableentry).vardef,tprocdef(symtable.defowner).proccalloption);
-      end;
-
-
-    function tloadnode.is_static_memory : boolean;
-      begin
-        result:=true;
       end;
 
 
@@ -847,10 +840,7 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
-           // TODO: l-r values
-           // TODO: add extra "is_static_memory" param to fpc_copy_proc
-           writeln('* copy assignment:', left.nodetype, '<->', right.nodetype, ' is_static_memory:', right.is_static_memory);
-           st:=tabstractrecorddef(left.resultdef).symtable;
+           writeln('* copy assignment:', left.nodetype, ' := ', right.nodetype, ' mem:', right.memory_mapping);
            hp:=ccallparanode.create(caddrnode.create_internal(
                   crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
                ccallparanode.create(ctypeconvnode.create_internal(
@@ -858,7 +848,9 @@ implementation
                ccallparanode.create(ctypeconvnode.create_internal(
                  caddrnode.create_internal(right),voidpointertype),
                nil)));
-           if (mop_move in trecordsymtable(st).managementoperators) and not right.is_static_memory then
+           { if the move operator is implemented it takes precedence over copy }
+           st:=tabstractrecorddef(left.resultdef).symtable;
+           if (mop_move in trecordsymtable(st).managementoperators) and (right.memory_mapping=nmm_temporary) then
              result:=ccallnode.createintern('fpc_move_proc',hp)
            else
              result:=ccallnode.createintern('fpc_copy_proc',hp);

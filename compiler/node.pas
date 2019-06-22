@@ -295,6 +295,14 @@ interface
        tnodelist = class
        end;
 
+      tnode_memory_mapping = (  { no memory mapping was explicitly given for the node (the default) }
+                                nmm_unspecified,  
+                                { the node maps to static (e.g. addressable) memory }
+                                nmm_static,       
+                                { the node maps to temporary memory (e.g. the address can not be gotten using @) }
+                                nmm_temporary     
+                             );
+
       pnode = ^tnode;
       { basic class for the intermediated representation fpc uses }
       tnode = class
@@ -385,7 +393,7 @@ interface
          procedure printnodetree(var t:text);virtual;
          procedure concattolist(l : tlinkedlist);virtual;
          function ischild(p : tnode) : boolean;virtual;
-         function is_static_memory : boolean;virtual;
+         function memory_mapping : tnode_memory_mapping;virtual;
 
          { ensures that the optimizer info record is allocated }
          function allocoptinfo : poptinfo;inline;
@@ -410,6 +418,7 @@ interface
          procedure derefimpl;override;
          procedure concattolist(l : tlinkedlist);override;
          function ischild(p : tnode) : boolean;override;
+         function memory_mapping : tnode_memory_mapping;override;
          function docompare(p : tnode) : boolean;override;
          function dogetcopy : tnode;override;
          procedure insertintolist(l : tnodelist);override;
@@ -847,9 +856,9 @@ implementation
       end;
 
 
-    function tnode.is_static_memory : boolean;
+    function tnode.memory_mapping : tnode_memory_mapping;
       begin
-        result:=false;
+        result:=nmm_unspecified;
       end;
 
 
@@ -1079,6 +1088,13 @@ implementation
          ischild:=p=left;
       end;
 
+    function tunarynode.memory_mapping : tnode_memory_mapping;
+      begin
+        if assigned(left) then
+          result:=left.memory_mapping
+        else
+          result:=inherited memory_mapping;
+      end;
 
 {****************************************************************************
                             TBINARYNODE
