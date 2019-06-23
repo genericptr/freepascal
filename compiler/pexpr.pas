@@ -1282,6 +1282,7 @@ implementation
         isclassref:boolean;
         isrecordtype:boolean;
         isobjecttype:boolean;
+        paras:tnode;
       begin
          if sym=nil then
            begin
@@ -1408,7 +1409,19 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      handle_propertysym(tpropertysym(sym),sym.owner,nil,p1);
+                      if ppo_hasparameters in tpropertysym(sym).propoptions then
+                        begin
+                          consume(_LECKKLAMMER);
+                          paras:=parse_paras(false,false,_RECKKLAMMER);
+                          consume(_RECKKLAMMER);
+                          sym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
+                          if assigned(sym) then
+                            handle_propertysym(tpropertysym(sym),sym.owner,paras,p1)
+                          else
+                            internalerror(2019062301);
+                        end
+                      else
+                        handle_propertysym(tpropertysym(sym),sym.owner,nil,p1);
                    end;
                  typesym:
                    begin
@@ -2095,6 +2108,7 @@ implementation
                  begin
                    { default property }
                    paras:=nil;
+                   protsym:=nil;
                    if oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions then
                      begin
                        if try_to_consume(_LECKKLAMMER) then
