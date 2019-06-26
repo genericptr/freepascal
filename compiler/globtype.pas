@@ -447,7 +447,7 @@ interface
          m_isolike_program_para, { program parameters as it required by an ISO compatible compiler }
          m_isolike_mod,         { mod operation as it is required by an iso compatible compiler }
          m_array_operators,     { use Delphi compatible array operators instead of custom ones ("+") }
-         m_class_operators      { allow "class operator" methods in classes (same syntax as advanced records)}
+         m_advanced_objects     { adds additional features to objects }
        );
        tmodeswitches = set of tmodeswitch;
 
@@ -637,7 +637,7 @@ interface
          'ISOPROGRAMPARAS',
          'ISOMOD',
          'ARRAYOPERATORS',
-         'CLASSOPERATORS'
+         'ADVANCEDOBJECTS'
          );
 
 

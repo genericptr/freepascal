@@ -1091,7 +1091,7 @@ implementation
             constructors, destructors, fields, properties and operators (if m_class_operators is enabled) }
           if not((token in [_FUNCTION,_PROCEDURE,_PROPERTY,_VAR,_DESTRUCTOR,_THREADVAR]) or 
              (token=_CONSTRUCTOR) or
-             ((token=_OPERATOR) and (m_class_operators in current_settings.modeswitches))) then
+             ((token=_OPERATOR) and is_object(current_structdef) and (m_advanced_objects in current_settings.modeswitches))) then
             Message(parser_e_procedure_or_function_expected);
 
           { Java interfaces can contain final class vars }
@@ -1348,8 +1348,9 @@ implementation
             _OPERATOR :
               { operators must be class methods and enabled via mode switch.
                 class helpers like record helpers are not allowed to contain operators }
-              if (m_class_operators in current_settings.modeswitches) and 
+              if (m_advanced_objects in current_settings.modeswitches) and 
                  is_classdef and 
+                 is_object(current_structdef) and
                  not is_classhelper(current_structdef) then
                 begin                    
                   method_dec(current_structdef,is_classdef,hadgeneric);

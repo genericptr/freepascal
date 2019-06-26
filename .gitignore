@@ -7,7 +7,6 @@ tests/*.x86_64-darwin
 rtl/Package.fpc
 tests/createlst
 tests/gparmake
-compiler/ryan_ppcx64.lpi
 
 # directories
 lazbuild/

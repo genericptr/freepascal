@@ -2449,7 +2449,7 @@ implementation
             while assigned(pt) do
               begin
                 if ((pt.resultdef.typ=recorddef) or 
-                   ((m_class_operators in current_settings.modeswitches) and (pt.resultdef.typ=objectdef))) and
+                   ((m_advanced_objects in current_settings.modeswitches) and is_object(pt.resultdef))) and
                    (sto_has_operator in tabstractrecorddef(pt.resultdef).symtable.tableoptions) then
                   collect_overloads_in_struct(tabstractrecorddef(pt.resultdef),ProcdefOverloadList,searchhelpers,anoninherited,spezcontext);
                 pt:=tcallparanode(pt.right);
