@@ -174,47 +174,54 @@ implementation
           eq: integer;
         begin
           sc:=p.parast;
-          for i := 0 to pd.symtable.SymList.Count-1 do
+          while assigned(pd) do
             begin
-              sym:=tsym(pd.symtable.SymList[i]);
-              if (sym.typ<>propertysym) or (sym=p) then
-                continue;
-
-              { non-default parametered properties must not have the same name }
-              if (ppo_hasparameters in tpropertysym(sym).propoptions) and
-                 not (ppo_defaultproperty in tpropertysym(sym).propoptions) then 
+              for i:=0 to pd.symtable.SymList.Count-1 do
                 begin
-                  MessagePos1(name_filepos,sym_e_duplicate_id,p.realname);
-                  exit;
-                end
-              else if ppo_defaultproperty in tpropertysym(sym).propoptions then
-                begin
-                  { all default properties must share the same name }
-                  if sym.realname<>p.realname then
-                    begin
-                      writeln('*** all default properties must share the same name');
-                      message(parser_e_only_one_default_property);
-                      exit;
-                    end;
-                  { default properties must have unique parameters }
-                  st:=tpropertysym(sym).parast;
-                  if st.symlist.count<>sc.SymList.count then
+                  sym:=tsym(pd.symtable.SymList[i]);
+                  { ignore non-properties, the same property or properties in different object }
+                  if (sym.typ<>propertysym) or (sym=p) or (p.owner<>sym.owner) then
                     continue;
-                  eq:=0;
-                  for paraindex := 0 to sc.SymList.count-1 do
+
+                  { non-default parametered properties must not have the same name }
+                  if (ppo_hasparameters in tpropertysym(sym).propoptions) and
+                     not (ppo_defaultproperty in tpropertysym(sym).propoptions) and
+                     (p.name=sym.name) then 
                     begin
-                      from_para:=tparavarsym(st.SymList[paraindex]);
-                      to_para:=tparavarsym(sc.SymList[paraindex]);
-                      if compare_defs(from_para.vardef,to_para.vardef,nothingn)>=te_convert_l1 then
-                        inc(eq);
-                    end;
-                  if eq=sc.SymList.count then
-                    begin
-                      writeln('*** default properties must have unique parameters');
-                      message(parser_e_only_one_default_property);
+                      MessagePos1(name_filepos,sym_e_duplicate_id,p.realname);
                       exit;
-                    end;
-                end;   
+                    end
+                  else if ppo_defaultproperty in tpropertysym(sym).propoptions then
+                    begin
+                      { all default properties must share the same name }
+                      if sym.name<>p.name then
+                        begin
+                          message(parser_e_only_one_default_property);
+                          exit;
+                        end;
+                      { default properties must have unique parameters }
+                      st:=tpropertysym(sym).parast;
+                      if st.symlist.count<>sc.SymList.count then
+                        continue;
+                      eq:=0;
+                      for paraindex := 0 to sc.SymList.count-1 do
+                        begin
+                          from_para:=tparavarsym(st.SymList[paraindex]);
+                          to_para:=tparavarsym(sc.SymList[paraindex]);
+                          if compare_defs(from_para.vardef,to_para.vardef,nothingn)>=te_convert_l3 then
+                            inc(eq);
+                        end;
+                      if eq=sc.SymList.count then
+                        begin
+                          message(parser_e_only_one_default_property);
+                          exit;
+                        end;
+                    end;   
+                end;
+              if pd.typ=objectdef then
+                pd:=tobjectdef(pd).childof
+              else
+                pd:=nil;
             end;
         end;
       
@@ -223,7 +230,7 @@ implementation
           i: integer;
           sym: tsym;
         begin
-          for i := 0 to pd.symtable.SymList.Count-1 do
+          for i:=0 to pd.symtable.SymList.Count-1 do
             begin
               sym:=tsym(pd.symtable.SymList[i]);
               if (sym<>p) and
@@ -263,7 +270,8 @@ implementation
               end;
             consume(_SEMICOLON);
           end
-        { properties with paramters that not default can't have duplicate names }
+        { properties with paramters that are not default can't have duplicate names
+          we need to check again here because }
         else if (ppo_hasparameters in p.propoptions) then
           check_duplicate_parametered_property(current_structdef,p,name_filepos);
         { parse possible enumerator modifier }

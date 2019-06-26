@@ -1283,6 +1283,7 @@ implementation
         isrecordtype:boolean;
         isobjecttype:boolean;
         paras:tnode;
+        bestsym:tsym;
       begin
          if sym=nil then
            begin
@@ -1409,16 +1410,16 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      if ppo_hasparameters in tpropertysym(sym).propoptions then
+                      if ppo_defaultproperty in tpropertysym(sym).propoptions then
                         begin
                           consume(_LECKKLAMMER);
                           paras:=parse_paras(false,false,_RECKKLAMMER);
                           consume(_RECKKLAMMER);
-                          sym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
-                          if assigned(sym) then
-                            handle_propertysym(tpropertysym(sym),sym.owner,paras,p1)
+                          bestsym:=search_default_property(structh,paras,sym.name);
+                          if assigned(bestsym) then
+                            handle_propertysym(tpropertysym(bestsym),bestsym.owner,paras,p1)
                           else
-                            internalerror(2019062301);
+                            handle_propertysym(tpropertysym(sym),sym.owner,paras,p1);
                         end
                       else
                         handle_propertysym(tpropertysym(sym),sym.owner,nil,p1);
@@ -2031,6 +2032,7 @@ implementation
      spezcontext : tspecializationcontext;
      old_current_filepos : tfileposinfo;
      paras : tnode;
+     has_default_property: boolean;
     label
      skipreckklammercheck,
      skippointdefcheck;
@@ -2109,17 +2111,30 @@ implementation
                    { default property }
                    paras:=nil;
                    protsym:=nil;
-                   if oo_has_default_property in tabstractrecorddef(p1.resultdef).objectoptions then
+                   { search hierarchy for default properties }
+                   has_default_property:=false;
+                   structh:=tabstractrecorddef(p1.resultdef);
+                   while assigned(structh) do
                      begin
-                       if try_to_consume(_LECKKLAMMER) then
+                       if oo_has_default_property in structh.objectoptions then
                          begin
-                           paras:=parse_paras(false,false,_RECKKLAMMER);
-                           consume(_RECKKLAMMER);
-                           protsym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
+                           has_default_property:=true;
+                           break;
                          end;
+                       if structh.typ=objectdef then
+                         structh:=tobjectdef(structh).childof
+                       else
+                         structh:=nil;
+                     end;
+                   if has_default_property then
+                     begin
+                       consume(_LECKKLAMMER);
+                       paras:=parse_paras(false,false,_RECKKLAMMER);
+                       consume(_RECKKLAMMER);
+                       protsym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
                      end
                    else
-                     protsym:=search_default_property(tabstractrecorddef(p1.resultdef),nil);
+                     protsym:=search_default_property(tabstractrecorddef(p1.resultdef));
                    if not(assigned(protsym)) then
                      begin
                         p1.destroy;
