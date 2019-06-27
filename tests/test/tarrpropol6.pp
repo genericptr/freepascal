@@ -1,28 +1,50 @@
-{%FAIL}
 {$mode objfpc}
-{$modeswitch advancedrecords}
 
 program tarrpropol6;
 
+var
+  LastProc: integer = 0;
+
 type
   TValue = TObject;
-  TList = record
-    function GetValueWithInt(index: integer): TValue;
-    function GetValueWithWord(index: word): TValue;
-    { default properties must have unique parameters }
-    property Values[index: integer]: TValue read GetValueWithInt; default;
-    property Values[index: word]: TValue read GetValueWithWord; default;
+  TBase = class
+    function GetValue(index: integer): TValue;
+    property Values[index: integer]: TValue read GetValue; default;
   end;
 
-function TList.GetValueWithInt(index: integer): TValue;
+function TBase.GetValue(index: integer): TValue;
 begin
+  LastProc := 1;
   result := nil;  
 end;
 
-function TList.GetValueWithWord(index: word): TValue;
+type
+  TList = class(TBase)
+    function GetValue(index: integer): TValue;
+    property Values[index: integer]: TValue read GetValue; default;
+  end;
+
+function TList.GetValue(index: integer): TValue;
 begin
+  LastProc := 2;
   result := nil;  
 end;
 
+procedure Test(const value: TValue; desired: integer);
 begin
+  if LastProc <> desired then
+    begin
+      writeln('FAILED');
+      Halt(-1);
+    end;
+end;
+
+var
+  c: TList;
+  v: TValue;
+begin
+  { last wins }
+  Test(c[1], 2);
+  { cast to get child access }
+  Test(TBase(c)[1], 1);
 end.

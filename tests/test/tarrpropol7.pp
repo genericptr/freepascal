@@ -1,6 +1,5 @@
 {$mode objfpc}
 
-
 program tarrpropol7;
 
 var
@@ -41,7 +40,7 @@ type
     result := nil;  
   end;
 
-procedure Test(value: TValue; desired: integer);
+procedure Test(const value: TValue; desired: integer);
 begin
   if LastProc <> desired then
     begin

@@ -1,29 +1,24 @@
 {%FAIL}
 {$mode objfpc}
-{$modeswitch advancedrecords}
 
 program tarrpropol4;
 
 type
   TValue = TObject;
-  TList = record
-    function GetValueWithInt(index: integer): TValue;
-    function GetValueWithString(index: string): TValue;
-    { parametered properties still can't have duplicate names
-      to fix error make properties default }
-    property Values[index: integer]: TValue read GetValueWithInt;  
-    property Values[index: string]: TValue read GetValueWithString;
-  end;
 
-function TList.GetValueWithInt(index: integer): TValue;
+function GetGlobalValueInt(index: integer): TValue;
 begin
-  result := nil;  
+  result:=nil;
 end;
 
-function TList.GetValueWithString(index: string): TValue;
+function GetGlobalValueStr(index: string): TValue;
 begin
-  result := nil;  
+  result:=nil;
 end;
+
+{ make sure global properties aren't affect by changes }
+property Values[index: integer]: TValue read GetGlobalValueInt;
+property Values[index: string]: TValue read GetGlobalValueStr;
 
 begin
 end.
