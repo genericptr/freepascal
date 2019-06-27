@@ -163,8 +163,29 @@ implementation
 
 
     procedure struct_property_dec(is_classproperty:boolean);
-      
-      procedure check_invalid_default_property(pd: tabstractrecorddef; p: tpropertysym; name_filepos: tfileposinfo);
+       
+      function compare_paras(sym: tpropertysym;parasymtable: tsymtable): boolean;
+        var
+          st: tsymtable;
+          paraindex: integer;
+          from_para, to_para: tparavarsym;
+          eq: integer;
+        begin
+          st:=tpropertysym(sym).parast;
+          if st.symlist.count<>parasymtable.SymList.count then
+            exit(false);
+          eq:=0;
+          for paraindex := 0 to parasymtable.SymList.count-1 do
+            begin
+              from_para:=tparavarsym(st.SymList[paraindex]);
+              to_para:=tparavarsym(parasymtable.SymList[paraindex]);
+              if compare_defs(from_para.vardef,to_para.vardef,nothingn)>=te_convert_l5 then
+                inc(eq);
+            end;
+          result:=(eq=parasymtable.SymList.count);
+        end;
+
+      procedure check_parametered_property(pd: tabstractrecorddef; p: tpropertysym; name_filepos: tfileposinfo);
         var
           i: integer;
           sym: tsym;
@@ -182,16 +203,8 @@ implementation
                   { ignore non-properties, the same property or properties in different object }
                   if (sym.typ<>propertysym) or (sym=p) or (p.owner<>sym.owner) then
                     continue;
-
-                  { non-default parametered properties must not have the same name }
-                  if (ppo_hasparameters in tpropertysym(sym).propoptions) and
-                     not (ppo_defaultproperty in tpropertysym(sym).propoptions) and
-                     (p.name=sym.name) then 
-                    begin
-                      MessagePos1(name_filepos,sym_e_duplicate_id,p.realname);
-                      exit;
-                    end
-                  else if ppo_defaultproperty in tpropertysym(sym).propoptions then
+                  { default properties must have unique parameters }
+                  if (ppo_defaultproperty in p.propoptions) and (ppo_defaultproperty in tpropertysym(sym).propoptions) then
                     begin
                       { all default properties must share the same name }
                       if sym.name<>p.name then
@@ -199,48 +212,35 @@ implementation
                           message(parser_e_only_one_default_property);
                           exit;
                         end;
-                      { default properties must have unique parameters }
-                      st:=tpropertysym(sym).parast;
-                      if st.symlist.count<>sc.SymList.count then
-                        continue;
-                      eq:=0;
-                      for paraindex := 0 to sc.SymList.count-1 do
+                      if compare_paras(tpropertysym(sym),sc) then
                         begin
-                          from_para:=tparavarsym(st.SymList[paraindex]);
-                          to_para:=tparavarsym(sc.SymList[paraindex]);
-                          if compare_defs(from_para.vardef,to_para.vardef,nothingn)>=te_convert_l3 then
-                            inc(eq);
-                        end;
-                      if eq=sc.SymList.count then
-                        begin
+                          // TODO: overloaded property parameters must be unique
                           message(parser_e_only_one_default_property);
                           exit;
-                        end;
-                    end;   
+                        end
+                      else
+                        continue;
+                    end
+                  { non-default parametered properties that have the same name
+                    must have unique parameters }
+                  else if not(ppo_defaultproperty in p.propoptions) and 
+                             (ppo_hasparameters in tpropertysym(sym).propoptions) and
+                             (sym.name=p.name) then
+                    begin
+                      if compare_paras(tpropertysym(sym),sc) then
+                        begin
+                          // TODO: property parametesr must be unique
+                          message(parser_e_only_one_default_property);
+                          exit;
+                        end
+                      else
+                        continue;
+                    end;
                 end;
               if pd.typ=objectdef then
                 pd:=tobjectdef(pd).childof
               else
                 pd:=nil;
-            end;
-        end;
-      
-      procedure check_duplicate_parametered_property(pd: tabstractrecorddef; p: tpropertysym; name_filepos: tfileposinfo);
-        var
-          i: integer;
-          sym: tsym;
-        begin
-          for i:=0 to pd.symtable.SymList.Count-1 do
-            begin
-              sym:=tsym(pd.symtable.SymList[i]);
-              if (sym<>p) and
-                 (sym.typ=propertysym) and
-                 (ppo_hasparameters in tpropertysym(sym).propoptions) and
-                 (sym.realname=p.realname) then
-                begin
-                  MessagePos1(name_filepos,sym_e_duplicate_id,p.realname);
-                  exit;
-                end;
             end;
         end;
 
@@ -258,9 +258,9 @@ implementation
         consume(_SEMICOLON);
         if try_to_consume(_DEFAULT) then
           begin
-            check_invalid_default_property(current_structdef,p,name_filepos);
             include(current_structdef.objectoptions,oo_has_default_property);
             include(p.propoptions,ppo_defaultproperty);
+            check_parametered_property(current_structdef,p,name_filepos);
             if not(ppo_hasparameters in p.propoptions) then
               message(parser_e_property_need_paras);
             if (token=_COLON) then
@@ -270,10 +270,9 @@ implementation
               end;
             consume(_SEMICOLON);
           end
-        { properties with paramters that are not default can't have duplicate names
-          we need to check again here because }
         else if (ppo_hasparameters in p.propoptions) then
-          check_duplicate_parametered_property(current_structdef,p,name_filepos);
+          check_parametered_property(current_structdef,p,name_filepos);
+
         { parse possible enumerator modifier }
         if try_to_consume(_ENUMERATOR) then
           begin

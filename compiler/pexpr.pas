@@ -1410,12 +1410,12 @@ implementation
                    begin
                       if isclassref and not (sp_static in sym.symoptions) then
                         Message(parser_e_only_class_members_via_class_ref);
-                      if ppo_defaultproperty in tpropertysym(sym).propoptions then
+                      if ppo_hasparameters in tpropertysym(sym).propoptions then
                         begin
                           consume(_LECKKLAMMER);
                           paras:=parse_paras(false,false,_RECKKLAMMER);
                           consume(_RECKKLAMMER);
-                          bestsym:=search_default_property(structh,paras,sym.name);
+                          bestsym:=search_parametered_property(structh,paras,sym.name);
                           if assigned(bestsym) then
                             handle_propertysym(tpropertysym(bestsym),bestsym.owner,paras,p1)
                           else
@@ -2032,7 +2032,6 @@ implementation
      spezcontext : tspecializationcontext;
      old_current_filepos : tfileposinfo;
      paras : tnode;
-     has_default_property: boolean;
     label
      skipreckklammercheck,
      skippointdefcheck;
@@ -2111,30 +2110,12 @@ implementation
                    { default property }
                    paras:=nil;
                    protsym:=nil;
-                   { search hierarchy for default properties }
-                   has_default_property:=false;
-                   structh:=tabstractrecorddef(p1.resultdef);
-                   while assigned(structh) do
+                   if try_to_consume(_LECKKLAMMER) then
                      begin
-                       if oo_has_default_property in structh.objectoptions then
-                         begin
-                           has_default_property:=true;
-                           break;
-                         end;
-                       if structh.typ=objectdef then
-                         structh:=tobjectdef(structh).childof
-                       else
-                         structh:=nil;
-                     end;
-                   if has_default_property then
-                     begin
-                       consume(_LECKKLAMMER);
                        paras:=parse_paras(false,false,_RECKKLAMMER);
                        consume(_RECKKLAMMER);
-                       protsym:=search_default_property(tabstractrecorddef(p1.resultdef),paras);
-                     end
-                   else
-                     protsym:=search_default_property(tabstractrecorddef(p1.resultdef));
+                       protsym:=search_parametered_property(tabstractrecorddef(p1.resultdef),paras);
+                     end;
                    if not(assigned(protsym)) then
                      begin
                         p1.destroy;

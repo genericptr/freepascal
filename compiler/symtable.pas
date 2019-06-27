@@ -386,7 +386,7 @@ interface
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
 
 {*** Object Helpers ***}
-    function search_default_property(pd : tabstractrecorddef; paras: pointer=nil; name: shortstring='') : tpropertysym;
+    function search_parametered_property(pd : tabstractrecorddef; paras: pointer=nil; name: shortstring='') : tpropertysym;
     function maybe_find_real_class_definition(pd: tdef; erroronfailure: boolean): tdef;
     function find_real_class_definition(pd: tobjectdef; erroronfailure: boolean): tobjectdef;
 
@@ -4488,7 +4488,7 @@ implementation
                               Object Helpers
 ****************************************************************************}
 
-   function search_default_property(pd : tabstractrecorddef; paras: pointer=nil; name: shortstring='') : tpropertysym;
+   function search_parametered_property(pd : tabstractrecorddef; paras: pointer=nil; name: shortstring='') : tpropertysym;
      
      function find_best_property(pd:tabstractrecorddef; paras:tcallparanode; name:shortstring): tpropertysym;
        var
@@ -4514,9 +4514,10 @@ implementation
              { rejected symbol for named searches }
              if (name<>'') and (sym.name<>name) then
                continue;
-             { filter default properties }
+             { filter properties by default or name }
              if (sym.typ=propertysym) and
-                (ppo_defaultproperty in tpropertysym(sym).propoptions) then
+                ((name='') and (ppo_defaultproperty in tpropertysym(sym).propoptions) or
+                 (name<>'') and (ppo_hasparameters in tpropertysym(sym).propoptions)) then
                begin
                  st:=tpropertysym(sym).parast;
                  { parameter count must match }
@@ -4530,6 +4531,8 @@ implementation
                      { paranodes are in reverse order so we need to access
                        the symtable list from back to front }
                      parasym:=tparavarsym(st.symlist[(st.symlist.count-1)-paraindex]);
+                     if pt.paravalue.nodetype=errorn then
+                       internalerror(2019062701);
                      if compare_defs(pt.paravalue.resultdef,parasym.vardef,nothingn)>=te_convert_l5 then
                        inc(eq);
                      { next parameter in the call tree }
@@ -4545,38 +4548,37 @@ implementation
            end;
        end;
 
-     { returns the default property of a class, searches also anchestors }
      var
-       _defaultprop : tpropertysym;
+       found : tpropertysym;
        helperpd : tobjectdef;
      begin
-        _defaultprop:=nil;
+        found:=nil;
         { first search in helper's hierarchy }
         if search_last_objectpascal_helper(pd,nil,helperpd) then
           while assigned(helperpd) do
             begin
-              _defaultprop:=find_best_property(helperpd,tcallparanode(paras),name);
-              if assigned(_defaultprop) then
+              found:=find_best_property(helperpd,tcallparanode(paras),name);
+              if assigned(found) then
                 break;
               helperpd:=helperpd.childof;
             end;
-        if assigned(_defaultprop) then
+        if assigned(found) then
           begin
-            search_default_property:=_defaultprop;
+            result:=found;
             exit;
           end;
         { now search in the type's hierarchy itself }
         while assigned(pd) do
           begin
-             _defaultprop:=find_best_property(pd,tcallparanode(paras),name);
-             if assigned(_defaultprop) then
+             found:=find_best_property(pd,tcallparanode(paras),name);
+             if assigned(found) then
                break;
              if (pd.typ=objectdef) then
                pd:=tobjectdef(pd).childof
              else
                break;
           end;
-        search_default_property:=_defaultprop;
+        result:=found;
      end;
 
 
