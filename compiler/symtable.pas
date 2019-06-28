@@ -4531,8 +4531,15 @@ implementation
                      { paranodes are in reverse order so we need to access
                        the symtable list from back to front }
                      parasym:=tparavarsym(st.symlist[(st.symlist.count-1)-paraindex]);
+                     { if the paramter is an error node this may mean that
+                       we are working with a generic paramter or an unspecialized
+                       generic type. because it's not possible to choose the correct
+                       overload will simply return the first default.  }
                      if pt.paravalue.nodetype=errorn then
-                       internalerror(2019062701);
+                       begin
+                         result:=tpropertysym(sym);
+                         exit;
+                       end;
                      if compare_defs(pt.paravalue.resultdef,parasym.vardef,nothingn)>=te_convert_l5 then
                        inc(eq);
                      { next parameter in the call tree }
