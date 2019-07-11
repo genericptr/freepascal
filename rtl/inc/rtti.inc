@@ -467,6 +467,47 @@ var
 begin
   result:=sizeof(pointer);
   case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+    tkAstring:
+      fpc_AnsiStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkWstring:
+      fpc_WideStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkUstring:
+      fpc_UnicodeStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+    tkArray:
+      begin
+{$ifdef VER3_0}
+        Temp:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+{$else VER3_0}
+        Temp:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+{$endif VER3_0}
+      {$ifdef VER2_6}
+        { Process elements }
+        for I:=0 to PArrayInfo(Temp)^.ElCount-1 do
+          fpc_Copy_internal(Src+(I*PArrayInfo(Temp)^.Size),Dest+(I*PArrayInfo(Temp)^.Size),PArrayInfo(Temp)^.ElInfo);
+        Result:=PArrayInfo(Temp)^.Size*PArrayInfo(Temp)^.ElCount;
+      {$else}
+        Result:=PArrayInfo(Temp)^.Size;
+        Count:=PArrayInfo(Temp)^.ElCount;
+        { no elements to process => exit }
+        if Count = 0 then
+          Exit;
+        Info:=PArrayInfo(Temp)^.ElInfo{$ifndef VER3_0}^{$endif};
+        copiedsize:=Result div Count;
+        Offset:=0;
+        { Process elements }
+        for I:=1 to Count do
+          begin
+            fpc_Copy_internal(Src+Offset,Dest+Offset,Info);
+            inc(Offset,copiedsize);
+          end;
+      {$endif}
+      end;
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkobject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -483,8 +524,13 @@ begin
         Temp:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 {$endif VER3_0}
 {$ifndef VER3_0}
+        { during move operations the move operator takes precedence
+          over the copy operator and finally if either operator is
+          not present then standard memory move is used }
         if Assigned(recordop) and Assigned(recordop^.Move) then
           recordop^.Move(Src,Dest)
+        else if Assigned(recordop) and Assigned(recordop^.Copy) then
+          recordop^.Copy(Src,Dest)
         else
           begin
             Result:=Size;
@@ -513,6 +559,19 @@ begin
           end;
 {$endif VER3_0}
       end;
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+    tkDynArray:
+      fpc_dynarray_assign(PPointer(Dest)^,PPointer(Src)^,typeinfo);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+    tkInterface:
+      fpc_intf_assign(PPointer(Dest)^,PPointer(Src)^);
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+    tkVariant:
+      begin
+        VarCopyProc(pvardata(dest)^,pvardata(src)^);
+        result:=sizeof(tvardata);
+      end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
   end;
 end;
 

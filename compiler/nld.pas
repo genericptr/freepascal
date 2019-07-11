@@ -779,7 +779,6 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
-        st: tsymtable;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -847,9 +846,8 @@ implementation
                ccallparanode.create(ctypeconvnode.create_internal(
                  caddrnode.create_internal(right),voidpointertype),
                nil)));
-           { if the move operator is implemented it takes precedence over copy }
-           st:=tabstractrecorddef(left.resultdef).symtable;
-           if (mop_move in trecordsymtable(st).managementoperators) and (right.memory_mapping=nmm_temporary) then
+           { if the right node is temporary memory mapped then call move }
+           if right.memory_mapping=nmm_temporary then
              result:=ccallnode.createintern('fpc_move_proc',hp)
            else
              result:=ccallnode.createintern('fpc_copy_proc',hp);
