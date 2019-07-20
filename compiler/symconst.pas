@@ -205,8 +205,9 @@ type
                               generic is encountered to ease inline
                               specializations, etc; those symbols can be
                               "overridden" with a completely different symbol }
-    sp_explicitrename       { this is used to keep track of type renames created
+    sp_explicitrename,      { this is used to keep track of type renames created
                               by the user }
+    sp_generic_const
   );
   tsymoptions=set of tsymoption;
 

@@ -360,7 +360,12 @@ implementation
           begin
             if (hp.nodetype=ordconstn) and
                (fordef.typ<>errordef) then
-              testrange(fordef,tordconstnode(hp).value,false,true);
+              begin
+                { the node was derived from a generic parameter so ignore range check }
+                if nf_generic_para in hp.flags then
+                  exit;
+                testrange(fordef,tordconstnode(hp).value,false,true);
+              end;
           end;
 
         function for_loop_create(hloopvar: tnode): tnode;

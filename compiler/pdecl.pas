@@ -120,20 +120,16 @@ implementation
              end;
            realconstn :
              begin
-                new(pd);
-                pd^:=trealconstnode(p).value_real;
-                hp:=cconstsym.create_ptr(orgname,constreal,pd,p.resultdef);
+               new(pd);
+               pd^:=trealconstnode(p).value_real;
+               hp:=cconstsym.create_ptr(orgname,constreal,pd,p.resultdef);
              end;
            setconstn :
              begin
-               if nf_generic_para in p.flags then
-                 hp:=cconstsym.create_ptr(orgname,constset,nil,p.resultdef)
-               else
-                 begin
-                   new(ps);
-                   ps^:=tsetconstnode(p).value_set^;
-                   hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
-                 end;
+               new(ps);
+               if assigned(tsetconstnode(p).value_set) then
+                 ps^:=tsetconstnode(p).value_set^;
+               hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
              end;
            pointerconstn :
              begin
@@ -194,7 +190,10 @@ implementation
         end;
         { transfer generic param flag from node to symbol }
         if nf_generic_para in p.flags then
-          include(hp.symoptions,sp_generic_para);
+          begin
+            include(hp.symoptions,sp_generic_const);
+            include(hp.symoptions,sp_generic_para);
+          end;
         current_tokenpos:=storetokenpos;
         p.free;
         readconstant:=hp;

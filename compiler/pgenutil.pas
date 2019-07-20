@@ -218,6 +218,7 @@ uses
         end;
         { the sym needs an owner for later checks so us the typeparam owner }
         sym.owner:=fromdef.owner;
+        include(sym.symoptions,sp_generic_const);
         result:=sym;
       end;
 
@@ -527,7 +528,7 @@ uses
               consume(_COMMA);
             block_type:=bt_type;
             tmpparampos:=current_filepos;
-            typeparam:=factor(false,[ef_type_only]);
+            typeparam:=factor(false,[ef_accept_equal]);
             { determine if the typeparam node is a valid type or const }
             validparam:=typeparam.nodetype in tgeneric_param_nodes;
             if validparam then
@@ -552,7 +553,7 @@ uses
                     if (typeparam.resultdef.typ<>errordef) then
                       begin
                         { all non-type nodes are considered const }
-                        if typeparam.nodetype <> typen then
+                        if typeparam.nodetype<>typen then
                           paramlist.Add(create_generic_constsym(typeparam.resultdef,typeparam,constprettyname))
                         else
                           begin
@@ -1418,8 +1419,8 @@ uses
               { last param was const without semicolon terminator }
               if (result.count>0) and last_is_const and (last_token<>_SEMICOLON) then
                 MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
-              is_const := true;
-              const_list_index := result.count;
+              is_const:=true;
+              const_list_index:=result.count;
             end;
           if token=_ID then
             begin
@@ -1689,6 +1690,7 @@ uses
                     { the sym name is still undefined so we set it to match
                       the generic param name so it's accessible }
                     sym.realname:=genericlist.nameofindex(i);
+                    include(sym.symoptions,sp_generic_const);
                   end
                 else
                   internalerror(2019021602);

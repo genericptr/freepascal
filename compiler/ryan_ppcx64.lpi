@@ -70,7 +70,7 @@
       <ConfigFile>
         <StopAfterErrCount Value="50"/>
       </ConfigFile>
-      <CustomOptions Value="-dx86_64 -gw -godwarfcpp -Fl/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib"/>
+      <CustomOptions Value="-dx86_64 -vbr -gw -godwarfcpp -Fl/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib"/>
       <CompilerPath Value="$(CompPath)"/>
     </Other>
   </CompilerOptions>

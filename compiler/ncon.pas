@@ -306,14 +306,20 @@ implementation
             p1:=cstringconstnode.createunistr(pcompilerwidestring(p.value.valueptr));
           constreal :
             begin
-              if sp_generic_para in p.symoptions then
+              if (sp_generic_para in p.symoptions) and not (sp_generic_const in p.symoptions) then
                 p1:=crealconstnode.create(default(bestreal),p.constdef)
               else
                 p1:=crealconstnode.create(pbestreal(p.value.valueptr)^,p.constdef);
             end;
           constset :
             begin
-              if sp_generic_para in p.symoptions then
+              if sp_generic_const in p.symoptions then
+                begin
+                  new(value_set);
+                  value_set^:=pconstset(p.value.valueptr)^;
+                  p1:=csetconstnode.create(value_set,p.constdef);
+                end
+              else if sp_generic_para in p.symoptions then
                 begin
                   new(value_set);
                   p1:=csetconstnode.create(value_set,p.constdef);

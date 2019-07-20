@@ -66,6 +66,7 @@ implementation
          oldverbosity     : longint;
          oldpos    : tfileposinfo;
          hp        : tnode;
+         oldflags  : tnodeflags;
       begin
         node_changed:=false;
         if (p.resultdef=nil) then
@@ -83,9 +84,13 @@ implementation
            if assigned(hp) then
             begin
                node_changed:=true;
+               oldflags:=p.flags;
                p.free;
                { switch to new node }
                p:=hp;
+               { transfer generic paramter flag }
+               if nf_generic_para in oldflags then
+                 include(p.flags,nf_generic_para);
                { run typecheckpass }
                typecheckpass(p);
             end;

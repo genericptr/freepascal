@@ -4426,7 +4426,7 @@ implementation
          filepos : tfileposinfo;
          oldafterassignment,
          updatefpos          : boolean;
-
+         oldflags : tnodeflags;
       begin
          oldafterassignment:=afterassignment;
          p1:=sub_expr(opcompare,[ef_accept_equal],nil);
@@ -4483,6 +4483,10 @@ implementation
           else
             updatefpos:=false;
          end;
+         oldflags:=p1.flags;
+         { transfer generic paramter flag }
+         if nf_generic_para in oldflags then
+           include(p1.flags,nf_generic_para);
          { get the resultdef for this expression }
          if not assigned(p1.resultdef) and
             dotypecheck then
