@@ -1482,7 +1482,6 @@ implementation
                     Message(parser_e_overload_impossible);
                   
                   { management operators are only possible in records }
-                  // TODO: temporary until we merge changes
                   if (m_advanced_objects in current_settings.modeswitches) 
                      and (assigned(pd.struct) and not is_record(pd.struct)) then
                     Message(parser_e_overload_impossible);
