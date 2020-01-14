@@ -78,7 +78,7 @@ uses
   type
     tdeftypeset = set of tdeftyp;
   const
-    tgeneric_param_const_types : tdeftypeset = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef,undefineddef];
+    tgeneric_param_const_types : tdeftypeset = [orddef,stringdef,arraydef,floatdef,setdef,pointerdef,enumdef];
     tgeneric_param_nodes : tnodetypeset = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
 
     function get_generic_param_def(sym:tsym):tdef;
@@ -87,14 +87,6 @@ uses
           result:=tconstsym(sym).constdef
         else
           result:=ttypesym(sym).typedef;
-      end;
-
-    function is_generic_param_const(sym:tsym):boolean;
-      begin
-        if sym.typ=constsym then
-          result:=tconstsym(sym).consttyp<>constundefined
-        else
-          result:=false;
       end;
 
     function compare_orddef_by_range(param1,param2:torddef;value:tconstvalue):boolean;
@@ -148,13 +140,7 @@ uses
         i : integer;
       begin
         if node=nil then
-          begin
-            sym:=cconstsym.create_undefined(undefinedname,fromdef);
-            sym.owner:=fromdef.owner;
-            prettyname:='';
-            result:=sym;
-            exit;
-          end;
+          internalerror(2020011401);
         case node.nodetype of
           ordconstn:
             begin
@@ -278,7 +264,7 @@ uses
           begin
             filepos:=pfileposinfo(poslist[i])^;
             paradef:=tstoreddef(get_generic_param_def(tsym(paramlist[i])));
-            is_const:=is_generic_param_const(tsym(paramlist[i]));
+            is_const:=tsym(paramlist[i]).typ=constsym;
             genparadef:=genericdef.get_generic_param_def(i);
             { validate const params }
             if not genericdef.is_generic_param_const(i) and is_const then
@@ -1459,7 +1445,8 @@ uses
                       if assigned(def) and (def.typ in tgeneric_param_const_types) then
                         begin
                           case def.typ of
-                            orddef:
+                            orddef,
+                            enumdef:
                               tconstsym(result[i]).consttyp:=constord;
                             stringdef:
                               tconstsym(result[i]).consttyp:=conststring;
@@ -1470,6 +1457,8 @@ uses
                             { pointer always refers to nil with constants }
                             pointerdef:
                               tconstsym(result[i]).consttyp:=constnil;
+                            else
+                              internalerror(2020011402);
                           end;
                           tconstsym(result[i]).constdef:=def;
                         end
@@ -1636,6 +1625,10 @@ uses
           last_token:=token;
           last_type_pos:=current_filepos;
         until not (try_to_consume(_COMMA) or try_to_consume(_SEMICOLON));
+        { if the constant parameter is not terminated then the type restriction was 
+          not specified and we need to give an error }
+        if is_const then
+          consume(_COLON);
         { two different typeless parameters are considered as incompatible }
         for i:=firstidx to result.count-1 do
           if tsym(result[i]).typ<>constsym then

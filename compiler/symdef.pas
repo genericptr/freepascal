@@ -2210,12 +2210,12 @@ implementation
 
    function tstoreddef.is_generic_param_const(index:integer):boolean;
      begin
-       result := tsym(genericparas[index]).typ = constsym;
+       result := tsym(genericparas[index]).typ=constsym;
      end;  
 
    function tstoreddef.get_generic_param_def(index:integer):tdef;
      begin
-       if tsym(genericparas[index]).typ = constsym then
+       if tsym(genericparas[index]).typ=constsym then
          result := tconstsym(genericparas[index]).constdef
        else
          result := ttypesym(genericparas[index]).typedef;

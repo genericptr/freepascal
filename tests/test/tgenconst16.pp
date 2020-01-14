@@ -1,5 +1,8 @@
 {$mode objfpc}
 {$modeswitch advancedrecords}
+{
+  various operator tests
+}
 program tgenconst16;
 
 type
@@ -14,7 +17,7 @@ type
       d4 = I <= I;  // Contains
       d5 = mon in I;
   end;
-  generic TArray<const I> = record
+  generic TArray<const I: integer> = record
     type
       t0 = array[0..I - 1] of integer;
       t1 = array[0..high(I)] of integer;
@@ -26,13 +29,13 @@ type
       d2: array[0..low(I)] of integer;
       d3: array[0..sizeof(I)] of integer;
   end;
-  generic TUnaryOp<const I> = record
+  generic TUnaryOp<const I: integer> = record
     const
       d0 = -I;
       d1 = +I;
       d2 = not I;
   end;
-  generic TBinaryOp<const I> = record
+  generic TBinaryOp<const I: integer> = record
     const
       // Arithmetic operators
       // https://freepascal.org/docs-html/ref/refsu45.html
@@ -62,7 +65,7 @@ type
       d17 = I >= I;
       d18 = I = I;
   end;
-  generic TOther<const I> = record
+  generic TOther<const I: integer> = record
     procedure DoThis(param: integer = I);
   end;
 
@@ -71,16 +74,5 @@ begin
   writeln(param, ' default:', I);
 end;
 
-var
-  t0: specialize TBinaryOp<100>;
-  t1: specialize TOther<100>;
 begin
-  //writeln(op.d0);
-  //writeln(op.d1);
-  //writeln(op.d2);
-  //writeln(op.d3:1:1);
-  //writeln(op.d4);
-  //writeln(op.d5);
-  //writeln(op.d6);
-  //writeln(op.d7);
 end.

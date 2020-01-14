@@ -336,13 +336,6 @@ implementation
             end;
           constnil :
             p1:=cnilnode.create;
-          { constundefined is a placeholder for unrestricted generic const params
-            so we just treat it as a nil node. }
-          constundefined :
-            begin
-              p1:=cnilnode.create;
-              p1.resultdef:=p.constdef;
-            end;
           constguid :
             begin
               if sp_generic_para in p.symoptions then

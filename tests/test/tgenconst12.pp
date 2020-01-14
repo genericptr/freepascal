@@ -1,14 +1,12 @@
 {$mode objfpc}
+{
+  test def compare with specialized types
+}
 program tgenconst12;
 
 type
-  generic TTest<const U> = class
-  		class procedure DoThis;
+  generic TTest<const U: integer> = class
   end;
-
-class procedure TTest.DoThis;
-begin
-end;
 
 type
 	ATest = specialize TTest<100>;

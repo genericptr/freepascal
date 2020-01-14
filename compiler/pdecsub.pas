@@ -675,7 +675,7 @@ implementation
               for i:=0 to genericparams.count-1 do
                 begin
                   sym:=ttypesym(genericparams[i]);
-                  if tstoreddef(sym.typedef).is_registered then
+                  if (sym.typ<>constsym) and tstoreddef(sym.typedef).is_registered then
                     begin
                       sym.typedef.free;
                       sym.typedef:=nil;

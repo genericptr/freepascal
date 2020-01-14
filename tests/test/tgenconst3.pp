@@ -1,5 +1,8 @@
 {$mode objfpc}
 {$modeswitch advancedrecords}
+{
+  test integer constants in static array ranges
+}
 program tgenconst3;
 
 type

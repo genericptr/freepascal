@@ -1,9 +1,14 @@
 {$mode objfpc}
+{
+	test all possible constants
+}
 program tgenconst1;
 
 type
-	kNames = set of (Blaise,Pascal);
+	TEnums = (Blaise, Pascal);
+	kNames = set of TEnums;
 	kChars = set of char;
+ 
 type
 	generic TBoolean<const U: boolean> = record end;
 	generic TString<const U: string> = record end;
@@ -12,7 +17,7 @@ type
 	generic TChar<const U: char> = record end;
 	generic TByte<const U: byte> = record end;
 	generic TQWord<const U: QWord> = record end;
-	generic TUndefined<const U> = record end;
+	generic TEnum<const U: TEnums> = record end;
 	generic TNames<const U: kNames> = record end;
 	generic TChars<const U: kChars> = record end;
 	generic TPointer<const U: pointer> = record end;
@@ -24,7 +29,7 @@ var
 	d: specialize TInteger<10>;
 	e: specialize TByte<255>;
 	f: specialize TChar<'a'>;
-	g: specialize TUndefined<nil>;
+	g: specialize TEnum<Pascal>;
 	h: specialize TNames<[Blaise,Pascal]>;
 	i: specialize TChars<['a','b']>;
 	j: specialize TQWord<10>;

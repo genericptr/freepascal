@@ -1,12 +1,12 @@
 {%FAIL}
 {$mode objfpc}
-{$modeswitch advancedrecords}
+{
+  test undefined constants which must be typed
+}
 program tgenconst18;
 
 type
-  generic TInt<const I: string> = record
-    const c = I div I;
-  end;
+	generic TUndefined<const U> = record end;
 
 begin
 end.

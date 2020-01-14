@@ -1,5 +1,8 @@
 {%FAIL}
 {$mode objfpc}
+{
+  test type mismatch when specializing constant values
+}
 program tgenconst7;
 
 type

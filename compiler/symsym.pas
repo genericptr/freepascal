@@ -2343,12 +2343,12 @@ implementation
          constdef:=carraydef.getreusable(cwidechartype,getlengthwidestring(pw));
          value.len:=getlengthwidestring(pw);
       end;
-
+    
     constructor tconstsym.create_undefined(const n : string;def: tdef);
       begin
         inherited create(constsym,n,true);
         fillchar(value, sizeof(value), #0);
-        consttyp:=constundefined;
+        consttyp:=constnone;
         constdef:=def;
       end;
 
@@ -2423,8 +2423,7 @@ implementation
                new(pguid(value.valueptr));
                ppufile.getdata(value.valueptr^,sizeof(tguid));
              end;
-           constnil,
-           constundefined :
+           constnil:
              ppufile.getderef(constdefderef);
            else
              Message1(unit_f_ppu_invalid_entry,tostr(ord(consttyp)));
@@ -2456,7 +2455,7 @@ implementation
       begin
         inherited;
         case consttyp  of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid,constundefined:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
             constdefderef.build(constdef);
           constwstring:
             ;
@@ -2469,7 +2468,7 @@ implementation
     procedure tconstsym.deref;
       begin
         case consttyp of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid,constundefined:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
             constdef:=tdef(constdefderef.resolve);
           constwstring:
             constdef:=carraydef.getreusable(cwidechartype,getlengthwidestring(pcompilerwidestring(value.valueptr)));
@@ -2484,8 +2483,7 @@ implementation
          inherited ppuwrite(ppufile);
          ppufile.putbyte(byte(consttyp));
          case consttyp of
-           constnil,
-           constundefined :
+           constnil:
              ppufile.putderef(constdefderef);
            constord :
              begin

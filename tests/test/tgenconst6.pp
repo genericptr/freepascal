@@ -1,13 +1,16 @@
 {$mode delphi}
+{
+  test delphi mode
+}
 program tgenconst6;
 
 type
-	TList<T;const U> = class
+	TList<T; const U: integer> = class
 		list: array[0..U-1] of T;
 		function capacity: integer;
 	end;
 
-function TList<T,U>.capacity: integer;
+function TList<T; const U: integer>.capacity: integer;
 begin
 	result := U;	
 end;	

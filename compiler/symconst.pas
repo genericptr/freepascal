@@ -696,8 +696,7 @@ type
   tconsttyp = (constnone,
     constord,conststring,constreal,
     constset,constpointer,constnil,
-    constresourcestring,constwstring,constguid,
-    constundefined
+    constresourcestring,constwstring,constguid
   );
 
   { RTTI information to store }

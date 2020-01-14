@@ -1,4 +1,7 @@
 {$mode objfpc}
+{
+	test nested generic records with constants
+}
 program tgenconst5;
 
 type
