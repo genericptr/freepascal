@@ -1367,6 +1367,7 @@ uses
         is_const:=false;
         last_is_const:=false;
         last_token:=NOTOKEN;
+        last_type_pos:=current_filepos;
         repeat
           if try_to_consume(_CONST) then
             begin
@@ -1383,14 +1384,14 @@ uses
                   { last param was type without semicolon terminator }
                   if (result.count>0) and not last_is_const and (last_token<>_SEMICOLON) then
                     MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
-                  generictype:=pconstsym.create_undefined(orgpattern,cundefinedtype);
+                  generictype:=cconstsym.create_undefined(orgpattern,cundefinedtype);
                 end
               else
                 begin
                   { last param was const without semicolon terminator }
                   if (result.count>0) and last_is_const and (last_token<>_SEMICOLON) then
                     MessagePos2(last_type_pos,scan_f_syn_expected,arraytokeninfo[_SEMICOLON].str,arraytokeninfo[last_token].str);
-                  generictype:=ptypesym.create(orgpattern,cundefinedtype);
+                  generictype:=ctypesym.create(orgpattern,cundefinedtype);
                 end;
               { type parameters need to be added as strict private }
               generictype.visibility:=vis_strictprivate;

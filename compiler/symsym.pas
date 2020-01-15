@@ -2427,7 +2427,7 @@ implementation
     
     constructor tconstsym.create_undefined(const n : string;def: tdef);
       begin
-        inherited create(constsym,n,true);
+        inherited create(constsym,n);
         fillchar(value, sizeof(value), #0);
         consttyp:=constnone;
         constdef:=def;

@@ -1674,8 +1674,8 @@ const
      (mask:sp_generic_para;       str:'Generic Parameter'),
      (mask:sp_has_deprecated_msg; str:'Has Deprecated Message'),
      (mask:sp_generic_dummy;      str:'Generic Dummy'),
-     (mask:sp_explicitrename;     str:'Explicit Rename')
-     (mask:sp_generic_const;      str:'Generic Constant Parameter'),
+     (mask:sp_explicitrename;     str:'Explicit Rename'),
+     (mask:sp_generic_const;      str:'Generic Constant Parameter')
   );
 var
   symoptions : tsymoptions;
