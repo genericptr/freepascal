@@ -113,9 +113,6 @@ unit cpubase;
 
       VOLATILE_INTREGISTERS_DARWIN = [RS_R0..RS_R3,RS_R9,RS_R12..RS_R14];
 
-    type
-      totherregisterset = set of tregisterindex;
-
 {*****************************************************************************
                           Instruction post fixes
 *****************************************************************************}
@@ -368,6 +365,9 @@ unit cpubase;
     function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
+    { Checks if Subset is a subset of c (e.g. "less than" is a subset of "less than or equal" }
+    function condition_in(const Subset, c: TAsmCond): Boolean;
+
     procedure shifterop_reset(var so : tshifterop); {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function is_pc(const r : tregister) : boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
@@ -377,8 +377,11 @@ unit cpubase;
       doesn't handle ROR_C detection }
     function is_thumb32_imm(d : aint) : boolean;
     function split_into_shifter_const(value : aint;var imm1: dword; var imm2: dword):boolean;
-    function is_continuous_mask(d : aint;var lsb, width: byte) : boolean;
+    function is_continuous_mask(d : aword;var lsb, width: byte) : boolean;
     function dwarf_reg(r:tregister):shortint;
+    function dwarf_reg_no_error(r:tregister):shortint;
+    function eh_return_data_regno(nr: longint): longint;
+
 
     function IsIT(op: TAsmOp) : boolean;
     function GetITLevels(op: TAsmOp) : longint;
@@ -415,8 +418,11 @@ unit cpubase;
           R_MMREGISTER:
             begin
               case s of
+                { records passed in MM registers }
+                OS_32,
                 OS_F32:
                   cgsize2subreg:=R_SUBFS;
+                OS_64,
                 OS_F64:
                   cgsize2subreg:=R_SUBFD;
                 else
@@ -537,6 +543,26 @@ unit cpubase;
       end;
 
 
+    { Checks if Subset is a subset of c (e.g. "less than" is a subset of "less than or equal" }
+    function condition_in(const Subset, c: TAsmCond): Boolean;
+      begin
+        Result := (c = C_None) or conditions_equal(Subset, c);
+
+        { Please update as necessary. [Kit] }
+        if not Result then
+          case Subset of
+            C_EQ:
+              Result := (c in [C_GE, C_LE]);
+            C_LT:
+              Result := (c in [C_LE]);
+            C_GT:
+              Result := (c in [C_GE]);
+            else
+              Result := False;
+          end;
+      end;
+
+
     function is_shifter_const(d : aint;var imm_shift : byte) : boolean;
       var
          i : longint;
@@ -609,7 +635,7 @@ unit cpubase;
           end;
       end;
     
-    function is_continuous_mask(d : aint;var lsb, width: byte) : boolean;
+    function is_continuous_mask(d : aword;var lsb, width: byte) : boolean;
       var
         msb : byte;
       begin
@@ -618,7 +644,7 @@ unit cpubase;
         
         width:=msb-lsb+1;
         
-        result:=(lsb<>255) and (msb<>255) and ((((1 shl (msb-lsb+1))-1) shl lsb) = d);
+        result:=(lsb<>255) and (msb<>255) and (aword(((1 shl (msb-lsb+1))-1) shl lsb) = d);
       end;
 
 
@@ -652,6 +678,19 @@ unit cpubase;
         result:=regdwarf_table[findreg_by_number(r)];
         if result=-1 then
           internalerror(200603251);
+      end;
+
+    function dwarf_reg_no_error(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+      end;
+
+    function eh_return_data_regno(nr: longint): longint;
+      begin
+        if (nr>=0) and (nr<2) then
+          result:=nr
+        else
+          result:=-1;
       end;
 
       { Low part of 64bit return value }
@@ -758,9 +797,11 @@ unit cpubase;
               doublerec:=tcompdoublerec(NtoLE(QWord(doublerec)));
               Result:=(doublerec.bytes[0]=0) and (doublerec.bytes[1]=0) and (doublerec.bytes[2]=0) and
                       (doublerec.bytes[3]=0) and (doublerec.bytes[4]=0) and (doublerec.bytes[5]=0) and
-                      ((((doublerec.bytes[6] and $7f)=$40) and ((doublerec.bytes[7] and $c0)=0)) or
-                       (((doublerec.bytes[6] and $7f)=$3f) and ((doublerec.bytes[7] and $c0)=$c0)));
+                      ((((doublerec.bytes[6] and $c0)=$0) and ((doublerec.bytes[7] and $7f)=$40)) or
+                       (((doublerec.bytes[6] and $c0)=$c0) and ((doublerec.bytes[7] and $7f)=$3f)));
             end;
+          else
+            ;
         end;
       end;
 

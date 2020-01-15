@@ -29,7 +29,7 @@ interface
     uses
       cclasses,
       node,cpubase,
-      symtype,symbase,symdef,symsym,
+      symconst,symtype,symbase,symdef,symsym,
       optloop;
 
     type
@@ -68,6 +68,10 @@ interface
           procedure derefimpl;override;
           procedure insertintolist(l : tnodelist);override;
           procedure printnodetree(var t:text);override;
+{$ifdef DEBUG_NODE_XML}
+          procedure XMLPrintNodeInfo(var T: Text); override;
+          procedure XMLPrintNodeTree(var T: Text); override;
+{$endif DEBUG_NODE_XML}
           function docompare(p: tnode): boolean; override;
        end;
 
@@ -106,6 +110,7 @@ interface
           constructor create(l,r,_t1,_t2 : tnode;back : boolean);virtual;reintroduce;
           function pass_typecheck:tnode;override;
           function pass_1 : tnode;override;
+          function makewhileloop : tnode;
           function simplify(forinline : boolean) : tnode;override;
        end;
        tfornodeclass = class of tfornode;
@@ -138,6 +143,42 @@ interface
        private
           labelnodeidx : longint;
        public
+          { * Set when creating the gotonode (since that's all we know at that
+              point).
+            * Used in pass_typecheck to find the corresponding labelnode (when a
+              labelnode is created for a tlabelsym, the label assigns itself to
+              the "code" field of the labelsym), which is then assigned to the
+              labelnode field
+            * After this, the labelsym is (and must) never be used anymore, and
+              instead the labelnode must always be used. The reason is that the
+              labelsym may not be owned by anything, and will be freed by the
+              label node when it gets freed
+            * The above is the reason why the labelsym field does not get copied
+              by tgotonode.dogetcopy, but instead the copy of the labelnode gets
+              tracked (both the labelnode and its goto nodes must always all be
+              copied).
+
+            The labelnode itself will not copy the labelsym either in dogetcopy.
+            Instead, since the link between the gotos and the labels gets
+            tracked via node tree references, the label node will generate a new
+            asmlabel on the fly and the goto node will get it from there (if the
+            goto node gets processed before the label node has been processed,
+            it will ask the label node to generate the asmsymbol at that point).
+
+            The original tlabelsym will get emitted only for the original
+            label node. It is only actually used if there is a reference to it
+            from
+              * an inline assembly block. Since inline assembly blocks cannot be
+                inlined at this point, it doesn't matter that this would break
+                in case the node gets copied
+              * global goto/label. Inlining is not supported for these, so no
+                problem here either for now.
+              * a load node (its symtableentry field). Since the symtableentry
+                of loadnodes is always expected to be valid, we cannot do like
+                with the goto nodes. Instead, we will create a new labelsym
+                when performing a dogetcopy of such a load node and assign this
+                labelsym to the copied labelnode (and vice versa)
+          }
           labelsym : tlabelsym;
           labelnode : tlabelnode;
           exceptionblock : integer;
@@ -189,15 +230,17 @@ interface
        end;
        ttryexceptnodeclass = class of ttryexceptnode;
 
-       ttryfinallynode = class(tloopnode)
+       { the third node is to store a copy of the finally code for llvm:
+         it needs one copy to execute in case an exception occurs, and
+         one in case no exception occurs }
+       ttryfinallynode = class(ttertiarynode)
           implicitframe : boolean;
           constructor create(l,r:tnode);virtual;reintroduce;
-          constructor create_implicit(l,r,_t1:tnode);virtual;
+          constructor create_implicit(l,r:tnode);virtual;
           function pass_typecheck:tnode;override;
           function pass_1 : tnode;override;
           function simplify(forinline:boolean): tnode;override;
        protected
-          function create_finalizer_procdef: tprocdef;
           procedure adjust_estimated_stack_size; virtual;
        end;
        ttryfinallynodeclass = class of ttryfinallynode;
@@ -238,14 +281,17 @@ interface
        enumerator_get, enumerator_move: tprocdef; enumerator_current: tpropertysym): tnode;
     function create_for_in_loop(hloopvar, hloopbody, expr: tnode): tnode;
 
+    { converts all for nodes in the tree into while nodes,
+      returns true if something was converted }
+    function ConvertForLoops(var n : tnode) : Boolean;
+
 implementation
 
     uses
       globtype,systems,constexp,compinnr,
-      cutils,verbose,globals,
-      symconst,symtable,paramgr,defcmp,defutil,htypechk,pass_1,
+      cutils,verbose,globals,ppu,
+      symtable,paramgr,defcmp,defutil,htypechk,pass_1,
       ncal,nadd,ncon,nmem,nld,ncnv,nbas,nutils,ninl,nset,ngenutil,
-      pdecsub,
     {$ifdef state_tracking}
       nstate,
     {$endif}
@@ -472,7 +518,7 @@ implementation
           one }
         hp:=cwhilerepeatnode.create(
           { repeat .. until false }
-          cordconstnode.create(0,pasbool8type,false),innerloop,false,true);
+          cordconstnode.create(0,pasbool1type,false),innerloop,false,true);
         addstatement(outerloopbodystatement,hp);
 
         { create the outer repeat/until and add it to the the main body }
@@ -752,7 +798,7 @@ implementation
             enum_get_params:=ccallparanode.create(expr.getcopy,nil);
             enum_get:=ccallnode.create(enum_get_params, tprocsym(enumerator_get.procsym), nil, nil, [],nil);
             tcallnode(enum_get).procdefinition:=enumerator_get;
-            addsymref(enumerator_get.procsym);
+            addsymref(enumerator_get.procsym,enumerator_get);
           end
         else
           enum_get:=ccallnode.create(nil, tprocsym(enumerator_get.procsym), enumerator_get.owner, expr.getcopy, [],nil);
@@ -952,6 +998,28 @@ implementation
         current_filepos:=storefilepos;
       end;
 
+
+    function _ConvertForLoops(var n: tnode; arg: pointer): foreachnoderesult;
+      var
+        hp : tnode;
+      begin
+        Result:=fen_false;
+        if n.nodetype=forn then
+          begin
+            Result:=fen_true;
+            hp:=n;
+            n:=tfornode(n).makewhileloop;
+            do_firstpass(n);
+            hp.Free;
+          end;
+      end;
+
+
+    function ConvertForLoops(var n : tnode) : boolean;
+      begin
+        result:=foreachnodestatic(pm_postprocess,n,@_ConvertForLoops,nil);
+      end;
+
 {****************************************************************************
                                  TLOOPNODE
 *****************************************************************************}
@@ -979,7 +1047,7 @@ implementation
         inherited ppuload(t,ppufile);
         t1:=ppuloadnode(ppufile);
         t2:=ppuloadnode(ppufile);
-        ppufile.getsmallset(loopflags);
+        ppufile.getset(tppuset1(loopflags));
       end;
 
 
@@ -988,7 +1056,7 @@ implementation
         inherited ppuwrite(ppufile);
         ppuwritenode(ppufile,t1);
         ppuwritenode(ppufile,t2);
-        ppufile.putsmallset(loopflags);
+        ppufile.putset(tppuset1(loopflags));
       end;
 
 
@@ -1051,6 +1119,119 @@ implementation
         writeln(t,printnodeindention,')');
       end;
 
+{$ifdef DEBUG_NODE_XML}
+    procedure TLoopNode.XMLPrintNodeInfo(var T: Text);
+      var
+        i: TLoopFlag;
+        First: Boolean;
+      begin
+        inherited XMLPrintNodeInfo(T);
+
+        First := True;
+        for i := Low(TLoopFlag) to High(TLoopFlag) do
+          if i in loopflags then
+            begin
+              if First then
+                begin
+                  Write(T, ' loopflags="', i);
+                  First := False;
+                end
+              else
+                Write(T, ',', i)
+            end;
+        if not First then
+          Write(T, '"');
+      end;
+
+    procedure TLoopNode.XMLPrintNodeTree(var T: Text);
+      begin
+        Write(T, PrintNodeIndention, '<', nodetype2str[nodetype]);
+        XMLPrintNodeInfo(T);
+        WriteLn(T, '>');
+        PrintNodeIndent;
+        if Assigned(Left) then
+          begin
+            if nodetype = forn then
+              WriteLn(T, PrintNodeIndention, '<counter>')
+            else
+              WriteLn(T, PrintNodeIndention, '<condition>');
+            PrintNodeIndent;
+            XMLPrintNode(T, Left);
+            PrintNodeUnindent;
+            if nodetype = forn then
+              WriteLn(T, PrintNodeIndention, '</counter>')
+            else
+              WriteLn(T, PrintNodeIndention, '</condition>');
+          end;
+
+        if Assigned(Right) then
+          begin
+            case nodetype of
+              ifn:
+                WriteLn(T, PrintNodeIndention, '<then>');
+              forn:
+                WriteLn(T, PrintNodeIndention, '<first>');
+              else
+                WriteLn(T, PrintNodeIndention, '<right>');
+            end;
+            PrintNodeIndent;
+            XMLPrintNode(T, Right);
+            PrintNodeUnindent;
+            case nodetype of
+              ifn:
+                WriteLn(T, PrintNodeIndention, '</then>');
+              forn:
+                WriteLn(T, PrintNodeIndention, '</first>');
+              else
+                WriteLn(T, PrintNodeIndention, '</right>');
+            end;
+          end;
+
+        if Assigned(t1) then
+          begin
+            case nodetype of
+              ifn:
+                WriteLn(T, PrintNodeIndention, '<else>');
+              forn:
+                WriteLn(T, PrintNodeIndention, '<last>');
+              else
+                WriteLn(T, PrintNodeIndention, '<t1>');
+            end;
+            PrintNodeIndent;
+            XMLPrintNode(T, t1);
+            PrintNodeUnindent;
+            case nodetype of
+              ifn:
+                WriteLn(T, PrintNodeIndention, '</else>');
+              forn:
+                WriteLn(T, PrintNodeIndention, '</last>');
+              else
+                WriteLn(T, PrintNodeIndention, '</t1>');
+            end;
+          end;
+
+        if Assigned(t2) then
+          begin
+
+            if nodetype <> forn then
+              begin
+                WriteLn(T, PrintNodeIndention, '<loop>');
+                PrintNodeIndent;
+              end;
+
+            XMLPrintNode(T, t2);
+
+            if nodetype <> forn then
+              begin
+                PrintNodeUnindent;
+                WriteLn(T, PrintNodeIndention, '</loop>');
+              end;
+          end;
+
+        PrintNodeUnindent;
+        WriteLn(T, PrintNodeIndention, '</', nodetype2str[nodetype], '>');
+      end;
+{$endif DEBUG_NODE_XML}
 
     function tloopnode.docompare(p: tnode): boolean;
       begin
@@ -1105,7 +1286,7 @@ implementation
 
          if not(is_boolean(left.resultdef)) and
            not(is_typeparam(left.resultdef)) then
-             inserttypeconv(left,pasbool8type);
+             inserttypeconv(left,pasbool1type);
 
          { Give warnings for code that will never be executed for
            while false do }
@@ -1339,7 +1520,7 @@ implementation
             end;
         if not is_constboolnode(condition) then
             aktstate.store_fact(condition,
-             cordconstnode.create(byte(checknegate),pasbool8type,true))
+             cordconstnode.create(byte(checknegate),pasbool1type,true))
         else
             condition.destroy;
     end;
@@ -1420,7 +1601,7 @@ implementation
 
          if not(is_boolean(left.resultdef)) and
            not(is_typeparam(left.resultdef)) then
-             inserttypeconv(left,pasbool8type);
+             inserttypeconv(left,pasbool1type);
 
          result:=internalsimplify(not(nf_internal in flags));
       end;
@@ -1548,6 +1729,20 @@ implementation
 
 
     function tfornode.pass_1 : tnode;
+      begin
+        result:=nil;
+        expectloc:=LOC_VOID;
+
+        firstpass(left);
+        firstpass(right);
+        firstpass(t1);
+
+        if assigned(t2) then
+          firstpass(t2);
+      end;
+
+
+    function tfornode.makewhileloop : tnode;
       var
         ifblock,loopblock : tblocknode;
         ifstatements,statements,loopstatements : tstatementnode;
@@ -1562,6 +1757,7 @@ implementation
         usetotemp : boolean;
         { if the lower bound is not constant, it must be store in a temp before calculating the upper bound }
         usefromtemp : boolean;
+        storefilepos: tfileposinfo;
 
       procedure iterate_counter(var s : tstatementnode;fw : boolean);
         begin
@@ -1583,23 +1779,10 @@ implementation
 
       begin
         result:=nil;
-        expectloc:=LOC_VOID;
-        fromtemp:=nil;
         totemp:=nil;
-
-        firstpass(left);
-        firstpass(right);
-        firstpass(t1);
-
-        if assigned(t2) then
-          begin
-            firstpass(t2);
-            if codegenerror then
-              exit;
-          end;
-
-        { first set the to value
-          because the count var can be in the expression ! }
+        fromtemp:=nil;
+        storefilepos:=current_filepos;
+        current_filepos:=fileinfo;
         do_loopvar_at_end:=(lnf_dont_mind_loopvar_on_exit in loopflags)
         { if the loop is unrolled and there is a jump into the loop,
           then we can't do the trick with incrementing the loop var only at the
@@ -1738,6 +1921,7 @@ implementation
             addstatement(ifstatements,cwhilerepeatnode.create(caddnode.create_internal(cond,left.getcopy,t1.getcopy),loopblock,false,true));
             addstatement(statements,ifblock);
           end;
+        current_filepos:=storefilepos;
       end;
 
 
@@ -1773,8 +1957,9 @@ implementation
 
     function texitnode.pass_typecheck:tnode;
       var
-        pd: tprocdef;
         newstatement : tstatementnode;
+        ressym: tsym;
+        resdef: tdef;
       begin
         result:=nil;
         newstatement:=nil;
@@ -1790,16 +1975,13 @@ implementation
           because the code to this that we add in tnodeutils.wrap_proc_body()
           gets inserted before the exit label to which this node will jump }
         if (target_info.system in systems_fpnestedstruct) and
-           not(nf_internal in flags) then
+           not(nf_internal in flags) and
+           current_procinfo.procdef.get_funcretsym_info(ressym,resdef) and
+           (tabstractnormalvarsym(ressym).inparentfpstruct) then
           begin
-            pd:=current_procinfo.procdef;
-            if assigned(pd.funcretsym) and
-               tabstractnormalvarsym(pd.funcretsym).inparentfpstruct then
-              begin
-                if not assigned(result) then
-                  result:=internalstatements(newstatement);
-                cnodeutils.load_parentfpstruct_nested_funcret(current_procinfo.procdef,newstatement);
-              end;
+            if not assigned(result) then
+              result:=internalstatements(newstatement);
+            cnodeutils.load_parentfpstruct_nested_funcret(ressym,newstatement);
           end;
         if assigned(result) then
           begin
@@ -1973,7 +2155,6 @@ implementation
                     if assigned(labelsym.jumpbuf) then
                       begin
                         labelsym.nonlocal:=true;
-                        exclude(current_procinfo.procdef.procoptions,po_inline);
                         result:=ccallnode.createintern('fpc_longjmp',
                           ccallparanode.create(cordconstnode.create(1,sinttype,true),
                           ccallparanode.create(cloadnode.create(labelsym.jumpbuf,labelsym.jumpbuf.owner),
@@ -2011,8 +2192,11 @@ implementation
           end;
 
         p.labelsym:=labelsym;
+        { do not copy the label node here as we do not know if the label node is part of the tree or not,
+          this will be fixed after the copying in node.setuplabelnode: if the labelnode has copiedto set,
+          labelnode of the goto node is update }
         if assigned(labelnode) then
-          p.labelnode:=tlabelnode(labelnode.dogetcopy)
+          p.labelnode:=labelnode
         else
           begin
             { don't trigger IE when there was already an error, i.e. the
@@ -2107,12 +2291,6 @@ implementation
         expectloc:=LOC_VOID;
 
         include(current_procinfo.flags,pi_has_label);
-
-        if assigned(labsym) and labsym.nonlocal then
-          begin
-            include(current_procinfo.flags,pi_has_interproclabel);
-            exclude(current_procinfo.procdef.procoptions,po_inline);
-          end;
 
         if assigned(left) then
           firstpass(left);
@@ -2213,6 +2391,10 @@ implementation
                 current_addr:=clabelnode.create(cnothingnode.create,clabelsym.create('$raiseaddr'));
                 addstatement(statements,current_addr);
                 right:=caddrnode.create(cloadnode.create(current_addr.labsym,current_addr.labsym.owner));
+
+                { raise address off by one so we are for sure inside the action area for the raise }
+                if tf_use_psabieh in target_info.flags then
+                  right:=caddnode.create_internal(addn,right,cordconstnode.create(1,sizesinttype,false));
               end;
 
             raisenode:=ccallnode.createintern('fpc_raiseexception',
@@ -2299,14 +2481,16 @@ implementation
 
     constructor ttryfinallynode.create(l,r:tnode);
       begin
-        inherited create(tryfinallyn,l,r,nil,nil);
+        inherited create(tryfinallyn,l,r,nil);
+        third:=nil;
         implicitframe:=false;
       end;
 
 
-    constructor ttryfinallynode.create_implicit(l,r,_t1:tnode);
+    constructor ttryfinallynode.create_implicit(l,r:tnode);
       begin
-        inherited create(tryfinallyn,l,r,_t1,nil);
+        inherited create(tryfinallyn,l,r,nil);
+        third:=nil;
         implicitframe:=true;
       end;
 
@@ -2324,12 +2508,10 @@ implementation
         // "except block" is "used"? (JM)
         set_varstate(right,vs_readwritten,[vsf_must_be_valid]);
 
-        { special finally block only executed when there was an exception }
-        if assigned(t1) then
+        if assigned(third) then
           begin
-            typecheckpass(t1);
-            // "finally block" is "used"? (JM)
-            set_varstate(t1,vs_readwritten,[vsf_must_be_valid]);
+            typecheckpass(third);
+            set_varstate(third,vs_readwritten,[vsf_must_be_valid]);
           end;
       end;
 
@@ -2341,9 +2523,8 @@ implementation
         firstpass(left);
 
         firstpass(right);
-
-        if assigned(t1) then
-          firstpass(t1);
+        if assigned(third) then
+          firstpass(third);
 
         include(current_procinfo.flags,pi_do_call);
 
@@ -2369,53 +2550,6 @@ implementation
            right:=nil;
          end;
      end;
-
-
-    var
-      seq: longint=0;
-
-    function ttryfinallynode.create_finalizer_procdef: tprocdef;
-      var
-        st:TSymTable;
-        checkstack: psymtablestackitem;
-        oldsymtablestack: tsymtablestack;
-        sym:tprocsym;
-      begin
-        { get actual procedure symtable (skip withsymtables, etc.) }
-        st:=nil;
-        checkstack:=symtablestack.stack;
-        while assigned(checkstack) do
-          begin
-            st:=checkstack^.symtable;
-            if st.symtabletype in [staticsymtable,globalsymtable,localsymtable] then
-              break;
-            checkstack:=checkstack^.next;
-          end;
-        { Create a nested procedure, even from main_program_level.
-          Furthermore, force procdef and procsym into the same symtable
-          (by default, defs are registered with symtablestack.top which may be
-          something temporary like exceptsymtable - in that case, procdef can be
-          destroyed before procsym, leaving invalid pointers). }
-        oldsymtablestack:=symtablestack;
-        symtablestack:=nil;
-        result:=cprocdef.create(max(normal_function_level,st.symtablelevel)+1,true);
-        symtablestack:=oldsymtablestack;
-        st.insertdef(result);
-        result.struct:=current_procinfo.procdef.struct;
-        { tabstractprocdef constructor sets po_delphi_nested_cc whenever
-          nested procvars modeswitch is active. We must be independent of this switch. }
-        exclude(result.procoptions,po_delphi_nested_cc);
-        result.proctypeoption:=potype_exceptfilter;
-        handle_calling_convention(result);
-        sym:=cprocsym.create('$fin$'+tostr(seq));
-        st.insert(sym);
-        inc(seq);
-
-        result.procsym:=sym;
-        proc_add_definition(result);
-        result.forwarddef:=false;
-        result.aliasnames.insert(result.mangledname);
-      end;
 
 
     procedure ttryfinallynode.adjust_estimated_stack_size;
@@ -2485,11 +2619,6 @@ implementation
       begin
          result:=nil;
          include(current_procinfo.flags,pi_do_call);
-         { Loads exception class VMT, therefore may need GOT
-           (generic code only; descendants may need to avoid this check) }
-         if (cs_create_pic in current_settings.moduleswitches) and
-           (tf_pic_uses_got in target_info.flags) then
-           include(current_procinfo.flags,pi_needs_got);
          expectloc:=LOC_VOID;
          if assigned(left) then
            firstpass(left);

@@ -261,10 +261,6 @@ unit cgcpu;
                                 reference_reset_symbol(tmpref,dirref.symbol,0,sizeof(pint),[]);
                                 tmpref.refaddr:=addr_pic;
                                 tmpref.base:=current_procinfo.got;
-{$ifdef EXTDEBUG}
-				if not (pi_needs_got in current_procinfo.flags) then
-				  Comment(V_warning,'pi_needs_got not included');
-{$endif EXTDEBUG}
                                 include(current_procinfo.flags,pi_needs_got);
                                 list.concat(taicpu.op_ref(A_PUSH,S_L,tmpref));
                               end
@@ -323,6 +319,7 @@ unit cgcpu;
                   internal_restore_regs(list,true);
                 if (current_procinfo.procdef.proctypeoption=potype_exceptfilter) then
                   list.concat(Taicpu.op_reg(A_POP,tcgsize2opsize[OS_ADDR],NR_FRAME_POINTER_REG));
+                current_asmdata.asmcfi.cfa_def_cfa_offset(list,sizeof(pint));
               end
             else
               begin
@@ -334,9 +331,7 @@ unit cgcpu;
           end;
 
         { return from proc }
-        if (po_interrupt in current_procinfo.procdef.procoptions) and
-           { this messes up stack alignment }
-           (target_info.stackalign=4) then
+        if po_interrupt in current_procinfo.procdef.procoptions then
           begin
             if assigned(current_procinfo.procdef.funcretloc[calleeside].location) and
                (current_procinfo.procdef.funcretloc[calleeside].location^.loc=LOC_REGISTER) then
@@ -517,6 +512,8 @@ unit cgcpu;
           S_B : list.concat(Taicpu.Op_none(A_MOVSB,S_NO));
           S_W : list.concat(Taicpu.Op_none(A_MOVSW,S_NO));
           S_L : list.concat(Taicpu.Op_none(A_MOVSD,S_NO));
+          else
+            internalerror(2019050901);
         end;
         ungetcpuregister(list,NR_EDI);
         ungetcpuregister(list,NR_ECX);
@@ -541,14 +538,16 @@ unit cgcpu;
         tmpreg: TRegister;
       begin
         { allocate PIC register }
-        if (cs_create_pic in current_settings.moduleswitches) and
-           (tf_pic_uses_got in target_info.flags) and
-           (pi_needs_got in current_procinfo.flags) then
+        if (tf_pic_uses_got in target_info.flags) and
+          (pi_needs_got in current_procinfo.flags) then
           begin
             if not (target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
               begin
                 { Use ECX as a temp register by default }
-                tmpreg:=NR_ECX;
+                if current_procinfo.got = NR_EBX then
+                  tmpreg:=NR_EBX
+                else
+                  tmpreg:=NR_ECX;
                 { Allocate registers used for parameters to make sure they
                   never allocated during this PIC init code }
                 for i:=0 to current_procinfo.procdef.paras.Count - 1 do
@@ -873,6 +872,8 @@ unit cgcpu;
               cg.ungetcpuregister(list,NR_ECX);
               exit;
             end;
+          else
+            ;
         end;
         get_64bit_ops(op,op1,op2);
         if op in [OP_ADD,OP_SUB] then
@@ -940,6 +941,8 @@ unit cgcpu;
                           list.concat(taicpu.op_const_reg(A_RCR,S_L,value,reg.reglo));
                           cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
                         end;
+                      else
+                        internalerror(2019050902);
                     end
                   else if value>31 then
                     case op of
@@ -1053,6 +1056,8 @@ unit cgcpu;
                           list.concat(taicpu.op_const_ref(A_RCR,S_L,value,tempref));
                           cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
                         end;
+                      else
+                        internalerror(2019050901);
                     end
                   else if value>31 then
                     case op of

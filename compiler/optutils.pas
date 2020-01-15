@@ -42,6 +42,7 @@ unit optutils;
     procedure SetNodeSucessors(p,last : tnode);
     procedure PrintDFAInfo(var f : text;p : tnode);
     procedure PrintIndexedNodeSet(var f : text;s : TIndexedNodeSet);
+
     { determines the optinfo.defsum field for the given node
       this field contains a sum of all expressions defined by
       all child expressions reachable through p
@@ -49,7 +50,13 @@ unit optutils;
     procedure CalcDefSum(p : tnode);
 
     { calculates/estimates the field execution weight of optinfo }
-    procedure CalcExecutionWeights(p : tnode;Initial : AWord = 100);
+    procedure CalcExecutionWeights(p : tnode;Initial : longint = 100);
+
+    { determines the optinfo.defsum field for the given node
+      this field contains a sum of all expressions defined by
+      all child expressions reachable through p
+    }
+    procedure CalcUseSum(p : tnode);
 
     { returns true, if n is a valid node and has life info }
     function has_life_info(n : tnode) : boolean;
@@ -318,11 +325,12 @@ unit optutils;
                 { raise never returns }
                 p.successor:=nil;
               end;
-            withn,
             tryexceptn,
             tryfinallyn,
             onn:
               internalerror(2007050501);
+            else
+              ;
           end;
         end;
 
@@ -335,12 +343,19 @@ unit optutils;
       end;
 
     var
-      sum : TDFASet;
+      defsum : TDFASet;
 
     function adddef(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         if assigned(n.optinfo) then
-          DFASetIncludeSet(sum,n.optinfo^.def);
+          begin
+            DFASetIncludeSet(defsum,n.optinfo^.def);
+            { for nodes itself do not necessarily expose the definition of the counter as
+              the counter might be undefined after the for loop, so include here the counter
+              explicitly }
+            if (n.nodetype=forn) and assigned(tfornode(n).left.optinfo) then
+              DFASetInclude(defsum,tfornode(n).left.optinfo^.index);
+          end;
         Result:=fen_false;
       end;
 
@@ -350,61 +365,78 @@ unit optutils;
         p.allocoptinfo;
         if not assigned(p.optinfo^.defsum) then
           begin
-            sum:=nil;
+            defsum:=nil;
             foreachnodestatic(pm_postprocess,p,@adddef,nil);
-            p.optinfo^.defsum:=sum;
+            p.optinfo^.defsum:=defsum;
           end;
       end;
 
+    var
+      usesum : TDFASet;
 
     function SetExecutionWeight(var n: tnode; arg: pointer): foreachnoderesult;
       var
-        Weight : AWord absolute arg;
+        Weight, CaseWeight : longint;
         i : Integer;
       begin
         Result:=fen_false;
         n.allocoptinfo;
+        Weight:=max(plongint(arg)^,1);
         case n.nodetype of
           casen:
             begin
               CalcExecutionWeights(tcasenode(n).left,Weight);
+              CaseWeight:=max(Weight div tcasenode(n).labelcnt,1);
               for i:=0 to tcasenode(n).blocks.count-1 do
-                CalcExecutionWeights(pcaseblock(tcasenode(n).blocks[i])^.statement,max(1,Weight div case_count_labels(tcasenode(n).labels)));
+                CalcExecutionWeights(pcaseblock(tcasenode(n).blocks[i])^.statement,CaseWeight);
 
-              CalcExecutionWeights(tcasenode(n).elseblock,max(1,Weight div case_count_labels(tcasenode(n).labels)));
+              CalcExecutionWeights(tcasenode(n).elseblock,CaseWeight);
               Result:=fen_norecurse_false;
             end;
           whilerepeatn:
             begin
-              CalcExecutionWeights(twhilerepeatnode(n).right,max(Weight,1)*8);
-              CalcExecutionWeights(twhilerepeatnode(n).left,max(Weight,1)*8);
+              CalcExecutionWeights(twhilerepeatnode(n).right,Weight*8);
+              CalcExecutionWeights(twhilerepeatnode(n).left,Weight*8);
               Result:=fen_norecurse_false;
             end;
           ifn:
             begin
               CalcExecutionWeights(tifnode(n).left,Weight);
-              CalcExecutionWeights(tifnode(n).right,max(Weight div 2,1));
-              CalcExecutionWeights(tifnode(n).t1,max(Weight div 2,1));
+              CalcExecutionWeights(tifnode(n).right,Weight div 2);
+              CalcExecutionWeights(tifnode(n).t1,Weight div 2);
               Result:=fen_norecurse_false;
             end;
           else
-{$push}
-{ The code below emits two warnings if ptruint and aword are the same type }
-{$warn 4044 off}
-{$warn 6018 off}
-            if ptruint(arg) > high(aword) then
-              n.optinfo^.executionweight:=high(AWord)
-            else
-              n.optinfo^.executionweight:=AWord(ptruint(arg));
-{$pop}
+            ;
         end;
+        n.optinfo^.executionweight:=Weight;
       end;
 
 
-    procedure CalcExecutionWeights(p : tnode;Initial : AWord = 100);
+    procedure CalcExecutionWeights(p : tnode;Initial : longint = 100);
       begin
         if assigned(p) then
-          foreachnodestatic(pm_postprocess,p,@SetExecutionWeight,Pointer(ptruint(Initial)));
+          foreachnodestatic(pm_postprocess,p,@SetExecutionWeight,Pointer(@Initial));
+      end;
+
+
+    function adduse(var n: tnode; arg: pointer): foreachnoderesult;
+      begin
+        if assigned(n.optinfo) then
+          DFASetIncludeSet(usesum,n.optinfo^.use);
+        Result:=fen_false;
+      end;
+
+
+    procedure CalcUseSum(p : tnode);
+      begin
+        p.allocoptinfo;
+        if not assigned(p.optinfo^.usesum) then
+          begin
+            usesum:=nil;
+            foreachnodestatic(pm_postprocess,p,@adduse,nil);
+            p.optinfo^.usesum:=usesum;
+          end;
       end;
 
 

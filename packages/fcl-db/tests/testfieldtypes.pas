@@ -112,7 +112,7 @@ type
     procedure TestErrorOnEmptyStatement;
     procedure TestExceptOnsecClose;
 
-    procedure TestServerFilter; // bug 15456
+    procedure TestServerFilter; // bug 15456, 35887
     procedure TestRowsAffected; // bug 9758
     procedure TestLocateNull;
     procedure TestLocateOnMoreRecords;
@@ -133,6 +133,8 @@ type
     procedure TestQueryAfterReconnect; // bug 16438
 
     procedure TestStringsReplace;
+    // Test SQLIte3 AlwaysUseBigInt, introduced after bug ID 36486.
+    Procedure TestAlwaysUseBigint;
   end;
 
 
@@ -2048,6 +2050,15 @@ begin
     Open;
     CheckTrue(CanModify, SQL.Text);
     Close;
+
+    // tests change of ServerFilter, while DataSet is opened and not all records were fetched
+    PacketRecords:=2;
+    ServerFilter:='ID>=1';
+    Open;
+    CheckEquals(1, FieldByName('ID').AsInteger);
+    ServerFilter:='ID>=21';
+    CheckEquals(21, FieldByName('ID').AsInteger);
+    Close;
   end;
 end;
 
@@ -2058,7 +2069,7 @@ begin
     begin
     Query2 := GetNDataset(0) as TSQLQuery;
 
-    AssertEquals(-1, Query.RowsAffected);
+    CheckEquals(-1, Query.RowsAffected, 'Inactive dataset');
     Connection.ExecuteDirect('create table FPDEV2 (' +
                               '  ID INT NOT NULL,  ' +
                               '  NAME VARCHAR(250),' +
@@ -2418,6 +2429,34 @@ begin
     inherited RunTest;
 end;
 
+Procedure TTestFieldTypes.TestAlwaysUseBigint;
+
+var
+  I : byte;
+
+begin
+  If SQLConnType<>sqlite3 then
+    Ignore('Test only for SQLite');
+  TSQLDBConnector(DBConnector).Connection.Params.Values['AlwaysUseBigint']:='1';
+
+  CreateTableWithFieldType(ftInteger,'INT');
+  TestFieldDeclaration(ftLargeInt,8);
+
+  for i := 0 to testIntValuesCount-1 do
+    TSQLDBConnector(DBConnector).Connection.ExecuteDirect('insert into FPDEV2 (FT) values (' + inttostr(testIntValues[i]) + ')');
+
+  with TSQLDBConnector(DBConnector).Query do
+    begin
+    Open;
+    for i := 0 to testIntValuesCount-1 do
+      begin
+      AssertEquals(testIntValues[i],fields[0].AsLargeInt);
+      Next;
+      end;
+    close;
+    end;
+    
+end;
 
 initialization
   // Only test if using sqldb

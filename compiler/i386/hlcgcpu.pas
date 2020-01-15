@@ -52,8 +52,6 @@ interface
       procedure g_intf_wrapper(list: TAsmList; procdef: tprocdef; const labelname: string; ioffset: longint);override;
     end;
 
-  procedure create_hlcodegen;
-
 implementation
 
   uses
@@ -198,6 +196,7 @@ implementation
         { Alloc EBX }
         getcpuregister(list, NR_PIC_OFFSET_REG);
         list.concat(taicpu.op_reg_reg(A_MOV,S_L,current_procinfo.got,NR_PIC_OFFSET_REG));
+        include(current_procinfo.flags,pi_needs_got);
       end;
     Result:=inherited a_call_name(list, pd, s, paras, forceresdef, weak);
     { Free EBX }
@@ -230,7 +229,7 @@ implementation
 
   procedure thlcgcpu.g_exception_reason_save(list: TAsmList; fromsize, tosize: tdef; reg: tregister; const href: treference);
     begin
-      if not paramanager.use_fixed_stack then
+      if not(paramanager.use_fixed_stack) and not(tf_use_psabieh in target_info.flags) then
         list.concat(Taicpu.op_reg(A_PUSH,tcgsize2opsize[def_cgsize(tosize)],reg))
       else
         inherited
@@ -239,7 +238,7 @@ implementation
 
   procedure thlcgcpu.g_exception_reason_save_const(list: TAsmList; size: tdef; a: tcgint; const href: treference);
     begin
-      if not paramanager.use_fixed_stack then
+      if not(paramanager.use_fixed_stack) and not(tf_use_psabieh in target_info.flags) then
         list.concat(Taicpu.op_const(A_PUSH,tcgsize2opsize[def_cgsize(size)],a))
       else
         inherited;
@@ -248,7 +247,7 @@ implementation
 
   procedure thlcgcpu.g_exception_reason_load(list: TAsmList; fromsize, tosize: tdef; const href: treference; reg: tregister);
     begin
-      if not paramanager.use_fixed_stack then
+      if not(paramanager.use_fixed_stack) and not(tf_use_psabieh in target_info.flags) then
         list.concat(Taicpu.op_reg(A_POP,tcgsize2opsize[def_cgsize(tosize)],reg))
       else
         inherited;
@@ -257,7 +256,7 @@ implementation
 
   procedure thlcgcpu.g_exception_reason_discard(list: TAsmList; size: tdef; href: treference);
     begin
-      if not paramanager.use_fixed_stack then
+      if not(paramanager.use_fixed_stack) and not(tf_use_psabieh in target_info.flags) then
         begin
           getcpuregister(list,NR_FUNCTION_RESULT_REG);
           list.concat(Taicpu.op_reg(A_POP,tcgsize2opsize[def_cgsize(size)],NR_FUNCTION_RESULT_REG));
@@ -395,7 +394,7 @@ implementation
       if make_global then
         List.concat(Tai_symbol.Createname_global(labelname,AT_FUNCTION,0,procdef))
       else
-        List.concat(Tai_symbol.Createname(labelname,AT_FUNCTION,0,procdef));
+        List.concat(Tai_symbol.Createname_hidden(labelname,AT_FUNCTION,0,procdef));
 
       { set param1 interface to self  }
       g_adjust_self_value(list,procdef,ioffset);
@@ -443,7 +442,7 @@ implementation
     end;
 
 
-  procedure create_hlcodegen;
+  procedure create_hlcodegen_cpu;
     begin
       hlcg:=thlcgcpu.create;
       create_codegen;
@@ -453,4 +452,5 @@ implementation
 
 begin
   chlcgobj:=thlcgcpu;
+  create_hlcodegen:=@create_hlcodegen_cpu;
 end.

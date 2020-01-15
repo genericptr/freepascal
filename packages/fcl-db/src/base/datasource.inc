@@ -73,6 +73,12 @@ Procedure TDataLink.CalcRange;
 var
     aMax, aMin: integer;
 begin
+  // During loading, dataset may not be set yet.
+  If (Dataset=Nil) then
+    begin
+    FFirstRecord:=0; 
+    exit;
+    end;
   aMin:= DataSet.FActiveRecord - FBufferCount + 1;
   If aMin < 0 Then aMin:= 0;
   aMax:= Dataset.FBufferCount - FBufferCount;
@@ -553,10 +559,21 @@ begin
 end;
 
 
-Function TDataSource.IsLinkedTo(ADataSet: TDataSet): Boolean;
+Function TDataSource.IsLinkedTo(ADataset: TDataSet): Boolean;
+
+var
+  DS: TDataSource;
 
 begin
   Result:=False;
+  Repeat
+    DS:=aDataset.GetDataSource;
+    Result:=(DS=Self);
+    if Assigned(DS) then
+      aDataSet := DS.DataSet
+    else
+      aDataSet := Nil;
+  Until Result or (aDataset=Nil)
 end;
 
 
@@ -609,8 +626,10 @@ begin
     End;
   If ADataset<>Nil Then
     begin
-    ADataset.RegisterDatasource(Self);
+    if IsLinkedTo(aDataset) then
+      DatabaseError(SErrCircularDataSourceReferenceNotAllowed,Self);
     FDataSet:=ADataset;
+    ADataset.RegisterDatasource(Self);
     ProcessEvent(deUpdateState,0);
     End;
 end;

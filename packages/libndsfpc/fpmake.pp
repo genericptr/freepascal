@@ -13,12 +13,13 @@ begin
 {$endif ALLPACKAGES}
 
     P:=AddPackage('libndsfpc');
+    P.ShortName := 'lnds';
     P.OSes:=[nds];
     P.CPUs:=[arm];
 {$ifdef ALLPACKAGES}
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
-    P.Version:='3.1.1';
+    P.Version:='3.3.1';
     P.Author := 'Library: libnds, dswifi, maxmod and gl2d from devkitARM; headers: Francesco Lombardi';
     P.License := 'LGPL';
     P.HomepageURL := 'www.freepascal.org';

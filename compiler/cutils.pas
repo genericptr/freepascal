@@ -42,9 +42,11 @@ interface
     {# Returns the minimal value between @var(a) and @var(b) }
     function min(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     function min(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
+    function min(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
     {# Returns the maximum value between @var(a) and @var(b) }
     function max(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     function max(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
+    function max(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
 
     { These functions are intenionally put here and not in the constexp unit.
       Since Tconstexprint may be automatically converted to int, which causes
@@ -76,7 +78,6 @@ interface
 
     function used_align(varalign,minalign,maxalign:longint):longint;
     function isbetteralignedthan(new, org, limit: cardinal): boolean;
-    function size_2_align(len : longint) : longint;
     function packedbitsloadsize(bitlen: int64) : int64;
     procedure Replace(var s:string;s1:string;const s2:string);
     procedure Replace(var s:AnsiString;s1:string;const s2:AnsiString);
@@ -142,7 +143,8 @@ interface
 
     { allocates mem for a copy of s, copies s to this mem and returns }
     { a pointer to this mem                                           }
-    function stringdup(const s : string) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
+    function stringdup(const s : shortstring) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
+    function stringdup(const s : ansistring) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
 
     {# Allocates memory for the string @var(s) and copies s as zero
        terminated string to that allocated memory and returns a pointer
@@ -176,6 +178,11 @@ interface
     function minilzw_decode(const s:string):string;
 
     Function nextafter(x,y:double):double;
+
+    function LengthUleb128(a: qword) : byte;
+    function LengthSleb128(a: int64) : byte;
+    function EncodeUleb128(a: qword;out buf;len: byte) : byte;
+    function EncodeSleb128(a: int64;out buf;len: byte) : byte;
 
   { hide Sysutils.ExecuteProcess in units using this one after SysUtils}
   const
@@ -227,6 +234,18 @@ implementation
       end;
 
 
+    function min(a,b : qword) : qword;
+    {
+      return the minimal of a and b
+    }
+      begin
+         if a<=b then
+           min:=a
+         else
+           min:=b;
+      end;
+
+
     function max(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     {
       return the maximum of a and b
@@ -240,6 +259,18 @@ implementation
 
 
     function max(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
+    {
+      return the maximum of a and b
+    }
+      begin
+         if a>=b then
+           max:=a
+         else
+           max:=b;
+      end;
+
+
+    function max(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
     {
       return the maximum of a and b
     }
@@ -320,9 +351,9 @@ implementation
         else
           begin
             if i<0 then
-              result:=((i-a+1) div a) * a
+              result:=((i+1-a) div a) * a
             else
-              result:=((i+a-1) div a) * a;
+              result:=((i-1+a) div a) * a;
           end;
       end;
 
@@ -338,9 +369,9 @@ implementation
         else
           begin
             if i<0 then
-              result:=((i-a+1) div a) * a
+              result:=((i+1-a) div a) * a
             else
-              result:=((i+a-1) div a) * a;
+              result:=((i-1+a) div a) * a;
           end;
       end;
 
@@ -351,27 +382,10 @@ implementation
     }
       begin
         { for 0 and 1 no aligning is needed }
-        if a<=1 then
+        if (a<=1) or (i=0) then
           result:=i
         else
-          result:=((i+a-1) div a) * a;
-      end;
-
-
-    function size_2_align(len : longint) : longint;
-      begin
-         if len>16 then
-           size_2_align:=32
-         else if len>8 then
-           size_2_align:=16
-         else if len>4 then
-           size_2_align:=8
-         else if len>2 then
-           size_2_align:=4
-         else if len>1 then
-           size_2_align:=2
-         else
-           size_2_align:=1;
+          result:=((i-1+a) div a) * a;
       end;
 
 
@@ -1195,12 +1209,18 @@ implementation
       end;
 
 
-    function stringdup(const s : string) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
+    function stringdup(const s : shortstring) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
       begin
          getmem(result,length(s)+1);
          result^:=s;
       end;
 
+
+    function stringdup(const s : ansistring) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
+      begin
+         getmem(result,length(s)+1);
+         result^:=s;
+      end;
 
     function CompareStr(const S1, S2: string): Integer;
       var
@@ -1596,6 +1616,91 @@ implementation
     nextafter:=x;
 
     end;
+
+
+    function LengthUleb128(a: qword) : byte;
+      begin
+        result:=0;
+        repeat
+          a := a shr 7;
+          inc(result);
+          if a=0 then
+            break;
+        until false;
+      end;
+
+
+    function LengthSleb128(a: int64) : byte;
+      var
+        b, size: byte;
+        more: boolean;
+      begin
+        more := true;
+        size := sizeof(a)*8;
+        result:=0;
+        repeat
+          b := a and $7f;
+          a := SarInt64(a, 7);
+
+          if (
+            ((a = 0) and (b and $40 = 0)) or
+            ((a = -1) and (b and $40 <> 0))
+          ) then
+            more := false;
+          inc(result);
+          if not(more) then
+            break;
+        until false;
+      end;
+
+
+    function EncodeUleb128(a: qword;out buf;len : byte) : byte;
+      var
+        b: byte;
+        pbuf : pbyte;
+      begin
+        result:=0;
+        pbuf:=@buf;
+        repeat
+          b := a and $7f;
+          a := a shr 7;
+          if a<>0 then
+            b := b or $80;
+          pbuf^:=b;
+          inc(pbuf);
+          inc(result);
+          if (a=0) and  (result>=len) then
+            break;
+        until false;
+      end;
+
+
+    function EncodeSleb128(a: int64;out buf;len : byte) : byte;
+      var
+        b, size: byte;
+        more: boolean;
+        pbuf : pbyte;
+      begin
+        more := true;
+        size := sizeof(a)*8;
+        result:=0;
+        pbuf:=@buf;
+        repeat
+          b := a and $7f;
+          a := SarInt64(a, 7);
+
+          if (result+1>=len) and (
+            ((a = 0) and (b and $40 = 0)) or
+            ((a = -1) and (b and $40 <> 0))
+          ) then
+            more := false
+          else
+            b := b or $80;
+          pbuf^:=b;
+          inc(pbuf);
+          inc(result);
+        until not more;
+      end;
 
 
 initialization

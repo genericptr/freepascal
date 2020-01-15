@@ -57,6 +57,7 @@
     <a href="#classof">Translating class-of type</a><br>
     <a href="#tobjectfree">Translating TObject.Free</a><br>
     <a href="#classinterfaces">Translating class interfaces</a><br>
+    <a href="#helpers">Translating helpers</a><br>
     <a href="#attributes">Translating attributes</a><br>
     <a href="#tryfinally">Translating try..finally</a><br>
     <a href="#tryexcept">Translating try..except</a><br>
@@ -64,6 +65,7 @@
     <a href="#functiontype">Translating function types</a><br>
     <a href="#absolute">Translating var modifier absolute</a><br>
     <a href="#assert">Translating assert()</a><br>
+    <a href="#dispatch">Dispatch messages</a><br>
     <a href="#calljavascript">Calling JavaScript from Pascal</a><br>
     <a href="#asm">The asm block</a><br>
     <a href="#assembler">The procedure modifier assembler</a><br>
@@ -133,6 +135,7 @@ Put + after a boolean switch option to enable it, - to disable it
     -ic   : Write list of supported JS processors usable by -P&lt;x&gt;
     -io   : Write list of supported optimizations usable by -Oo&lt;x&gt;
     -it   : Write list of supported targets usable by -T&lt;x&gt;
+    -iJ   : Write list of supported JavaScript identifiers -JoRTL-&lt;x&gt;
   -C&lt;x&gt;   : Code generation options. &lt;x&gt; is a combination of the following letters:
     o     : Overflow checking
     r     : Range checking
@@ -157,13 +160,23 @@ Put + after a boolean switch option to enable it, - to disable it
    -Jl    : lower case identifiers
    -Jm    : generate source maps
      -Jmsourceroot=&lt;x&gt; : use x as "sourceRoot", prefix URL for source file names.
-     -Jmbasedir=&lt;x&gt; : write source file names relative to directory x.
+     -Jmbasedir=&lt;x&gt; : write source file names relative to directory x, default is map file folder.
      -Jminclude : include Pascal sources in source map.
+     -Jmabsolute: store absolute filenames, not relative.
      -Jmxssiheader : start source map with XSSI protection )]}.
      -Jm- : disable generating source maps
    -Jo&lt;x&gt; : Enable or disable extra option. The x is case insensitive:
      -JoSearchLikeFPC : search source files like FPC, default: search case insensitive.
      -JoUseStrict : add "use strict" to modules, default.
+     -JoCheckVersion-: do not add rtl version check, default. (since 1.1)
+     -JoCheckVersion=main: insert rtl version check into main. (since 1.1)
+     -JoCheckVersion=system: insert rtl version check into system unit init. (since 1.1)
+     -JoCheckVersion=unit: insert rtl version check into every unit init. (since 1.1)
+     -JoRTL-&lt;x&gt;=&lt;y&gt;: set RTL identifier x to value y. See -iJ. (since 1.1)
+   -Jpcmd&lt;command&gt; : Run postprocessor. For each generated js execute
+                  command passing the js as stdin and read the new js from stdout.
+                  This option can be added multiple times to call several
+                  postprocessors in succession.
    -Ju&lt;x&gt; : Add &lt;x&gt; to foreign unit paths. Foreign units are not compiled.
   -l      : Write logo
   -MDelphi: Delphi 7 compatibility mode
@@ -189,8 +202,8 @@ Put + after a boolean switch option to enable it, - to disable it
     m     : Enables macro replacements
     2     : Same as -Mobjfpc (default)
   -SI&lt;x&gt;   : Set interface style to &lt;x&gt;
-    -SIcom   : COM compatible interface (default)
-    -SIcorba : CORBA compatible interface
+    -SIcom   : COM, reference counted interface (default)
+    -SIcorba : CORBA interface
   -T&lt;x&gt;   : Set target platform, case insensitive.
     -Tbrowser : default
     -Tnodejs  : add pas.run(), includes -Jc
@@ -215,6 +228,9 @@ Put + after a boolean switch option to enable it, - to disable it
   -vm&lt;x&gt;,&lt;y&gt;: Do not show messages numbered &lt;x&gt; and &lt;y&gt;.
   -?      : Show this help
   -h      : Show this help
+
+Environment variable PAS2JS_OPTS is parsed after default config
+and before command line parameters.
 </pre>
     </div>
 
@@ -503,7 +519,7 @@ function(){
     <li><b>Integers overflows</b> at runtime differ from Delphi/FPC, due to the double format.
       For example adding <i>var i: byte = 200; ... i:=i+100;</i> will result in
       <i>i=300</i> instead of <i>i=44</i> as in Delphi/FPC.
-      When range checking <i>{$R+}</i> is enabled <i>i=300</i> will raise an ERangeError.</li>
+      When range checking <i>{$R+}</i> is enabled <i>i:=300</i> will raise an ERangeError.</li>
     <li><b>type cast integer to integer</b>, e.g. <i>byte(aLongInt)</i>
       <ul>
         <li>with range checking enabled: error if outside range</li>
@@ -583,8 +599,8 @@ End.
       <li><i>Double := Currency</i> -> <i>Double = Currency/10000</i></li>
       <li><i>Currency := Double</i> -> <i>Currency = Math.floor(Double*10000)</i></li>
       <li><i>JSValue := Currency</i> -> <i>JSValue = Currency/10000</i></li>
-      <li>Keep in mind that a double has only 52 bits for the number, so calculating
-      values greater than 450,359,962,737 might give a different result than in Delphi/FPC.
+      <li>Keep in mind that a double has only 54 bits for the number, so calculating
+      values greater than 900,719,925,474 might give a different result than in Delphi/FPC.
       See SysUtils.MinCurrency/MaxCurrency</li>
     </ul>
     </div>
@@ -618,7 +634,8 @@ End.
       <tbody>
         <tr>
           <th>Pascal</th>
-          <th>JavaScript</th>
+          <th>JS Pas2js 1.3</th>
+          <th>JS Pas2js 1.2</th>
         </tr>
         <tr>
           <td>
@@ -645,6 +662,36 @@ End.
 ["System"],
 function(){
   var $mod = this;
+  rtl.recNewT($mod, "TMyRecord", function() {
+    this.i = 0;
+    this.s = "";
+    this.d = 0.0;
+    this.$eq = function (b) {
+      return (this.i == b.i) &&
+         (this.s == b.i) && (this.d == b.d);
+    };
+    this.$assign = function (s) {
+      this.i = s.i;
+      this.s = s.s;
+      this.d = s.d;
+      return this;
+    };
+  };
+  this.r = this.TMyRecord.$new();
+  $mod.$init = function() {
+    $mod.r.i=123;
+    $mod.r.$assign($mod.s);
+    if ($mod.r.$eq($mod.s)) ;
+  },
+},
+[]);
+</pre>
+          </td>
+          <td>
+<pre>rtl.module("MyModule",
+["System"],
+function(){
+  var $mod = this;
   this.TMyRecord = function(s) {
     if (s){
       this.i = s.i;
@@ -656,7 +703,8 @@ function(){
       this.d = 0.0;
     };
     this.$equal = function (b) {
-      return (this.i == b.i) && (this.s == b.i) && (this.d == b.d);
+      return (this.i == b.i) &&
+        (this.s == b.i) && (this.d == b.d);
     };
   };
   this.r = new this.TMyRecord();
@@ -676,11 +724,34 @@ function(){
       <li>The record variable creates a JavaScript object.</li>
       <li>Variant records are not supported.</li>
       <li>Supported: Assign, pass as argument, equal, not equal,
-      array of record, pointer of record, const, default().</li>
-      <li>Not yet implemented: advanced records, operators.</li>
-      <li>When assigning a record it is cloned. This is compatible with Delphi and FPC.</li>
+      array of record, pointer of record, const, default(), RTTI.</li>
+      <li>Advanced record (since pas2js 1.3):
+        <ul>
+          <li>visibility private, strict private, public, default is public</li>
+          <li>methods, class methods (must be static like in Delphi/FPC)</li>
+          <li>class vars</li>
+          <li>const fields</li>
+          <li>property, class property, array property, default array property</li>
+          <li>sub types</li>
+          <li>constructor</li>
+          <li>class constructor</li>
+        </ul>
+      </li>
+      <li>Not yet implemented:
+        <ul>
+          <li>operator overloading</li>
+          <li>reference counted interfaces as fields</li>
+          <li>Interfaces as nested types</li>
+          <li>default non array property</li>
+        </ul>
+      </li>
+      <li>Until Pas2js 1.2 when assigning a record it is cloned, creating a new
+        JS object. Since Pas2js 1.3 only values are copied,
+        keeping the object, so pointer of record is compatible.</li>
       <li>Since record types are JS objects it is possible to typecast a record type
-      to the JS Object, e.g. TJSObject(TPoint)</li>
+      to the JS Object, e.g. <i>TJSObject(TPoint)</i>.
+      Note that you cannot typecast directly to a <i>TJSObject</i> descendant.
+      You can use <i>TJSWindow(TJSObject(aRecord))</i>.</li>
       <li>A pointer of record is simply a reference.
         <ul>
           <li><i>p:=@r</i> translates to <i>p=r</i></li>
@@ -689,6 +760,9 @@ function(){
           <li><i>Dispose(PointerOfRecord)</i> Sets the variable to null if possible.</li>
         </ul>
       </li>
+      <li>Passing a record to an untyped arguments (e.g. ''TObject.Dispatch(var Msg)'')
+        passes the record JS object directly, not creating a temporary reference object.</li>
+      <li>Typecasting RecordType(UntypedArgument) returns the argument, i.e. no conversion.</li>
     </ul>
     </div>
 
@@ -733,9 +807,9 @@ function(){
     <ul>
       <li>Local variables become local JavaScript variables: <i>var l = 0;</i>.</li>
       <li>Local constants become JavaScript variables in the unit/program implementation section.</li>
-      <li>Overloaded functions are given an unique name by appending $1, $2, ...<br>
-      Overloading is always on. You don't need to add the <i>overload</i> modifier.</li>
-      <li>Supported: default values, local types, FuncName:=</li>
+      <li>Local types are elevated to module.</li>
+      <li>Overloaded functions are given an unique name by appending $1, $2, ...</li>
+      <li>Supported: default values, const/var/out/default, FuncName:=</li>
     </ul>
     </div>
 
@@ -1453,7 +1527,15 @@ function(){
     <li>In Delphi/FPC an empty array is <i>nil</i>. In JS it can be <i>null</i> or <i>[]</i>.
      For compatibility comparing an array with <i>nil</i> checks for <i>length(a)>0</i>.</li>
     <li><i>function Assigned(array): boolean</i>  results true iff <i>length(array)>0</i>.</li>
-    <li>Not yet implemented: array of const.</li>
+    <li>array of const:
+      <ul>
+      <li>Works the same: vtInteger, vtBoolean, vtPointer, vtObject, vtClass, vtWideChar, vtInterface, vtUnicodeString</li>
+      <li>''longword'' is converted to ''vtNativeInt''. Delphi/FPC converts to ''vtInteger'', changing big numbers to negative numbers.</li>
+      <li>vtExtended is double, Delphi/FPC: PExtended</li>
+      <li>vtCurrency is currency, Delphi/FPC: PCurrency</li>
+      <li>Not supported: vtChar, vtString, vtPChar, vtPWideChar, vtAnsiString, vtVariant, vtWideString, vtInt64, vtQWord</li>
+      <li>only in pas2js: vtNativeInt, vtJSValue</li>
+      </ul></li>
     <li>Assignation using constant array, e.g. <i>a:=[1,1,2];</i></li>
     <li>String like operation: + operator concatenates arrays. e.g. <i>a:=[1]+[2];</i>.
       This is controlled by modeswitch arrayoperators, which is enabled in mode delphi.</li>
@@ -1533,11 +1615,21 @@ function(){
     <li><i>Class.$unitname</i> is the unit name. E.g. <i>TClassA.$unitname == 'MyModule'</i>.</li>
     <li>The "<i>is</i>"-operator is implemented using "<i>isPrototypeOf</i>". Note that "<i>instanceof</i>" cannot be used, because classes are JS objects.</li>
     <li>The "<i>as</i>" operator is implemented as <i>rtl.as(Object,Class)</i>.</li>
-    <li>Supported: constructor, destructor, private, protected, public,
-      strict private, strict protected, class vars, class methods, external methods,
-      virtual, override, abstract, call inherited, assigned(), type cast,
-      overloads, reintroduce, sealed class, nested types.</li>
-    <li>Not supported: class constructor/destructor</li>
+    <li>Supported:
+      <ul>
+      <li>constructor, destructor</li>
+      <li>private, protected, public, strict private, strict protected</li>
+      <li>class vars, const, nested types</li>
+      <li>methods, class methods, class constructor, external methods</li>
+      <li>method modifiers overload, reintroduce, virtual, override, abstract,
+      static, external name, message integer, message string</li>
+      <li>call inherited</li>
+      <li>assigned()</li>
+      <li>type cast</li>
+      <li>class sealed, class abstract</li>
+      </ul>
+      </li>
+    <li>Not supported: class destructor</li>
     <li>Property:
       <ul>
       <li>References are replaced by getter/setter.</li>
@@ -1545,7 +1637,7 @@ function(){
       stored modifier, index modifier.</li>
       <li>Not supported: getter/setter to an array element,
       e.g. <i>property A: char read FArray[0];</i> </li>
-      <li>Class property getter/setter are not static as in Delphi.</li>
+      <li>Class property getter/setter can be static or non static. Delphi: must be static.</li>
       <li>The <i>Index</i> modifier supports any constant, e.g. a string, while
       Delphi only allows an ordinal (longint). -2147483648 is not a special
       number in pas2js. Overriding a property with an index property is allowed
@@ -1735,7 +1827,8 @@ function(){
         <li>ClassType(IntfVar) - can be unrelated, nil if invalid</li>
         <li>IntfType(ObjVar) - nil if not found,
           COM: if ObjVar has delegate uses _AddRef</li>
-        <li>TJSObject(IntfTypeOrVar)</li>
+        <li>TJSObject(IntfTypeOrVar). Note that you cannot typecast directly
+        to a <i>TJSObject</i> descendant. You can use <i>TJSWindow(TJSObject(IntfType))</i>.</li>
         <li>jsvalue(intfvar)</li>
       </ul>
     <li>Assign operator:</li>
@@ -1768,9 +1861,87 @@ function(){
     </div>
 
     <div class="section">
+    <h2 id="helpers">Translating helpers</h2>
+    Pas2js supports class helpers, record helpers and type helpers since 1.3.
+    The extend is only virtual, the helped type is kept untouched.
+    <br>
+    <ul>
+      <li>A <b>class helper</b> can "extend" Pascal classes and external JS classes.</li>
+      <li>A <b>record helper</b> can "extend" a record type. In $mode delphi a
+        record helper can extend other types as well, see <i>type helper</i></li>
+      <li>A <b>type helper</b> can extend all base types like integer, string,
+        char, boolean, double, currency, and user types like enumeration,
+        set, range, array, class, record and interface types.
+        It cannot extend helpers and procedural types.<br>
+        Type helpers are enabled by default in <i>$mode delphi</i> and disabled in <i>$mode objfpc</i>.
+        You can enable them with <b>{$modeswitch typehelpers}</b>.
+        </li>
+      <li>By default only one helper is active per type, same as in FPC/Delphi.
+        If there are multiple helpers for the same type, the last helper in scope wins.<br>
+        A class with ancestors can have one active helper per ancestor type, so
+        multiple helpers can be active, same as FPC/Delphi.<br>
+        Using <b>{$modeswitch multihelpers}</b> you can activate all helpers
+        within scope.
+        </li>
+      <li>Nested helpers (e.g. <i>TDemo.TSub.THelper</i>) are elevated.
+        Visibility is ignored. Same as FPC/Delphi.</li>
+      <li>Helpers cannot be forward defined (e.g. no <i>THelper = helper;</i>).</li>
+      <li>Helpers must not have fields.</li>
+      <li><b>Class Var, Const, Type</b></li>
+      <li><b>Visibility</b> : <i>strict private .. published</i></li>
+      <li><b>Function, procedure</b>:
+        In class and record helpers <i>Self</i> is the class/record instance. For other
+        types Self is a reference to the passed value.
+      </li>
+      <li><b>Class function, class procedure</b>: Helpers for Pascal classes/records can
+        add <i>static</i> and non static class functions. Helpers for external classes
+        and other types can only add static class functions.</li>
+      <li><b>Constructor</b>. Not for external classes. Works similar to
+        construcors, i.e. <i>THelpedClass.Create</i> creates a new instance, while
+        <i>AnObj.Create</i> calls the constructor function as normal method. Note that
+        Delphi does not allow calling helper construcors as normal method.</li>
+      <li>no destructor</li>
+      <li><b>Property</b> : getters/setters can refer to members of the helper, its
+        ancestors and the helped class/record.</li>
+      <li><b>Class property</b> : getter can be static or non static. Delphi/FPC only allows static.</li>
+      <li><b>Ancestors</b> : Helpers can have an ancestor helper, but they
+      do not have a shared root class, especially not <i>TObject</i>.</li>
+      <li><b>no virtual, abstract, override</b>. Delphi allows them, but 10.3 crashes when calling.</li>
+      <li><b>inherited</b> :
+        <i>inherited</i> inside a method of a class/record calls helper of ancestor.<br>
+        <i>inherited</i> inside a helper depends on the $mode:
+        <ul>
+        <li> <i>$mode objfpc</i> : <i>inherited;</i> and <i>inherited Name(args);</i>
+          work the same and searches first in HelperForType, then in ancestor(s).</li>
+        <li><i>$mode delphi: inherited;</i> : skip ancestors and HelperForType,
+          searches first in helper(s) of ancestor of HelperForType.</li>
+        <li><i>$mode delphi: inherited name(args);</i> :
+          same as $mode objfpc first searches in HelperForType, then Ancestor(s)</li>
+        </ul>
+        In any case if <i>inherited;</i> has no ancestor to call, it is silently ignored,
+        while <i>inherited Name;</i> gives an error.
+        </li>
+      <li><b>RTTI</b>: <i>typeinfo(somehelper)</i> returns a pointer to <i>TTypeInfoHelper</i> with <i>Kind tkHelper</i>.</li>
+      <li>There are some special cases when using a <b>type helper</b> function/procedure on a value:
+        <ul>
+        <li><i>function result</i> : using a temporary variable</li>
+        <li><i>const, const argument</i> : When helper function tries to assign a value,
+        pas2js raises a EPropReadOnly exception. FPC/Delphi use a temporary variable allowing the write. </li>
+        <li><i>property</i> : uses only the getter, ignoring the setter.
+          This breaks OOP, as it allows to change fields without calling the setter.
+          This is FPC/Delphi compatible.</li>
+        <li><i>with value do ;</i> : uses a temporary variable. Delphi/FPC do not support it.</li>
+        </ul>
+      </li>
+      <li>A method with <i>external name</i> modifier is treated as an external
+        method of the helped type.</li>
+    </ul>
+    </div>
+
+    <div class="section">
     <h2 id="attributes">Translating attributes</h2>
-    Attributes are not yet implemented. To make porting code easier there
-    is a <i>{$modeswitch ignoreattributes}</i>, that ignores attributes.
+    Attributes are stored in the TTypeInfo objects as streams stored in an array.
+    See the <i>TypInfo</i> function <i>GetRTTIAttributes</i> for details.
     </div>
 
     <div class="section">
@@ -2027,8 +2198,9 @@ rtl = {
 
     <div class="section">
     <h2 id="anonymousfunctions">Translating anonymous functions</h2>
-    Anonymous functions are not yet supported by pas2js. The next best thing are
-    local procedures. For example:
+    Anonymous functions are supported since pas2js 1.1.<br>
+    Note that in pas2js local procedures are closures as well. See below.<br>
+    For pas2js 1.0 the next best thing are local procedures. For example:
     <table class="sample">
       <tbody>
         <tr>
@@ -2103,6 +2275,46 @@ End.
       disable with <i>{$C-}</i> or <i>{$Assertions off}</i></li>
     </ul>
     </div>
+
+    <div class="section">
+    <h2 id="dispatch">Dispatch messages</h2>
+    The procedure modifier <b>message</b> and the <b>Dispatch</b> works
+    similar to FPC/Delphi, as it expects a record of a specific format and
+    <b><i>TObject.Dispatch</i></b> calls the corresponding method with that
+    message number or string.<br>
+    The procedure modifier <i>message &lt;integer&gt;</i> adds an entry to
+    hidden <i>YourClass.$msgint</i> object, while the modifier
+    <i>message &lt;string&gt;</i> adds an entry to the hidden
+    <i>YourClass.$msgstr</i> object.<br>
+    Two new directives <b><i>{$DispatchField fieldname}</i></b> and
+    <b><i>{$DispatchStrField fieldname}</i></b> were added. Insert these
+    directives in front of your class declaration to let the compiler check all
+    methods with message modifiers of this class and its descendants whether they
+    pass a record with the required field. For example:
+<pre>
+  {$DispatchField Msg} // enable checking message methods for record field name "Msg"
+  {$DispatchStrField MsgStr}
+  TObject = class
+    procedure Dispatch(var aMessage); virtual;
+    procedure DispatchStr(var aMessage); virtual;
+  end;
+  TMouseDownMsg = record
+    Id: integer; // Id instead of Msg, works in FPC, but not in pas2js
+    x,y: integer;
+  end;
+  TMouseUpMsg = record
+    MsgStr: string;
+    X,Y: integer;
+  end;
+  TWinControl = class
+    procedure MouseDownMsg(var Msg: TMouseDownMsg); message 3; // warning: Dispatch requires record field Msg
+    procedure MouseUpMsg(var Msg: TMouseUpMsg); message 'up'; // ok, record with string field name MsgStr
+  end;
+</pre>
+    Note that descendant classes can override the <i>$DispatchField</i> or
+    disable the check using <i>{$DispatchField -}</i>.
+    </div>
+
 
     <div class="section">
     <h2 id="calljavascript">Calling JavaScript from Pascal</h2>
@@ -2294,7 +2506,10 @@ function(){
     <div class="section">
     <h2 id="varargs">The procedure modifier varargs</h2>
     Appending the <b>varargs</b> modifier to a procedure allows to pass arbitrary
-    more parameters to a function. To access these non typed arguments use
+    more parameters to a function. By default these parameters are untyped, i.e.
+    any type fits. Alternatively you can use <b>varargs of aType</b> to allow
+    only specific types.<br>
+    To access these arguments use
     either <i>JSArguments</i> from unit JS or an <i>asm..end</i> block.
     <table class="sample">
       <tbody>
@@ -2479,10 +2694,15 @@ function(){
     An external class is not a TObject and has none of its methods.<br>
     All members are external. If you omit the <i>external</i> modifier the
     external name is the member name. Keep in mind that JS is case sensitive.<br>
-    Destructors are not allowed.<br>
-    Constructors are only allowed with the name <i>New</i> and a call
-    translates to <i>new ExtClass(params)</i>.
     Properties work the same as with Pascal classes, i.e. are replaced by Getter/Setter.<br>
+    Destructors are not allowed.<br>
+    Constructors are supported in four ways:
+    <ul>
+      <li><i>constructor New</i> is translated to <i>new ExtClass(params)</i>.</li>
+      <li><i>constructor New; external name ''GlobalFunc''</i> is translated to <i>new GlobalFunc(params)</i>.</li>
+      <li><i>constructor SomeName; external name <i>'{}'</i> is translated to <i>{}</i>.</li>
+      <li>Otherwise it is translated to <i>new ExtClass.FuncName(params)</i>.</li>
+    </ul>
 
     <table class="sample">
       <tbody>
@@ -2544,11 +2764,14 @@ End.
       call <i>aJSString.fromCharCode()</i>.</li>
       <li>An external class can descend from another external class.</li>
       <li>Since class types are JS objects it is possible to typecast a class type
-      to the JS Object, e.g. TJSObject(TObject)</li>
+      to the JS Object, e.g. <i>TJSObject(TObject)</i>.
+      Note that you cannot typecast directly to a <i>TJSObject</i> descendant
+      in $mode objfpc. You can use <i>TJSWindow(TJSObject(ExtClassInstance))</i>.</li>
       <li>You can typecast function addresses and function references to JS
       function, e.g. <i>TJSFunction(@SomeProc)</i>, <i>TJSFunction(OnClick)</i>.
       Keep in mind that typecasting a method address creates a function wrapper
-      to bind the Self argument.</li>
+      to bind the Self argument, except when typecasting to <i>TJSFunction</i>
+      (pas2js 1.5+).</li>
     </ul>
     </div>
 
@@ -2741,9 +2964,10 @@ End.
     type, not of its current runtime value. The exception is a class and class-of instance
     variable (e.g. <i>var o: TObject; ... typeinfo(o)</i>), which returns the
     typeinfo of the current runtime value.
-    If <i>o</i> is <i>null</i> it will give a JS error.<br>
+    If <i>o</i> is <i>nil</i> it will give a JS error.<br>
     Local types (i.e. inside a procedure) do not have typeinfo.<br>
     Open array parameters are not yet supported.<br>
+    Note that FPC <i>typeinfo(aClassVar)<i> returns the compiletime type, so it works on <i>nil</i>.<br>
     </div>
 
 
@@ -2794,8 +3018,28 @@ End.
     <li>{$mode delphi} or {$mode objfpc}: Same as -Mdelphi or -Mobjfpc, but only for this unit. You can use units of both modes in a program. If present must be at the top of the unit, or after the module name.</li>
     <li>{$modeswitch externalclass}: allow declaring external classes</li>
     <li>{$modeswitch arrayoperators}: allow + operator to concatenate arrays, default in mode delphi</li>
+    <li>{$modeswitch OmitRTTI}: treat published sections as public</li>
     <li>{$macro on|off} enables macro replacements. Only macros with a value are replaced. Macros are never replaced inside directives.</li>
     <li>{$I filename} or {$include filename} - insert include file</li>
+    <li>{$I %param%}:
+      <ul>
+        <li>%date%: current date as string literal, '[yyyy/mm/dd]'</li>
+        <li>%time%: current time as string literal, 'hh:mm:ss'. Note that the
+          inclusion of %date% and %time% will not cause the compiler to
+          recompile the unit every time it is used:
+          the date and time will be the date and time when the unit was last compiled.</li>
+        <li>%file%: current source filename as string literal, e.g. <i>'unit1.pas'</i></li>
+        <li>%line%: current source line number as string literal, e.g. <i>'123'</i></li>
+        <li>%linenum%: current source line number as integer, e.g. <i>123</i></li>
+        <li>%currentroutine%: name of current routine as string literal</li>
+        <li>%pas2jstarget%, %pas2jstargetos%, %fpctarget%, %fpctargetos%: target os as string literal, e.g. 'Browser'</li>
+        <li>%pas2jstargetcpu%, %fpctargetcpu%: target cpu as string literal, e.g. 'ECMAScript5'</li>
+        <li>%pas2jsversion%, %fpcversion%: compiler version as strnig literal, e.g. '1.0.2'</li>
+        <li>If param is none of the above it will use the environment variable.
+        Keep in mind that depending on the platform the name may be case sensitive.
+        If there is no such variable an empty string <i>''</i> is inserted.</li>
+      </ul>
+    </li>
     <li>{$Warnings on|off}</li>
     <li>{$Notes on|off}</li>
     <li>{$Hints on|off}</li>
@@ -2838,13 +3082,15 @@ End.
         <li>Check type casts, e.g. <i>TBird(AnObject)</i> becomes <i>AnObject as TBird</i></li>
       </ul>
     </li>
+    <li>{$DispatchField Msg}: enable checking <i>message number</i> methods for record field name "Msg"</li>
+    <li>{$DispatchStrField MsgStr}: enable checking <i>message string</i> methods for record field name "Msg"</li>
     </ul>
     Defines:
     <ul>
     <li>PASJS</li>
     <li>PAS2JS_FULLVERSION - major*1000+minor*100+release, e.g. 1.2.3 = 10203</li>
-    <li>Target platform: BROWSER, NODEJS</li>
-    <li>Target processor: ECMAScript5, ECMAScript6, ECMAScript=5</li>
+    <li>Target platform: Browser, NodeJS, Pas2JSTargetOS=&lt;value&gt;</li>
+    <li>Target processor: ECMAScript5, ECMAScript6, ECMAScript=5, Pas2JSTargetCPU=&lt;value&gt;</li>
     <li>Mode: DELPHI, OBJFPC</li>
     </ul>
     </div>
@@ -2866,8 +3112,8 @@ End.
       <li>SmallInt - signed 16-bit</li>
       <li>LongWord - unsigned 32-bit</li>
       <li>LongInt - signed 32-bit</li>
-      <li>NativeUInt - unsigned 52-bit</li>
-      <li>NativeInt - signed 53-bit</li>
+      <li>NativeUInt - unsigned 53-bit</li>
+      <li>NativeInt - signed 54-bit</li>
     </ul>
     Notes:
     <ul>
@@ -2908,21 +3154,22 @@ End.
     Width and precision is supported. str(i:10) will add spaces to the left to fill up to 10 characters.</b>
     str(aDouble:1:5) returns a string in decimal format with 5 digits for the fraction.</li>
     <li>Intrinsic procedure WriteStr(out s: string; params...)</li>
+    <li><i>Debugger;</i> converts to <i>debugger;</i>. If a debugger is running
+      it will break on this line just like a break point.</li>
+    <li><i>function concat(string1,string2,...): string</i> since 1.3</li>
+    <li><i>$mode delphi: function lo|hi(integer): byte</i> since 1.3</li>
+    <li><i>$mode objfpc: function lo|hi(integer): byte|word|longword</i> since 1.3</li>
     </ul>
     </div>
 
     <div class="section">
     <h2 id="notsupportedelements">Not supported elements</h2>
     <ul>
-    <li>Advanced records</li>
-    <li>Anonymous functions</li>
-    <li>Array of const</li>
-    <li>Attributes</li>
+    <li>Class destructor</li>
     <li>Enums with custom values</li>
     <li>Generics</li>
     <li>Global properties</li>
     <li>Futures</li>
-    <li>Helpers for types, classes, records</li>
     <li>Inline</li>
     <li>Library</li>
     <li>Objects</li>
@@ -2931,7 +3178,6 @@ End.
     <li>Package</li>
     <li>Resources</li>
     <li>RTTI extended, $RTTI</li>
-    <li>Runtime checks: Overflow -Co, $Q</li>
     <li>Variant records</li>
     <li>Variants</li>
     </ul>

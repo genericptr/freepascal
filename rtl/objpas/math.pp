@@ -141,6 +141,9 @@ Const
        EqualsValue = 0;
        LessThanValue = Low(TValueRelationship);
        GreaterThanValue = High(TValueRelationship);
+       
+
+       
 {$push}
 {$R-}
 {$Q-}
@@ -162,6 +165,8 @@ function Max(a, b: Cardinal): Cardinal; overload;
 }
 function Min(a, b: Int64): Int64;inline; overload;
 function Max(a, b: Int64): Int64;inline; overload;
+function Min(a, b: QWord): QWord;inline; overload;
+function Max(a, b: QWord): QWord;inline; overload;
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function Min(a, b: Single): Single;inline; overload;
 function Max(a, b: Single): Single;inline; overload;
@@ -1021,8 +1026,8 @@ function lnxp1(x : float) : float;
       end;
   end;
 
-function power(base,exponent : float) : float;
 
+function power(base,exponent : float) : float;
   begin
     if Exponent=0.0 then
       result:=1.0
@@ -1034,6 +1039,7 @@ function power(base,exponent : float) : float;
       result:=exp(exponent * ln (base));
   end;
 
+
 function intpower(base : float;const exponent : Integer) : float;
   var
      i : longint;
@@ -1042,6 +1048,8 @@ function intpower(base : float;const exponent : Integer) : float;
        result:=1
      else
        begin
+         if exponent<0 then
+           base:=1.0/base;
          i:=abs(exponent);
          intpower:=1.0;
          while i>0 do
@@ -1054,8 +1062,6 @@ function intpower(base : float;const exponent : Integer) : float;
               i:=i-1;
               intpower:=intpower*base;
            end;
-         if exponent<0 then
-           intpower:=1.0/intpower;
        end;
   end;
 
@@ -2045,6 +2051,22 @@ begin
 end;
 
 function Max(a, b: Int64): Int64;inline;
+begin
+  if a > b then
+    Result := a
+  else
+    Result := b;
+end;
+
+function Min(a, b: QWord): QWord; inline;
+begin
+  if a < b then
+    Result := a
+  else
+    Result := b;
+end;
+
+function Max(a, b: QWord): Qword;inline;
 begin
   if a > b then
     Result := a

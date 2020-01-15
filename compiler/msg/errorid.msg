@@ -827,7 +827,7 @@ parser_e_function_already_declared_public_forward=03120_E_Fungsi sudah dideklara
 % \var{forward} dalam seksi \var{implmentation}.
 parser_e_not_external_and_export=03121_E_Tidak bisa menggunakan EXPORT dan EXTERNAL
 % Dua prosedur ini adalah mutual eksklusif
-parser_h_not_supported_for_inline=03123_H_"$1" belum didukung di dalam inline procedure/function
+parser_n_not_supported_for_inline=03123_N_"$1" belum didukung di dalam inline procedure/function
 % Inline procedures tidak mendukung deklarasi ini.
 parser_h_inlining_disabled=03124_H_Inlining dimatikan
 % Inlining dari prosedur dimatikan.
@@ -3504,7 +3504,7 @@ wpo_cant_create_feedback_file=12019_E_Cannot create specified whole program opti
 #
 option_logo=11023_[
 Free Pascal Compiler versi $FPCFULLVERSION [$FPCDATE] untuk $FPCCPU
-Hak Cipta (c) 1993-2018 oleh Florian Klaempfl and others
+Hak Cipta (c) 1993-2019 oleh Florian Klaempfl and others
 ]
 
 #

@@ -478,6 +478,17 @@ var
   s: string;
   H : THostAddr;
 begin
+  if SystemApiLevel >= 26 then
+    begin
+      // Since Android 8 the net.dnsX properties can't be read.
+      // Use Google Public DNS servers
+      Result:=2;
+      SetLength(DNSServers, Result);
+      DNSServers[0]:=StrToNetAddr('8.8.8.8');
+      DNSServers[1]:=StrToNetAddr('8.8.4.4');
+      exit;
+    end;
+
   Result:=0;
   SetLength(DNSServers, 9);
   for i:=1 to 9 do
@@ -504,6 +515,13 @@ var
 begin
   if not CheckResolveFileAge then
     exit;
+
+  if (Length(DNSServers) = 0) and (SystemApiLevel >= 26) then
+    begin
+      GetDNSServers;
+      exit;
+    end;
+
   n:=GetSystemProperty('net.change');
   if n <> '' then
     v:=GetSystemProperty(PAnsiChar(n))
@@ -1015,7 +1033,7 @@ begin
   end;
 end;
 
-Function ResolveAddressAt(Resolver : Integer; Address : String; Var Names : Array of String) : Integer;
+Function ResolveAddressAt(Resolver : Integer; Address : String; Var Names : Array of String; Recurse: Integer) : Integer;
 
 
 Var
@@ -1038,13 +1056,29 @@ begin
     I:=0;
     While (I<=MaxAnswer) and NextRR(Ans.Payload,AnsStart,AnsLen,RR) do
       begin
-      if (Ntohs(RR.AType)=DNSQRY_PTR) and (1=NtoHS(RR.AClass)) then
-        begin
-        Names[i]:=BuildName(Ans.Payload,AnsStart,AnsLen);
-        inc(Result);
-        RR.RDLength := ntohs(RR.RDLength);
-        Inc(AnsStart,RR.RDLength);
-        end;
+      Case Ntohs(RR.AType) of
+        DNSQRY_PTR:
+          if (1=NtoHS(RR.AClass)) then
+            begin
+            Names[i]:=BuildName(Ans.Payload,AnsStart,AnsLen);
+            inc(Result);
+            RR.RDLength := ntohs(RR.RDLength);
+            Inc(AnsStart,RR.RDLength);
+            end;
+        DNSQRY_CNAME:
+          begin
+          if Recurse >= MaxRecursion then
+            begin
+            Result := -1;
+            exit;
+            end;
+          rr.rdlength := ntohs(rr.rdlength);
+          setlength(Address, rr.rdlength);
+          address := stringfromlabel(ans.payload, ansstart);
+          Result := ResolveAddressAt(Resolver, Address, Names, Recurse+1);
+          exit;
+          end;
+      end;
       Inc(I);
       end;  
     end;
@@ -1066,7 +1100,7 @@ begin
   S:=Format('%d.%d.%d.%d.in-addr.arpa',[nt.s_bytes[4],nt.s_bytes[3],nt.s_bytes[2],nt.s_bytes[1]]);
   While (Result=0) and (I<=high(DNSServers)) do
     begin
-    Result:=ResolveAddressAt(I,S,Addresses);
+    Result:=ResolveAddressAt(I,S,Addresses,1);
     Inc(I);
     end;
 end;
@@ -1093,7 +1127,7 @@ begin
   I := 0;
   While (Result=0) and (I<=high(DNSServers)) do
     begin
-    Result:=ResolveAddressAt(I,S,Addresses);
+    Result:=ResolveAddressAt(I,S,Addresses,1);
     Inc(I);
     end;
 end;

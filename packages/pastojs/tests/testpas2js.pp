@@ -20,8 +20,8 @@ uses
   {$IFDEF EnableMemCheck}
   MemCheck,
   {$ENDIF}
-  Classes, consoletestrunner, tcconverter, tcmodules, tcoptimizations, tcsrcmap,
-  tcfiler, Pas2JsFiler, tcunitsearch, tcprecompile;
+  Classes, consoletestrunner, tcconverter, TCModules, tcoptimizations, tcsrcmap,
+  tcfiler, tcunitsearch, tcprecompile, TCGenerics;
 
 type
 
@@ -37,7 +37,6 @@ begin
   DefaultRunAllTests:=True;
   Application := TMyTestRunner.Create(nil);
   Application.Initialize;
-  Application.Title:='Pascal to Javascript converter tests';
   Application.Run;
   Application.Free;
 end.

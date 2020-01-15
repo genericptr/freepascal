@@ -742,6 +742,8 @@ implementation
 {$endif SPARC64}
                 ;
             end;
+          else
+            ;
         end;
         if setflags then
           begin
@@ -765,6 +767,8 @@ implementation
                   ovloc.loc:=LOC_FLAGS;
                   ovloc.resflags.Init(NR_ICC,F_NE);
                 end;
+              else
+                ;
             end;
           end
         else
@@ -800,6 +804,8 @@ implementation
                   ovloc.loc:=LOC_FLAGS;
                   ovloc.resflags.Init(NR_ICC,F_NE);
                 end;
+              else
+                ;
             end;
           end
         else
@@ -960,7 +966,7 @@ implementation
               if not((def.typ=pointerdef) or
                     ((def.typ=orddef) and
                      (torddef(def).ordtype in [u64bit,u16bit,u32bit,u8bit,uchar,
-                                               pasbool8,pasbool16,pasbool32,pasbool64]))) then
+                                               pasbool1,pasbool8,pasbool16,pasbool32,pasbool64]))) then
                 begin
                   ai:=TAiCpu.Op_sym(A_Bxx,hl);
                   ai.SetCondition(C_VC);
@@ -1107,9 +1113,9 @@ implementation
         paraloc1.init;
         paraloc2.init;
         paraloc3.init;
-        paramanager.getintparaloc(list,pd,1,paraloc1);
-        paramanager.getintparaloc(list,pd,2,paraloc2);
-        paramanager.getintparaloc(list,pd,3,paraloc3);
+        paramanager.getcgtempparaloc(list,pd,1,paraloc1);
+        paramanager.getcgtempparaloc(list,pd,2,paraloc2);
+        paramanager.getcgtempparaloc(list,pd,3,paraloc3);
         a_load_const_cgpara(list,OS_SINT,len,paraloc3);
         a_loadaddr_ref_cgpara(list,dest,paraloc2);
         a_loadaddr_ref_cgpara(list,source,paraloc1);

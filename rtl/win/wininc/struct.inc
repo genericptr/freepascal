@@ -821,6 +821,16 @@ Const
      TDCB = DCB;
      PDCB = ^DCB;
 
+     FLASHWINFO = record
+         cbSize    : UINT;
+         hwnd      : HWND;
+         dwFlags   : DWORD;
+         uCount    : UINT;
+         dwTimeOut : DWORD;
+     end;
+    TFLASHWINFO  = FLASHWINFO;
+    PFLASHWINFO  = ^FLASHWINFO;
+
   const
      bm_DCB_fBinary = $1;
      bp_DCB_fBinary = 0;
@@ -2699,7 +2709,7 @@ Const
        end;
      tagEMRCREATEDIBPATTERNBRUSHPT = EMRCREATEDIBPATTERNBRUSHPT;
      TEMRCREATEDIBPATTERNBRUSHPT = EMRCREATEDIBPATTERNBRUSHPT;
-     PEMRCREATEDIBPATTERNBRUSHPT = EMRCREATEDIBPATTERNBRUSHPT;
+     PEMRCREATEDIBPATTERNBRUSHPT = ^EMRCREATEDIBPATTERNBRUSHPT;
 
      EMRCREATEMONOBRUSH = record
           emr : EMR;
@@ -2864,7 +2874,7 @@ Const
      EMREXTCREATEFONTINDIRECTW = record
           emr : EMR;
           ihFont : DWORD;
-          elfw : EXTLOGFONT;
+          elfw : EXTLOGFONTW;
        end;
      tagEMREXTCREATEFONTINDIRECTW = EMREXTCREATEFONTINDIRECTW;
      TEMREXTCREATEFONTINDIRECTW = EMREXTCREATEFONTINDIRECTW;
@@ -3073,7 +3083,7 @@ Const
        end;
      tagEMRMODIFYWORLDTRANSFORM = EMRMODIFYWORLDTRANSFORM;
      TEMRMODIFYWORLDTRANSFORM = EMRMODIFYWORLDTRANSFORM;
-     PEMRMODIFYWORLDTRANSFORM = EMRMODIFYWORLDTRANSFORM;
+     PEMRMODIFYWORLDTRANSFORM = ^EMRMODIFYWORLDTRANSFORM;
 
      EMROFFSETCLIPRGN = record
           emr : EMR;
@@ -3162,7 +3172,7 @@ Const
           emr : EMR;
           rclBounds : RECTL;
           cpts : DWORD;
-          apts : array[0..0] of POINTL;
+          apts : array[0..0] of POINTS;
        end;
      tagEMRPOLYLINE16 = EMRPOLYLINE16;
      TEMRPOLYLINE16 = EMRPOLYLINE16;
@@ -6058,7 +6068,7 @@ Const
      PPREVENTMEDIAREMOVAL = ^PREVENT_MEDIA_REMOVAL;
 
      {PRINTDLG = record conflicts with PrintDlg function }
-     TPRINTDLG = packed record
+     TPRINTDLG = {$ifndef win64}packed {$endif}record
           lStructSize : DWORD;
           hwndOwner : HWND;
           hDevMode : HGLOBAL;
@@ -8804,6 +8814,48 @@ type
      PIMAGE_LOAD_CONFIG_DIRECTORY = PIMAGE_LOAD_CONFIG_DIRECTORY32;
 {$endif}
 
+     MOUSEINPUT = record
+       dx        : LONG;
+       dy        : LONG;
+       MouseData : DWORD;
+       dwFlags   : DWORD;
+       Time      : DWORD;
+       ExtraInfo : ULONG_PTR;
+     end;
+     TMOUSEINPUT  = MOUSEINPUT;
+     PMOUSEINPUT  = ^MOUSEINPUT;
+     LPMOUSEINPUT = PMOUSEINPUT;
+
+     KEYBDINPUT = record
+       wVk       : WORD;
+       wScan     : WORD;
+       dwFlags   : DWORD;
+       Time      : DWORD;
+       ExtraInfo : ULONG_PTR;
+     end;
+     TKEYBDINPUT  = KEYBDINPUT;
+     PKEYBDINPUT  = ^KEYBDINPUT;
+     LPKEYBDINPUT = PKEYBDINPUT;
+
+     HARDWAREINPUT = record
+       uMsg     : DWORD;
+       wParamL  : WORD;
+       wParamH  : WORD;
+     end;
+     THARDWAREINPUT  = HARDWAREINPUT;
+     PHARDWAREINPUT  = ^HARDWAREINPUT;
+     LPHARDWAREINPUT = PHARDWAREINPUT;
+
+     TINPUT = record
+       _Type : DWORD;
+       case integer of
+         1 : (mi : MOUSEINPUT);
+         2 : (ki : KEYBDINPUT);
+         3 : (hi : HARDWAREINPUT);
+     end;
+     PINPUT = ^TINPUT;
+     LPINPUT = PINPUT;
+
 {$push}
 {$packrecords 4}
 
@@ -9375,6 +9427,18 @@ type
     CONSOLE_READCONSOLE_CONTROL = _CONSOLE_READCONSOLE_CONTROL;
     PCONSOLE_READCONSOLE_CONTROL = ^_CONSOLE_READCONSOLE_CONTROL;
 
+
+    COMPUTER_NAME_FORMAT =  (
+          ComputerNameNetBIOS=0,
+          ComputerNameDnsHostname,
+          ComputerNameDnsDomain,
+          ComputerNameDnsFullyQualified,
+          ComputerNamePhysicalNetBIOS,
+          ComputerNamePhysicalDnsHostname,
+          ComputerNamePhysicalDnsDomain,
+          ComputerNamePhysicalDnsFullyQualified,
+          ComputerNameMax=31);
+    TCOMPUTER_NAME_FORMAT = COMPUTER_NAME_FORMAT;
 {$pop}
 {$endif read_interface}
 

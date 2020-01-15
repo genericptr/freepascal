@@ -192,6 +192,7 @@ type
     property CharSize: Word read GetCharSize;
     property InternalCalcField: Boolean read FInternalCalcField write FInternalCalcField;
     property Required: Boolean read FRequired write SetRequired;
+    Property Codepage : TSystemCodePage Read FCodePage;
   Published
     property Attributes: TFieldAttributes read FAttributes write SetAttributes default [];
     property DataType: TFieldType read FDataType write SetDataType;
@@ -428,7 +429,6 @@ type
     property FieldNo: Longint read FFieldNo;
     property IsIndexField: Boolean read FIsIndexField;
     property IsNull: Boolean read GetIsNull;
-    property Lookup: Boolean read GetLookup write SetLookup; deprecated;
     property NewValue: Variant read GetNewValue write SetNewValue;
     property Offset: word read FOffset;
     property Size: Integer read FSize write SetSize;
@@ -455,6 +455,7 @@ type
     property LookupDataSet: TDataSet read FLookupDataSet write FLookupDataSet;
     property LookupKeyFields: string read FLookupKeyFields write FLookupKeyFields;
     property LookupResultField: string read FLookupResultField write FLookupResultField;
+    property Lookup: Boolean read GetLookup write SetLookup stored false; deprecated;
     property Origin: string read FOrigin write FOrigin;
     property ProviderFlags : TProviderFlags read FProviderFlags write FProviderFlags;
     property ReadOnly: Boolean read FReadOnly write SetReadOnly;
@@ -1190,47 +1191,47 @@ type
   protected
     Procedure AssignParam(Param: TParam);
     Procedure AssignTo(Dest: TPersistent); override;
-    Function GetAsBoolean: Boolean; virtual;
-    Function GetAsBytes: TBytes; virtual;
-    Function GetAsCurrency: Currency; virtual;
-    Function GetAsDateTime: TDateTime; virtual;
-    Function GetAsFloat: Double; virtual;
-    Function GetAsInteger: Longint; virtual;
-    Function GetAsLargeInt: LargeInt; virtual;
-    Function GetAsMemo: string; virtual;
-    Function GetAsString: string; virtual;
-    Function GetAsAnsiString: AnsiString; virtual;
-    Function GetAsUnicodeString: UnicodeString; virtual;
-    Function GetAsUTF8String: UTF8String; virtual;
-    Function GetAsWideString: WideString; virtual;
-    Function GetAsVariant: Variant; virtual;
-    Function GetAsFMTBCD: TBCD; virtual;
+    Function GetAsBoolean: Boolean;
+    Function GetAsBytes: TBytes;
+    Function GetAsCurrency: Currency;
+    Function GetAsDateTime: TDateTime;
+    Function GetAsFloat: Double;
+    Function GetAsInteger: Longint;
+    Function GetAsLargeInt: LargeInt;
+    Function GetAsMemo: string;
+    Function GetAsString: string;
+    Function GetAsAnsiString: AnsiString;
+    Function GetAsUnicodeString: UnicodeString;
+    Function GetAsUTF8String: UTF8String;
+    Function GetAsWideString: WideString;
+    Function GetAsVariant: Variant;
+    Function GetAsFMTBCD: TBCD;
     Function GetDisplayName: string; override;
     Function GetIsNull: Boolean;
     Function IsEqual(AValue: TParam): Boolean;
-    Procedure SetAsBCD(const AValue: Currency); virtual;
-    Procedure SetAsBlob(const AValue: TBlobData); virtual;
-    Procedure SetAsBoolean(AValue: Boolean); virtual;
-    Procedure SetAsBytes(const AValue: TBytes); virtual;
-    Procedure SetAsCurrency(const AValue: Currency); virtual;
-    Procedure SetAsDate(const AValue: TDateTime); virtual;
-    Procedure SetAsDateTime(const AValue: TDateTime); virtual;
-    Procedure SetAsFloat(const AValue: Double); virtual;
-    Procedure SetAsInteger(AValue: Longint); virtual;
-    Procedure SetAsLargeInt(AValue: LargeInt); virtual;
-    Procedure SetAsMemo(const AValue: string); virtual;
-    Procedure SetAsSmallInt(AValue: LongInt); virtual;
-    Procedure SetAsString(const AValue: string); virtual;
-    Procedure SetAsAnsiString(const AValue: AnsiString); virtual;
-    Procedure SetAsUTF8String(const AValue: UTF8String); virtual;
-    Procedure SetAsUnicodeString(const AValue: UnicodeString); virtual;
-    Procedure SetAsWideString(const AValue: WideString); virtual;
-    Procedure SetAsTime(const AValue: TDateTime); virtual;
-    Procedure SetAsVariant(const AValue: Variant); virtual;
-    Procedure SetAsWord(AValue: LongInt); virtual;
-    Procedure SetAsFMTBCD(const AValue: TBCD); virtual;
+    Procedure SetAsBCD(const AValue: Currency);
+    Procedure SetAsBlob(const AValue: TBlobData);
+    Procedure SetAsBoolean(AValue: Boolean);
+    Procedure SetAsBytes(const AValue: TBytes);
+    Procedure SetAsCurrency(const AValue: Currency);
+    Procedure SetAsDate(const AValue: TDateTime);
+    Procedure SetAsDateTime(const AValue: TDateTime);
+    Procedure SetAsFloat(const AValue: Double);
+    Procedure SetAsInteger(AValue: Longint);
+    Procedure SetAsLargeInt(AValue: LargeInt);
+    Procedure SetAsMemo(const AValue: string);
+    Procedure SetAsSmallInt(AValue: LongInt);
+    Procedure SetAsString(const AValue: string);
+    Procedure SetAsAnsiString(const AValue: AnsiString);
+    Procedure SetAsUTF8String(const AValue: UTF8String);
+    Procedure SetAsUnicodeString(const AValue: UnicodeString);
+    Procedure SetAsWideString(const AValue: WideString);
+    Procedure SetAsTime(const AValue: TDateTime);
+    Procedure SetAsVariant(const AValue: Variant);
+    Procedure SetAsWord(AValue: LongInt);
+    Procedure SetAsFMTBCD(const AValue: TBCD);
     Procedure SetDataType(AValue: TFieldType);
-    Procedure SetText(const AValue: string); virtual;
+    Procedure SetText(const AValue: string);
   public
     constructor Create(ACollection: TCollection); overload; override;
     constructor Create(AParams: TParams; AParamType: TParamType); reintroduce; overload;
@@ -1296,6 +1297,8 @@ type
   end;
 
 { TParams }
+  TSQLParseOption = (spoCreate,spoEscapeSlash,spoEscapeRepeat,spoUseMacro);
+  TSQLParseOptions = Set of TSQLParseOption;
 
   TParams = class(TCollection)
   private
@@ -1305,6 +1308,8 @@ type
     Procedure SetItem(Index: Integer; Value: TParam);
     Procedure SetParamValue(const ParamName: string; const Value: Variant);
   protected
+    Function CreateParseOpts(DoCreate, EscapeSlash, EscapeRepeat : Boolean) : TSQLParseOptions;
+    function DoParseSQL(SQL: String; Options : TSQLParseOptions; ParameterStyle: TParamStyle; out  ParamBinding: TParambinding; MacroChar: Char; out ReplaceString: string): String; virtual;
     Procedure AssignTo(Dest: TPersistent); override;
     Function  GetDataSet: TDataSet;
     Function  GetOwner: TPersistent; override;
@@ -1325,6 +1330,7 @@ type
     Function  ParseSQL(SQL: String; DoCreate, EscapeSlash, EscapeRepeat : Boolean; ParameterStyle : TParamStyle): String; overload;
     Function  ParseSQL(SQL: String; DoCreate, EscapeSlash, EscapeRepeat : Boolean; ParameterStyle : TParamStyle; out ParamBinding: TParambinding): String; overload;
     Function  ParseSQL(SQL: String; DoCreate, EscapeSlash, EscapeRepeat : Boolean; ParameterStyle : TParamStyle; out ParamBinding: TParambinding; out ReplaceString : string): String; overload;
+    function  ParseSQL(SQL: String; Options : TSQLParseOptions; ParameterStyle: TParamStyle; out ParamBinding: TParambinding; MacroChar: Char; out ReplaceString: string): String;
     Procedure RemoveParam(Value: TParam);
     Procedure CopyParamValuesFromDataset(ADataset : TDataset; CopyBound : Boolean);
     Property Dataset : TDataset Read GetDataset;
@@ -1563,7 +1569,7 @@ type
     function  GetRecordCount: Longint; virtual;
     function  GetRecNo: Longint; virtual;
     procedure InitFieldDefs; virtual;
-    procedure InitFieldDefsFromfields;
+    procedure InitFieldDefsFromFields;
     procedure InitRecord(Buffer: TRecordBuffer); virtual;
     procedure InternalCancel; virtual;
     procedure InternalEdit; virtual;
@@ -1920,7 +1926,7 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure Edit;
-    function IsLinkedTo(ADataSet: TDataSet): Boolean;
+    function IsLinkedTo(ADataset: TDataSet): Boolean;
     property State: TDataSetState read FState;
   published
     property AutoEdit: Boolean read FAutoEdit write FAutoEdit default True;
@@ -1955,7 +1961,7 @@ type
   Private
     FActive        : boolean;
     FDatabase      : TDatabase;
-    FDataSets      : TList;
+    FDataSets      : TThreadList;
     FOpenAfterRead : boolean;
     Function GetDataSetCount : Longint;
     Function GetDataset(Index : longint) : TDBDataset;
@@ -2046,8 +2052,8 @@ type
   private
     FConnected : Boolean;
     FDataBaseName : String;
-    FDataSets : TList;
-    FTransactions : TList;
+    FDataSets : TThreadList;
+    FTransactions : TThreadList;
     FDirectory : String;
     FKeepConnection : Boolean;
     FParams : TStrings;

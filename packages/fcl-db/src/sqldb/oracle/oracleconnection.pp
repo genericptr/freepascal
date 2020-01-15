@@ -1,7 +1,7 @@
 unit oracleconnection;
 
 {
-    Copyright (c) 2006-2014 by Joost van der Sluis, FPC contributors
+    Copyright (c) 2006-2019 by Joost van der Sluis, FPC contributors
 
     Oracle RDBMS connector using the OCI protocol
 
@@ -358,6 +358,7 @@ begin
 
       case DataType of
         ftInteger         : AsInteger := PInteger(ParamBuffers[i].buffer)^;
+        ftLargeint        : AsLargeInt := PInt64(ParamBuffers[i].buffer)^;
         ftFloat           : AsFloat := PDouble(ParamBuffers[i].buffer)^;
         ftString          : begin
                             SetLength(s,ParamBuffers[i].Len);
@@ -1050,7 +1051,7 @@ begin
     OCI_SUCCESS : Result := True;
     OCI_SUCCESS_WITH_INFO : Begin
                             Result := True;
-                            HandleError;
+                            // HandleError;
                             end;
   end; {case}
 end;
@@ -1203,7 +1204,7 @@ begin
     qry.next;
     while (name = qry.fields[0].asstring) and (not qry.eof) do
       begin
-      Fields := Fields + ';' + trim(qry.Fields[2].asstring);
+      Fields := Fields + ';' + trim(qry.Fields[1].asstring);
       qry.next;
       end;
     end;
@@ -1262,7 +1263,7 @@ end;
 constructor TOracleConnection.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  FConnOptions := FConnOptions + [sqEscapeRepeat];
+  FConnOptions := FConnOptions + [sqEscapeRepeat,sqSequences];
   FOciEnvironment := nil;
   FOciError := nil;
   FOciServer := nil;

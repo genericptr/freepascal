@@ -726,7 +726,7 @@ parser_e_function_already_declared_public_forward=03120_E_Funkcja jest ju¾ zadek
 % declaration in the \var{implmentation} section.
 parser_e_not_external_and_export=03121_E_Nie mo¾na u¾y† jednocze˜nie EXPORT i EXTERNAL
 % These two procedure directives are mutually exclusive
-parser_h_not_supported_for_inline=03123_H_$1 nieobsˆugiwane w procedurze/funkcji inline
+parser_n_not_supported_for_inline=03123_N_$1 nieobsˆugiwane w procedurze/funkcji inline
 % Inline procedures don't support this declaration.
 parser_h_inlining_disabled=03124_H_Inline wyˆ¥czone
 % Inlining of procedures is disabled.
@@ -2119,7 +2119,7 @@ option_code_page_not_available=11039_E_Nieznana strona kodowa
 #
 option_logo=11023_[
 Free Pascal Compiler wersja $FPCFULLVERSION [$FPCDATE] dla $FPCCPU
-Copyright (c) 1993-2018 by Florian Klaempfl and others
+Copyright (c) 1993-2019 by Florian Klaempfl and others
 ]
 
 #

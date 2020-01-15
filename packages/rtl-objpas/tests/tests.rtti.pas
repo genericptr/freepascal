@@ -38,20 +38,47 @@ type
     procedure TestPropGetValueProcInteger;
     procedure TestPropGetValueProcBoolean;
     procedure TestPropGetValueProcShortString;
+    procedure TestPropGetValueObject;
+    procedure TestPropGetValueInterface;
+    procedure TestPropGetValueFloat;
+    procedure TestPropGetValueDynArray;
+    procedure TestPropGetValueEnumeration;
+    procedure TestPropGetValueChars;
 
     procedure TestPropSetValueString;
     procedure TestPropSetValueInteger;
     procedure TestPropSetValueBoolean;
     procedure TestPropSetValueShortString;
+    procedure TestPropSetValueObject;
+    procedure TestPropSetValueInterface;
+    procedure TestPropSetValueFloat;
+    procedure TestPropSetValueDynArray;
+    procedure TestPropSetValueEnumeration;
+    procedure TestPropSetValueChars;
 
     procedure TestGetValueStringCastError;
     procedure TestGetIsReadable;
     procedure TestIsWritable;
 
+    procedure TestIsType;
+
     procedure TestMakeNil;
     procedure TestMakeObject;
     procedure TestMakeArrayDynamic;
     procedure TestMakeArrayStatic;
+{$ifdef fpc}
+    procedure TestMakeArrayOpen;
+{$endif}
+    procedure TestMakeSingle;
+    procedure TestMakeDouble;
+    procedure TestMakeExtended;
+    procedure TestMakeCurrency;
+    procedure TestMakeComp;
+    procedure TestMakeEnum;
+    procedure TestMakeAnsiChar;
+    procedure TestMakeWideChar;
+
+    procedure TestFromOrdinal;
 
     procedure TestDataSize;
     procedure TestDataSizeEmpty;
@@ -59,14 +86,30 @@ type
     procedure TestReferenceRawDataEmpty;
 
     procedure TestIsManaged;
+{$ifdef fpc}
+    procedure TestOpenArrayToDyn;
+{$endif}
 
     procedure TestInterface;
 {$ifdef fpc}
     procedure TestInterfaceRaw;
 {$endif}
+
+    procedure TestProcVar;
+    procedure TestMethod;
+
+    procedure TestRawThunk;
+  private
+    procedure MakeFromOrdinalTObject;
+    procedure MakeFromOrdinalSet;
+    procedure MakeFromOrdinalString;
+    procedure MakeFromOrdinalNil;
   end;
 
 implementation
+
+uses
+  Tests.Rtti.Util;
 
 type
 
@@ -85,6 +128,9 @@ type
   TGetClassPropertiesSub = class(TGetClassProperties)
 
   end;
+
+  TTestDynArray = array of Integer;
+  TTestEnumeration = (en1, en2, en3, en4);
   {$M-}
 
   { TTestValueClass }
@@ -92,18 +138,38 @@ type
   {$M+}
   TTestValueClass = class
   private
+    FAArray: TTestDynArray;
+    FAChar: AnsiChar;
+    FAComp: Comp;
+    FACurrency: Currency;
+    FADouble: Double;
+    FAEnumeration: TTestEnumeration;
+    FAExtended: Extended;
     FAInteger: integer;
+    FAObject: TObject;
+    FASingle: Single;
     FAString: string;
     FABoolean: boolean;
     FAShortString: ShortString;
+    FAUnknown: IUnknown;
+    FAWideChar: WideChar;
     function GetAInteger: integer;
     function GetAString: string;
     function GetABoolean: boolean;
     function GetAShortString: ShortString;
     procedure SetWriteOnly(AValue: integer);
   published
+    property AArray: TTestDynArray read FAArray write FAArray;
+    property AEnumeration: TTestEnumeration read FAEnumeration write FAEnumeration;
     property AInteger: Integer read FAInteger write FAInteger;
     property AString: string read FAString write FAString;
+    property ASingle: Single read FASingle write FASingle;
+    property ADouble: Double read FADouble write FADouble;
+    property AExtended: Extended read FAExtended write FAExtended;
+    property ACurrency: Currency read FACurrency write FACurrency;
+    property AObject: TObject read FAObject write FAObject;
+    property AUnknown: IUnknown read FAUnknown write FAUnknown;
+    property AComp: Comp read FAComp write FAComp;
     property ABoolean: boolean read FABoolean write FABoolean;
     property AShortString: ShortString read FAShortString write FAShortString;
     property AGetInteger: Integer read GetAInteger;
@@ -111,6 +177,8 @@ type
     property AGetBoolean: boolean read GetABoolean;
     property AGetShortString: ShortString read GetAShortString;
     property AWriteOnly: integer write SetWriteOnly;
+    property AChar: AnsiChar read FAChar write FAChar;
+    property AWideChar: WideChar read FAWideChar write FAWideChar;
   end;
   {$M-}
 
@@ -149,7 +217,11 @@ type
   TTestSet = set of TTestEnum;
 
   TTestProc = procedure;
+  TTestFunc1 = function: LongInt;
+  TTestFunc2 = function(aArg1: LongInt; aArg2: array of LongInt): String;
   TTestMethod = procedure of object;
+  TTestMethod1 = function: LongInt of object;
+  TTestMethod2 = function(aArg1: LongInt; aArg2: array of LongInt): String of object;
   TTestHelper = class helper for TObject
   end;
 
@@ -330,6 +402,7 @@ begin
   CheckEquals(AValue.IsClass, False);
   CheckEquals(AValue.IsObject, True);
   Check(AValue.AsObject=ATestClass);
+  Check(PPointer(AValue.GetReferenceToRawData)^ = Pointer(ATestClass));
   CheckEquals(TTestValueClass(AValue.AsObject).AInteger, 54329);
   ATestClass.Free;
 end;
@@ -350,6 +423,7 @@ begin
   CheckEquals(value.GetArrayLength, 2);
   CheckEquals(value.GetArrayElement(0).AsInteger, 42);
   CheckEquals(value.GetArrayElement(1).AsInteger, 21);
+  Check(PPointer(value.GetReferenceToRawData)^ = Pointer(arr));
   value.SetArrayElement(0, 84);
   CheckEquals(arr[0], 84);
 end;
@@ -391,6 +465,381 @@ begin
   CheckEquals(value.GetArrayElement(3).AsInteger, 63);
 end;
 
+{$ifdef fpc}
+procedure TTestCase1.TestMakeArrayOpen;
+
+  procedure TestOpenArrayValueCopy(aArr: array of LongInt);
+  var
+    value: TValue;
+  begin
+    TValue.MakeOpenArray(@aArr[0], Length(aArr), PTypeInfo(TypeInfo(aArr)), value);
+    CheckEquals(value.IsArray, True);
+    CheckEquals(value.IsOpenArray, True);
+    CheckEquals(value.IsObject, False);
+    CheckEquals(value.IsOrdinal, False);
+    CheckEquals(value.IsClass, False);
+    CheckEquals(value.GetArrayLength, 2);
+    CheckEquals(value.GetArrayElement(0).AsInteger, 42);
+    CheckEquals(value.GetArrayElement(1).AsInteger, 21);
+    value.SetArrayElement(0, 84);
+    { since this is an open array the original array is modified! }
+    CheckEquals(aArr[0], 84);
+  end;
+
+  procedure TestOpenArrayValueVar(var aArr: array of LongInt);
+  var
+    value: TValue;
+  begin
+    TValue.MakeOpenArray(@aArr[0], Length(aArr), PTypeInfo(TypeInfo(aArr)), value);
+    CheckEquals(value.IsArray, True);
+    CheckEquals(value.IsOpenArray, True);
+    CheckEquals(value.IsObject, False);
+    CheckEquals(value.IsOrdinal, False);
+    CheckEquals(value.IsClass, False);
+    CheckEquals(value.GetArrayLength, 2);
+    CheckEquals(value.GetArrayElement(0).AsInteger, 42);
+    CheckEquals(value.GetArrayElement(1).AsInteger, 21);
+    value.SetArrayElement(0, 84);
+    { since this is an open array the original array is modified! }
+    CheckEquals(aArr[0], 84);
+  end;
+
+  procedure TestOpenArrayValueOut(var aArr: array of LongInt);
+  var
+    value: TValue;
+  begin
+    TValue.MakeOpenArray(@aArr[0], Length(aArr), PTypeInfo(TypeInfo(aArr)), value);
+    CheckEquals(value.IsArray, True);
+    CheckEquals(value.IsOpenArray, True);
+    CheckEquals(value.IsObject, False);
+    CheckEquals(value.IsOrdinal, False);
+    CheckEquals(value.IsClass, False);
+    CheckEquals(value.GetArrayLength, 2);
+    CheckEquals(value.GetArrayElement(0).AsInteger, 42);
+    CheckEquals(value.GetArrayElement(1).AsInteger, 21);
+    value.SetArrayElement(0, 84);
+    value.SetArrayElement(1, 128);
+    { since this is an open array the original array is modified! }
+    CheckEquals(aArr[0], 84);
+    CheckEquals(aArr[1], 128);
+    CheckEquals(value.GetArrayElement(0).AsInteger, 84);
+    CheckEquals(value.GetArrayElement(1).AsInteger, 128);
+  end;
+
+var
+  arr: array of LongInt;
+begin
+  TestOpenArrayValueCopy([42, 21]);
+
+  arr := [42, 21];
+  TestOpenArrayValueVar(arr);
+  CheckEquals(arr[0], 84);
+  CheckEquals(arr[1], 21);
+
+  arr := [42, 21];
+  TestOpenArrayValueOut(arr);
+  CheckEquals(arr[0], 84);
+  CheckEquals(arr[1], 128);
+end;
+
+{$endif}
+
+procedure TTestCase1.TestMakeSingle;
+var
+  fs: Single;
+  v: TValue;
+  hadexcept: Boolean;
+begin
+  fs := 3.14;
+
+  TValue.Make(@fs, TypeInfo(fs), v);
+  CheckEquals(v.IsClass, False);
+  CheckEquals(v.IsObject, False);
+  CheckEquals(v.IsOrdinal, False);
+  Check(v.AsExtended=fs);
+  Check(v.GetReferenceToRawData <> @fs);
+
+  try
+    hadexcept := False;
+    v.AsInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No signed type conversion exception');
+
+  try
+    hadexcept := False;
+    v.AsUInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No unsigned type conversion exception');
+end;
+
+procedure TTestCase1.TestMakeDouble;
+var
+  fd: Double;
+  v: TValue;
+  hadexcept: Boolean;
+begin
+  fd := 3.14;
+
+  TValue.Make(@fd, TypeInfo(fd), v);
+  CheckEquals(v.IsClass, False);
+  CheckEquals(v.IsObject, False);
+  CheckEquals(v.IsOrdinal, False);
+  Check(v.AsExtended=fd);
+  Check(v.GetReferenceToRawData <> @fd);
+
+  try
+    hadexcept := False;
+    v.AsInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No signed type conversion exception');
+
+  try
+    hadexcept := False;
+    v.AsUInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No unsigned type conversion exception');
+end;
+
+procedure TTestCase1.TestMakeExtended;
+var
+  fe: Extended;
+  v: TValue;
+  hadexcept: Boolean;
+begin
+  fe := 3.14;
+
+  TValue.Make(@fe, TypeInfo(fe), v);
+  CheckEquals(v.IsClass, False);
+  CheckEquals(v.IsObject, False);
+  CheckEquals(v.IsOrdinal, False);
+  Check(v.AsExtended=fe);
+  Check(v.GetReferenceToRawData <> @fe);
+
+  try
+    hadexcept := False;
+    v.AsInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No signed type conversion exception');
+
+  try
+    hadexcept := False;
+    v.AsUInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No unsigned type conversion exception');
+end;
+
+procedure TTestCase1.TestMakeCurrency;
+var
+  fcu: Currency;
+  v: TValue;
+  hadexcept: Boolean;
+begin
+  fcu := 3.14;
+
+  TValue.Make(@fcu, TypeInfo(fcu), v);
+  CheckEquals(v.IsClass, False);
+  CheckEquals(v.IsObject, False);
+  CheckEquals(v.IsOrdinal, False);
+  Check(v.AsExtended=Extended(fcu));
+  Check(v.AsCurrency=fcu);
+  Check(v.GetReferenceToRawData <> @fcu);
+
+  try
+    hadexcept := False;
+    v.AsInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No signed type conversion exception');
+
+  try
+    hadexcept := False;
+    v.AsUInt64;
+  except
+    hadexcept := True;
+  end;
+
+  CheckTrue(hadexcept, 'No unsigned type conversion exception');
+end;
+
+procedure TTestCase1.TestMakeComp;
+var
+  fco: Comp;
+  v: TValue;
+  hadexcept: Boolean;
+begin
+  fco := 314;
+
+  TValue.Make(@fco, TypeInfo(fco), v);
+
+  if v.Kind <> tkFloat then
+    Exit;
+
+  CheckEquals(v.IsClass, False);
+  CheckEquals(v.IsObject, False);
+  CheckEquals(v.IsOrdinal, False);
+  Check(v.AsExtended=Extended(fco));
+  Check(v.GetReferenceToRawData <> @fco);
+
+  try
+    hadexcept := False;
+    CheckEquals(v.AsInt64, 314);
+  except
+    hadexcept := True;
+  end;
+
+  CheckFalse(hadexcept, 'Had signed type conversion exception');
+
+  try
+    hadexcept := False;
+    CheckEquals(v.AsUInt64, 314);
+  except
+    hadexcept := True;
+  end;
+
+  CheckFalse(hadexcept, 'Had unsigned type conversion exception');
+end;
+
+procedure TTestCase1.TestMakeEnum;
+var
+  e: TTestEnum;
+  v: TValue;
+begin
+  e := te1;
+
+  TValue.Make(@e, TypeInfo(e), v);
+  Check(not v.IsClass);
+  Check(not v.IsArray);
+  Check(not v.IsEmpty);
+  Check(not v.IsOpenArray);
+  Check(not v.IsObject);
+  Check(v.IsOrdinal);
+
+  Check(v.GetReferenceToRawData <> @e);
+  Check(TTestEnum(v.AsOrdinal) = te1);
+end;
+
+procedure TTestCase1.TestMakeAnsiChar;
+var
+  c: AnsiChar;
+  v: TValue;
+begin
+  c := #20;
+
+  TValue.Make(@c, TypeInfo(c), v);
+  Check(not v.IsClass);
+  Check(not v.IsArray);
+  Check(not v.IsEmpty);
+  Check(not v.IsOpenArray);
+  Check(not v.IsObject);
+  Check(v.IsOrdinal);
+
+  Check(v.GetReferenceToRawData <> @c);
+  Check(AnsiChar(v.AsOrdinal) = #20);
+  Check(v.AsAnsiChar = #20);
+end;
+
+procedure TTestCase1.TestMakeWideChar;
+var
+  c: WideChar;
+  v: TValue;
+begin
+  c := #$1234;
+
+  TValue.Make(@c, TypeInfo(c), v);
+  Check(not v.IsClass);
+  Check(not v.IsArray);
+  Check(not v.IsEmpty);
+  Check(not v.IsOpenArray);
+  Check(not v.IsObject);
+  Check(v.IsOrdinal);
+
+  Check(v.GetReferenceToRawData <> @c);
+  Check(WideChar(v.AsOrdinal) = #$1234);
+  Check(v.AsWideChar = #$1234);
+end;
+
+procedure TTestCase1.MakeFromOrdinalTObject;
+begin
+  TValue.FromOrdinal(TypeInfo(TObject), 42);
+end;
+
+procedure TTestCase1.MakeFromOrdinalSet;
+begin
+  TValue.FromOrdinal(TypeInfo(TTestSet), 42);
+end;
+
+procedure TTestCase1.MakeFromOrdinalString;
+begin
+  TValue.FromOrdinal(TypeInfo(AnsiString), 42);
+end;
+
+procedure TTestCase1.MakeFromOrdinalNil;
+begin
+  TValue.FromOrdinal(Nil, 42);
+end;
+
+procedure TTestCase1.TestFromOrdinal;
+var
+  v: TValue;
+begin
+  v := TValue.FromOrdinal(TypeInfo(LongInt), 42);
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, 42);
+
+  v := TValue.FromOrdinal(TypeInfo(Boolean), Ord(True));
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, Ord(True));
+
+  v := TValue.FromOrdinal(TypeInfo(Int64), $1234123412341234);
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, $1234123412341234);
+
+  v := TValue.FromOrdinal(TypeInfo(QWord), $1234123412341234);
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, $1234123412341234);
+
+  v := TValue.FromOrdinal(TypeInfo(LongBool), Ord(True));
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, Ord(True));
+
+  v := TValue.FromOrdinal(TypeInfo(TTestEnum), Ord(te1));
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, Ord(te1));
+
+  v := TValue.FromOrdinal(TypeInfo(AnsiChar), Ord(#20));
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, Ord(#20));
+
+  v := TValue.FromOrdinal(TypeInfo(WideChar), Ord(#$1234));
+  Check(v.IsOrdinal);
+  CheckEquals(v.AsOrdinal, Ord(#$1234));
+
+  CheckException({$ifdef fpc}@{$endif}MakeFromOrdinalNil, EInvalidCast);
+  CheckException({$ifdef fpc}@{$endif}MakeFromOrdinalTObject, EInvalidCast);
+  CheckException({$ifdef fpc}@{$endif}MakeFromOrdinalSet, EInvalidCast);
+  CheckException({$ifdef fpc}@{$endif}MakeFromOrdinalString, EInvalidCast);
+end;
+
 procedure TTestCase1.TestGetIsReadable;
 var
   c: TRttiContext;
@@ -429,6 +878,33 @@ begin
   finally
     c.Free;
   end;
+end;
+
+procedure TTestCase1.TestIsType;
+type
+  TMyLongInt = type LongInt;
+var
+  v: TValue;
+  l: LongInt;
+  ml: TMyLongInt;
+begin
+  l := 42;
+  ml := 42;
+  TValue.Make(@l, TypeInfo(l), v);
+  Check(v.IsType(TypeInfo(l)));
+  Check(not v.IsType(TypeInfo(ml)));
+  Check(not v.IsType(TypeInfo(String)));
+  Check(v.specialize IsType<LongInt>);
+  Check(not v.specialize IsType<TMyLongInt>);
+  Check(not v.specialize IsType<String>);
+
+  TValue.Make(@ml, TypeInfo(ml), v);
+  Check(v.IsType(TypeInfo(ml)));
+  Check(not v.IsType(TypeInfo(l)));
+  Check(not v.IsType(TypeInfo(String)));
+  Check(v.specialize IsType<TMyLongInt>);
+  Check(not v.specialize IsType<LongInt>);
+  Check(not v.specialize IsType<String>);
 end;
 
 procedure TTestCase1.TestPropGetValueBoolean;
@@ -622,6 +1098,225 @@ begin
   end;
 end;
 
+procedure TTestCase1.TestPropGetValueObject;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  O: TObject;
+begin
+  c := TRttiContext.Create;
+  O := TObject.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AObject := O;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+      AProperty := ARttiType.GetProperty('AObject');
+      AValue := AProperty.GetValue(ATestClass);
+      CheckEquals(O.GetHashCode, AValue.AsObject.GetHashCode);
+    finally
+      AtestClass.Free;
+    end;
+    CheckEquals(O.GetHashCode, AValue.AsObject.GetHashCode);
+  finally
+    c.Free;
+    O.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropGetValueInterface;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  i: IInterface;
+begin
+  c := TRttiContext.Create;
+  i := TInterfacedObject.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AUnknown := i;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+      AProperty := ARttiType.GetProperty('AUnknown');
+      AValue := AProperty.GetValue(ATestClass);
+      Check(i = AValue.AsInterface);
+    finally
+      AtestClass.Free;
+    end;
+    Check(i = AValue.AsInterface);
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropGetValueFloat;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValueS, AValueD, AValueE, AValueC, AValueCm: TValue;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.ASingle := 1.1;
+    ATestClass.ADouble := 2.2;
+    ATestClass.AExtended := 3.3;
+    ATestClass.ACurrency := 4;
+    ATestClass.AComp := 5;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+
+      AProperty := ARttiType.GetProperty('ASingle');
+      AValueS := AProperty.GetValue(ATestClass);
+      CheckEquals(1.1, AValueS.AsExtended, 0.001);
+
+      AProperty := ARttiType.GetProperty('ADouble');
+      AValueD := AProperty.GetValue(ATestClass);
+      CheckEquals(2.2, AValueD.AsExtended, 0.001);
+
+      AProperty := ARttiType.GetProperty('AExtended');
+      AValueE := AProperty.GetValue(ATestClass);
+      CheckEquals(3.3, AValueE.AsExtended, 0.001);
+
+      AProperty := ARttiType.GetProperty('ACurrency');
+      AValueC := AProperty.GetValue(ATestClass);
+      CheckEquals(4.0, AValueC.AsExtended, 0.001);
+
+      AProperty := ARttiType.GetProperty('AComp');
+      AValueCm := AProperty.GetValue(ATestClass);
+      CheckEquals(5.0, AValueCm.AsExtended, 0.001);
+    finally
+      AtestClass.Free;
+    end;
+
+    CheckEquals(1.1, AValueS.AsExtended, 0.001);
+    CheckEquals(2.2, AValueD.AsExtended, 0.001);
+    CheckEquals(3.3, AValueE.AsExtended, 0.001);
+    CheckEquals(4.0, AValueC.AsExtended, 0.001);
+    CheckEquals(5.0, AValueCm.AsExtended, 0.001);
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropGetValueDynArray;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  A: TTestDynArray;
+begin
+  c := TRttiContext.Create;
+  A := [1, 2, 3, 4];
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AArray := A;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+      AProperty := ARttiType.GetProperty('AArray');
+      AValue := AProperty.GetValue(ATestClass);
+
+      CheckEquals(A[0], AValue.GetArrayElement(0).AsInteger);
+      CheckEquals(A[1], AValue.GetArrayElement(1).AsInteger);
+      CheckEquals(A[2], AValue.GetArrayElement(2).AsInteger);
+      CheckEquals(A[3], AValue.GetArrayElement(3).AsInteger);
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropGetValueEnumeration;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AEnumeration := en3;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+      AProperty := ARttiType.GetProperty('AEnumeration');
+      AValue := AProperty.GetValue(ATestClass);
+      CheckEquals(Ord(en3),AValue.AsOrdinal);
+      ATestClass.AEnumeration := en1;
+      CheckEquals(Ord(en3), AValue.AsOrdinal);
+      CheckEquals('en3', AValue.ToString);
+      CheckEquals(True, AValue.IsOrdinal);
+    finally
+      AtestClass.Free;
+    end;
+
+    CheckEquals(Ord(en3),AValue.AsOrdinal);
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropGetValueChars;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValueC, AValueW: TValue;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AChar := 'C';
+    ATestClass.AWideChar := 'W';
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+
+      AProperty := ARttiType.GetProperty('AChar');
+      AValueC := AProperty.GetValue(ATestClass);
+      CheckEquals('C',AValueC.AsAnsiChar);
+      ATestClass.AChar := 'N';
+      CheckEquals('C', AValueC.AsAnsiChar);
+      CheckEquals('C', AValueC.ToString);
+      CheckEquals(True, AValueC.IsOrdinal);
+
+      AProperty := ARttiType.GetProperty('AWideChar');
+      AValueW := AProperty.GetValue(ATestClass);
+      CheckEquals('W',AValueW.AsWideChar);
+      ATestClass.AWideChar := 'Z';
+      CheckEquals('W', AValueW.AsWideChar);
+      CheckEquals('W', AValueW.ToString);
+      CheckEquals(True, AValueW.IsOrdinal);
+    finally
+      AtestClass.Free;
+    end;
+
+    CheckEquals('C',AValueC.AsAnsiChar);
+    CheckEquals('W',AValueW.AsWideChar);
+  finally
+    c.Free;
+  end;
+end;
+
 procedure TTestCase1.TestPropSetValueString;
 var
   ATestClass : TTestValueClass;
@@ -745,9 +1440,264 @@ begin
       CheckEquals(ATestClass.AShortString, ss);
       ss := 'Foobar';
       CheckEquals(ATestClass.AShortString, 'Hello World');
+
+      AProperty.SetValue(ATestClass, 'Another string');
+      CheckEquals(ATestClass.AShortString, 'Another string');
     finally
       AtestClass.Free;
     end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueObject;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  O: TObject;
+  TypeInfo: PTypeInfo;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      AProperty := ARttiType.GetProperty('AObject');
+      TypeInfo := GetPropInfo(ATestClass, 'AObject')^.PropType;
+
+      O := TPersistent.Create;
+      TValue.Make(@O, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(ATestClass.AObject.GetHashCode, O.GetHashCode);
+      O.Free;
+
+      O := TPersistent.Create;
+      AProperty.SetValue(ATestClass, O);
+      CheckEquals(ATestClass.AObject.GetHashCode, O.GetHashCode);
+      O.Free;
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueInterface;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  TypeInfo: PTypeInfo;
+  i: IInterface;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      AProperty := ARttiType.GetProperty('AUnknown');
+      TypeInfo := GetPropInfo(ATestClass, 'AUnknown')^.PropType;
+
+      i := TInterfacedObject.Create;
+      TValue.Make(@i, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      Check(ATestClass.AUnknown = i);
+
+      i := TInterfacedObject.Create;
+      AProperty.SetValue(ATestClass, i);
+      Check(ATestClass.AUnknown = i);
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueFloat;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  TypeInfo: PTypeInfo;
+  S: Single;
+  D: Double;
+  E: Extended;
+  Cur: Currency;
+  Cmp: Comp;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+
+      AProperty := ARttiType.GetProperty('ASingle');
+      TypeInfo := GetPropInfo(ATestClass, 'ASingle')^.PropType;
+
+      S := 1.1;
+      TValue.Make(@S, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(S, ATestClass.ASingle, 0.001);
+
+      S := 1.2;
+      AProperty.SetValue(ATestClass, S);
+      CheckEquals(S, ATestClass.ASingle, 0.001);
+
+      AProperty := ARttiType.GetProperty('ADouble');
+      TypeInfo := GetPropInfo(ATestClass, 'ADouble')^.PropType;
+
+      D := 2.1;
+      TValue.Make(@D, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(D, ATestClass.ADouble, 0.001);
+
+      D := 2.2;
+      AProperty.SetValue(ATestClass, D);
+      CheckEquals(D, ATestClass.ADouble, 0.001);
+
+      AProperty := ARttiType.GetProperty('AExtended');
+      TypeInfo := GetPropInfo(ATestClass, 'AExtended')^.PropType;
+
+      E := 3.1;
+      TValue.Make(@E, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(E, ATestClass.AExtended, 0.001);
+
+      E := 3.2;
+      AProperty.SetValue(ATestClass, E);
+      CheckEquals(E, ATestClass.AExtended, 0.001);
+
+      AProperty := ARttiType.GetProperty('ACurrency');
+      TypeInfo := GetPropInfo(ATestClass, 'ACurrency')^.PropType;
+
+      Cur := 40;
+      TValue.Make(@Cur, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(Cur, ATestClass.ACurrency, 0.001);
+
+      Cur := 41;
+      AProperty.SetValue(ATestClass, Cur);
+      CheckEquals(Cur, ATestClass.ACurrency, 0.001);
+
+      AProperty := ARttiType.GetProperty('AComp');
+      TypeInfo := GetPropInfo(ATestClass, 'AComp')^.PropType;
+
+      Cmp := 50;
+      TValue.Make(@Cmp, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(Cmp, ATestClass.AComp, 0.001);
+
+      Cmp := 51;
+      AProperty.SetValue(ATestClass, Cmp);
+      CheckEquals(Cmp, ATestClass.AComp, 0.001);
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueDynArray;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  A: TTestDynArray;
+  TypeInfo: PTypeInfo;
+  i: Integer;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      AProperty := ARttiType.GetProperty('AArray');
+      TypeInfo := GetPropInfo(ATestClass, 'AArray')^.PropType;
+
+      A := [1, 2, 3, 4, 5];
+      TValue.Make(@A, TypeInfo, AValue);
+      AProperty.SetValue(ATestClass, AValue);
+
+      for i := 0 to High(A) do
+        CheckEquals(A[i], ATestClass.AArray[i]);
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueEnumeration;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  E: TTestEnumeration;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      AProperty := ARttiType.GetProperty('AEnumeration');
+
+      E := en2;
+      TValue.Make(@E, TypeInfo(TTestEnumeration), AValue);
+      AProperty.SetValue(ATestClass, AValue);
+      CheckEquals(Ord(E), Ord(ATestClass.AEnumeration));
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestCase1.TestPropSetValueChars;
+var
+  ATestClass : TTestValueClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValueC, AValueW: TValue;
+begin
+  c := TRttiContext.Create;
+  try
+    ATestClass := TTestValueClass.Create;
+    ATestClass.AChar := 'C';
+    ATestClass.AWideChar := 'W';
+    try
+      ARttiType := c.GetType(ATestClass.ClassInfo);
+      Check(assigned(ARttiType));
+
+      AProperty := ARttiType.GetProperty('AChar');
+      AValueC := AProperty.GetValue(ATestClass);
+      CheckEquals('C', AValueC.AsAnsiChar);
+
+      AProperty := ARttiType.GetProperty('AWideChar');
+      AValueW := AProperty.GetValue(ATestClass);
+      CheckEquals('W', AValueW.AsWideChar);
+    finally
+      AtestClass.Free;
+    end;
+      CheckEquals('C', AValueC.AsAnsiChar);
+      CheckEquals('W', AValueW.AsWideChar);
   finally
     c.Free;
   end;
@@ -1055,61 +2005,85 @@ var
 
   value: TValue;
 begin
+  u8:=245;
   TValue.Make(@u8, TypeInfo(UInt8), value);
   CheckEquals(1, value.DataSize, 'Size of UInt8 differs');
+  u16:=789;
   TValue.Make(@u16, TypeInfo(UInt16), value);
   CheckEquals(2, value.DataSize, 'Size of UInt16 differs');
+  u32:=568789;
   TValue.Make(@u32, TypeInfo(UInt32), value);
   CheckEquals(4, value.DataSize, 'Size of UInt32 differs');
+  u64:=$abdcefadbcef;
   TValue.Make(@u64, TypeInfo(UInt64), value);
   CheckEquals(8, value.DataSize, 'Size of UInt64 differs');
+  s8:=-32;
   TValue.Make(@s8, TypeInfo(Int8), value);
   CheckEquals(1, value.DataSize, 'Size of Int8 differs');
+  s16:=-5345;
   TValue.Make(@s16, TypeInfo(Int16), value);
   CheckEquals(2, value.DataSize, 'Size of Int16 differs');
+  s32:=-234567;
   TValue.Make(@s32, TypeInfo(Int32), value);
   CheckEquals(4, value.DataSize, 'Size of Int32 differs');
+  s64:=23456789012;
   TValue.Make(@s64, TypeInfo(Int64), value);
   CheckEquals(8, value.DataSize, 'Size of Int64 differs');
+  b8:=false;
   TValue.Make(@b8, TypeInfo(Boolean), value);
   CheckEquals(1, value.DataSize, 'Size of Boolean differs');
 {$ifdef fpc}
+  b16:=true;
   TValue.Make(@b16, TypeInfo(Boolean16), value);
   CheckEquals(2, value.DataSize, 'Size of Boolean16 differs');
+  b32:=false;
   TValue.Make(@b32, TypeInfo(Boolean32), value);
   CheckEquals(4, value.DataSize, 'Size of Boolean32 differs');
+  b64:=true;
   TValue.Make(@b64, TypeInfo(Boolean64), value);
   CheckEquals(8, value.DataSize, 'Size of Boolean64 differs');
 {$endif}
+  bl8:=true;
   TValue.Make(@bl8, TypeInfo(ByteBool), value);
   CheckEquals(1, value.DataSize, 'Size of ByteBool differs');
+  bl16:=false;
   TValue.Make(@bl16, TypeInfo(WordBool), value);
   CheckEquals(2, value.DataSize, 'Size of WordBool differs');
+  bl32:=false;
   TValue.Make(@bl32, TypeInfo(LongBool), value);
   CheckEquals(4, value.DataSize, 'Size of LongBool differs');
 {$ifdef fpc}
+  bl64:=true;
   TValue.Make(@bl64, TypeInfo(QWordBool), value);
   CheckEquals(8, value.DataSize, 'Size of QWordBool differs');
 {$endif}
+  f32:=4.567;
   TValue.Make(@f32, TypeInfo(Single), value);
   CheckEquals(4, value.DataSize, 'Size of Single differs');
+  f64:=-3456.678;
   TValue.Make(@f64, TypeInfo(Double), value);
   CheckEquals(8, value.DataSize, 'Size of Double differs');
 {$ifdef FPC_HAS_TYPE_EXTENDED}
+  f80:=-2345.678;
   TValue.Make(@f80, TypeInfo(Extended), value);
   CheckEquals(10, value.DataSize, 'Size of Extended differs');
 {$endif}
+  fcu:=56.78;
   TValue.Make(@fcu, TypeInfo(Currency), value);
   CheckEquals(SizeOf(Currency), value.DataSize, 'Size of Currency differs');
+  fco:=456;
   TValue.Make(@fco, TypeInfo(Comp), value);
   CheckEquals(SizeOf(Comp), value.DataSize, 'Size of Comp differs');
   ss := '';
   TValue.Make(@ss, TypeInfo(ShortString), value);
   CheckEquals(254, value.DataSize, 'Size ofShortString differs');
+  sa:= '';
   TValue.Make(@sa, TypeInfo(AnsiString), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of AnsiString differs');
+  sw := '';
   TValue.Make(@sw, TypeInfo(WideString), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of WideString differs');
+  su:='';
   TValue.Make(@su, TypeInfo(UnicodeString), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of UnicodeString differs');
   o := TTestValueClass.Create;
@@ -1119,6 +2093,7 @@ begin
   c := TObject;
   TValue.Make(@c, TypeInfo(TClass), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of TClass differs');
+  i := Nil;
   TValue.Make(@i, TypeInfo(IInterface), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of IInterface differs');
   TValue.Make(@t, TypeInfo(TTestRecord), value);
@@ -1133,8 +2108,10 @@ begin
   CheckEquals(SizeOf(TArrayOfLongintStatic), value.DataSize, 'Size of TArrayOfLongintStatic differs');
   TValue.Make(@ad, TypeInfo(TArrayOfLongintDyn), value);
   CheckEquals(SizeOf(TArrayOfLongintDyn), value.DataSize, 'Size of TArrayOfLongintDyn differs');
+  e:=low(TTestEnum);
   TValue.Make(@e, TypeInfo(TTestEnum), value);
   CheckEquals(SizeOf(TTestEnum), value.DataSize, 'Size of TTestEnum differs');
+  s:=[low(TTestEnum),high(TTestEnum)];
   TValue.Make(@s, TypeInfo(TTestSet), value);
   CheckEquals(SizeOf(TTestSet), value.DataSize, 'Size of TTestSet differs');
   p := Nil;
@@ -1283,6 +2260,34 @@ begin
   CheckEquals(false, IsManaged(nil), 'IsManaged for nil');
 end;
 
+{$ifdef fpc}
+procedure TTestCase1.TestOpenArrayToDyn;
+
+  procedure OpenArrayProc(aArr: array of LongInt);
+  var
+    value: TValue;
+  begin
+{$ifndef InLazIDE}
+    value := specialize OpenArrayToDynArrayValue<LongInt>(aArr);
+{$endif}
+    CheckEquals(value.IsArray, True);
+    CheckEquals(value.IsOpenArray, False);
+    CheckEquals(value.IsObject, False);
+    CheckEquals(value.IsOrdinal, False);
+    CheckEquals(value.IsClass, False);
+    CheckEquals(value.GetArrayLength, 2);
+    CheckEquals(value.GetArrayElement(0).AsInteger, 42);
+    CheckEquals(value.GetArrayElement(1).AsInteger, 84);
+    value.SetArrayElement(0, 21);
+    { since this is a copy the original array is not modified! }
+    CheckEquals(aArr[0], 42);
+  end;
+
+begin
+  OpenArrayProc([42, 84]);
+end;
+{$endif}
+
 procedure TTestCase1.TestInterface;
 var
   context: TRttiContext;
@@ -1328,7 +2333,7 @@ begin
 
     method := methods[0];
     CheckEquals(method.Name, 'Test', 'Method name of Test does not match');
-    Check(method.CallingConvention = ccReg, 'Calling convention of Test does not match');
+    Check(method.CallingConvention = DefaultCC, 'Calling convention of Test does not match');
     Check(method.MethodKind = mkProcedure, 'Method kind of Test does not match');
     Check(method.DispatchKind = dkInterface, 'Dispatch kind of Test does not match');
     Check(not Assigned(method.CodeAddress), 'Code address of Test is not Nil');
@@ -1339,7 +2344,7 @@ begin
 
     method := methods[1];
     CheckEquals(method.Name, 'Test2', 'Method name of Test2 does not match');
-    Check(method.CallingConvention = ccReg, 'Calling convention of Test2 does not match');
+    Check(method.CallingConvention = DefaultCC, 'Calling convention of Test2 does not match');
     Check(method.MethodKind = mkFunction, 'Method kind of Test2 does not match');
     Check(method.DispatchKind = dkInterface, 'Dispatch kind of Test2 does not match');
     Check(not Assigned(method.CodeAddress), 'Code address of Test2 is not Nil');
@@ -1351,7 +2356,7 @@ begin
 
     method := methods[2];
     CheckEquals(method.Name, 'Test3', 'Method name of Test3 does not match');
-    Check(method.CallingConvention = ccReg, 'Calling convention of Test3 does not match');
+    Check(method.CallingConvention = DefaultCC, 'Calling convention of Test3 does not match');
     Check(method.MethodKind = mkProcedure, 'Method kind of Test3 does not match');
     Check(method.DispatchKind = dkInterface, 'Dispatch kind of Test3 does not match');
     Check(not Assigned(method.CodeAddress), 'Code address of Test3 is not Nil');
@@ -1387,7 +2392,7 @@ begin
 
     method := methods[3];
     CheckEquals(method.Name, 'Test4', 'Method name of Test4 does not match');
-    Check(method.CallingConvention = ccReg, 'Calling convention of Test4 does not match');
+    Check(method.CallingConvention = DefaultCC, 'Calling convention of Test4 does not match');
     Check(method.MethodKind = mkFunction, 'Method kind of Test4 does not match');
     Check(method.DispatchKind = dkInterface, 'Dispatch kind of Test4 does not match');
     Check(not Assigned(method.CodeAddress), 'Code address of Test4 is not Nil');
@@ -1414,6 +2419,24 @@ begin
   end;
 end;
 
+procedure TTestCase1.TestRawThunk;
+var
+  intf: IInterface;
+begin
+  { we test the raw thunking by instantiating a TVirtualInterface of IInterface }
+  { this does not require a function call manager as the thunking is implemented
+    directly inside the RTTI unit }
+  try
+    intf := TVirtualInterface.Create(PTypeInfo(TypeInfo(IInterface))) as IInterface;
+  except
+    on e: ENotImplemented do
+      Ignore('RawThunk not implemented');
+  end;
+  { if all went well QueryInterface and _AddRef were called and now we call
+    _Release as well }
+  intf := Nil;
+end;
+
 {$ifdef fpc}
 procedure TTestCase1.TestInterfaceRaw;
 var
@@ -1435,6 +2458,110 @@ begin
   end;
 end;
 {$endif}
+
+procedure TTestCase1.TestProcVar;
+var
+  context: TRttiContext;
+  t: TRttiType;
+  p: TRttiProcedureType;
+  params: {$ifdef fpc}specialize{$endif} TArray<TRttiParameter>;
+begin
+  context := TRttiContext.Create;
+  try
+    t := context.GetType(PTypeInfo(TypeInfo(TTestProc)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiProcedureType, 'Rtti Type is not a procedure type');
+
+    p := t as TRttiProcedureType;
+    Check(p.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(not Assigned(p.ReturnType), 'Return type is assigned');
+    CheckEquals(0, Length(p.GetParameters), 'Procedure variable has parameters');
+
+    t := context.GetType(PTypeInfo(TypeInfo(TTestFunc1)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiProcedureType, 'Rtti Type is not a procedure type');
+
+    p := t as TRttiProcedureType;
+    Check(p.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(Assigned(p.ReturnType), 'Return type is not assigned');
+    //Check(p.ReturnType is TRttiOrdinalType, 'Return type is not an ordinal type');
+    CheckEquals(0, Length(p.GetParameters), 'Procedure variable has parameters');
+
+    t := context.GetType(PTypeInfo(TypeInfo(TTestFunc2)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiProcedureType, 'Rtti Type is not a procedure type');
+
+    p := t as TRttiProcedureType;
+    Check(p.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(Assigned(p.ReturnType), 'Return type is not assigned');
+    Check(p.ReturnType is TRttiStringType, 'Return type is not a string type');
+
+    params := p.GetParameters;
+    CheckEquals(2, Length(params), 'Procedure variable has incorrect amount of parameters');
+
+    Check(params[0].ParamType.TypeKind in [tkInteger, tkInt64], 'Parameter 1 is not an ordinal type');
+    //Check(params[0].ParamType is TRttiOrdinalType, 'Parameter 1 is not an ordinal type');
+    Check(pfArray in params[1].Flags, 'Parameter 2 is not an array');
+    Check(params[1].ParamType.TypeKind in [tkInteger, tkInt64], 'Parameter 2 is not an ordinal array');
+  finally
+    context.Free;
+  end;
+end;
+
+procedure TTestCase1.TestMethod;
+var
+  context: TRttiContext;
+  t: TRttiType;
+  m: TRttiMethodType;
+  params: {$ifdef fpc}specialize{$endif} TArray<TRttiParameter>;
+begin
+  context := TRttiContext.Create;
+  try
+    t := context.GetType(PTypeInfo(TypeInfo(TTestMethod)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiMethodType, 'Rtti Type is not a method type');
+
+    m := t as TRttiMethodType;
+    Check(m.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(not Assigned(m.ReturnType), 'Return type is assigned');
+    CheckEquals(0, Length(m.GetParameters), 'Method variable has parameters');
+
+    t := context.GetType(PTypeInfo(TypeInfo(TTestMethod1)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiMethodType, 'Rtti Type is not a method type');
+
+    m := t as TRttiMethodType;
+    Check(m.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(Assigned(m.ReturnType), 'Return type is not assigned');
+    //Check(p.ReturnType is TRttiOrdinalType, 'Return type is not an ordinal type');
+    CheckEquals(0, Length(m.GetParameters), 'Method variable has parameters');
+
+    t := context.GetType(PTypeInfo(TypeInfo(TTestMethod2)));
+    Check(Assigned(t), 'Rtti Type is Nil');
+    Check(t is TRttiInvokableType, 'Rtti Type is not an invokeable');
+    Check(t is TRttiMethodType, 'Rtti Type is not a method type');
+
+    m := t as TRttiMethodType;
+    Check(m.CallingConvention = DefaultCC, 'Calling convention does not match');
+    Check(Assigned(m.ReturnType), 'Return type is not assigned');
+    Check(m.ReturnType is TRttiStringType, 'Return type is not a string type');
+
+    params := m.GetParameters;
+    CheckEquals(2, Length(params), 'Method variable has incorrect amount of parameters');
+
+    Check(params[0].ParamType.TypeKind in [tkInteger, tkInt64], 'Parameter 1 is not an ordinal type');
+    //Check(params[0].ParamType is TRttiOrdinalType, 'Parameter 1 is not an ordinal type');
+    Check(pfArray in params[1].Flags, 'Parameter 2 is not an array');
+    Check(params[1].ParamType.TypeKind in [tkInteger, tkInt64], 'Parameter 2 is not an ordinal array');
+  finally
+    context.Free;
+  end;
+end;
 
 initialization
 {$ifdef fpc}

@@ -14,6 +14,8 @@
 
 Unit CPUInfo;
 
+{$i fpcdefs.inc}
+
 Interface
 
   uses
@@ -86,7 +88,8 @@ Const
      { cpu_pic32mx      } 'PIC32MX'
    );
 
-   fputypestr : array[tfputype] of string[9] = ('',
+   fputypestr : array[tfputype] of string[9] = (
+     'NONE',
      'SOFT',
      'MIPS2','MIPS3'
    );

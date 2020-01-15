@@ -40,6 +40,7 @@ interface
        public
          constructor Create(const s:string);
          destructor Destroy;override;
+         procedure Flush;
          procedure Add(const s:string);
          procedure AddHeader(const s:string);
          procedure AddCommonSymbolsHeader;
@@ -111,6 +112,12 @@ implementation
        end;
 
 
+     procedure TExeMap.Flush;
+       begin
+         System.Flush(t);
+       end;
+
+
      procedure TExeMap.Add(const s:string);
        begin
          writeln(t,s);
@@ -164,7 +171,7 @@ implementation
      procedure TExeMap.AddMemoryMapExeSection(p:texesection);
        begin
          { .text           0x000018a8     0xd958 }
-         Add(PadSpace(p.name,15)+PadSpace(' 0x'+HexStr(p.mempos+Fimagebase,sizeof(pint)*2),12)+
+         Add(PadSpace(p.name,15)+PadSpace(' '+p.MemPosStr(Fimagebase),12)+
              ' '+PadSpaceLeft(sizestr(p.size),9));
        end;
 

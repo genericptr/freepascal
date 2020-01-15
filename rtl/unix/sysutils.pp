@@ -274,7 +274,7 @@ procedure UnhookSignal(RtlSigNum: Integer; OnlyIfHooked: Boolean = True);
                 fillchar(act,sizeof(act),0);
                 pointer(act.sa_handler):=pointer(SIG_DFL);
               end;
-            if (fpsigaction(rtlsig2ossig[RtlSigNum],@act,nil)=0) then
+            if (fpsigaction(rtlsig2ossig[i],@act,nil)=0) then
               siginfo[i].hooked:=false;
           end;
       end;
@@ -609,25 +609,6 @@ begin
 end;
 
 
-Function FileExists (Const FileName : RawByteString) : Boolean;
-var
-  SystemFileName: RawByteString;
-begin
-  SystemFileName:=ToSingleByteFileSystemEncodedFileName(FileName);
-  // Don't use stat. It fails on files >2 GB.
-  // Access obeys the same access rules, so the result should be the same.
-  FileExists:=fpAccess(pointer(SystemFileName),F_OK)=0;
-end;
-
-Function DirectoryExists (Const Directory : RawByteString) : Boolean;
-Var
-  Info : Stat;
-  SystemFileName: RawByteString;
-begin
-  SystemFileName:=ToSingleByteFileSystemEncodedFileName(Directory);
-  DirectoryExists:=(fpstat(pointer(SystemFileName),Info)>=0) and fpS_ISDIR(Info.st_mode);
-end;
-
 Function LinuxToWinAttr (const FN : RawByteString; Const Info : Stat) : Longint;
 Var
   LinkInfo : Stat;
@@ -652,6 +633,66 @@ begin
       if (fpstat(pchar(FN),LinkInfo)>=0) and fpS_ISDIR(LinkInfo.st_mode) then
         Result := Result or faDirectory;
     end;
+end;
+
+
+function FileGetSymLinkTarget(const FileName: RawByteString; out SymLinkRec: TRawbyteSymLinkRec): Boolean;
+var
+  Info : Stat;
+  SystemFileName: RawByteString;
+begin
+  SystemFileName:=ToSingleByteFileSystemEncodedFileName(FileName);
+  if (fplstat(SystemFileName,Info)>=0) and fpS_ISLNK(Info.st_mode) then begin
+    FillByte(SymLinkRec, SizeOf(SymLinkRec), 0);
+    SymLinkRec.TargetName:=fpreadlink(SystemFileName);
+    if fpstat(pointer(SystemFileName), Info) < 0 then
+      raise EDirectoryNotFoundException.Create(SysErrorMessage(GetLastOSError));
+    SymLinkRec.Attr := LinuxToWinAttr(SystemFileName, Info);
+    SymLinkRec.Size := Info.st_size;
+    SymLinkRec.Mode := Info.st_mode;
+    Result:=True;
+  end else
+    Result:=False;
+end;
+
+
+Function FileExists (Const FileName : RawByteString; FollowLink : Boolean) : Boolean;
+var
+  Info : Stat;
+  SystemFileName: RawByteString;
+  isdir: Boolean;
+begin
+  SystemFileName:=ToSingleByteFileSystemEncodedFileName(FileName);
+  // Don't use stat. It fails on files >2 GB.
+  // Access obeys the same access rules, so the result should be the same.
+  FileExists:=fpAccess(pointer(SystemFileName),F_OK)=0;
+  { we need to ensure however that we aren't dealing with a directory }
+  isdir:=False;
+  if FileExists then begin
+    if (fpstat(pointer(SystemFileName),Info)>=0) and fpS_ISDIR(Info.st_mode) then begin
+      FileExists:=False;
+      isdir:=True;
+    end;
+  end;
+  { if we shall not follow the link we only need to check for a symlink if the
+    target file itself should not exist }
+  if not FileExists and not isdir and not FollowLink then
+    FileExists:=(fplstat(pointer(SystemFileName),Info)>=0) and fpS_ISLNK(Info.st_mode);
+end;
+
+Function DirectoryExists (Const Directory : RawByteString; FollowLink : Boolean) : Boolean;
+Var
+  Info : Stat;
+  SystemFileName: RawByteString;
+  exists: Boolean;
+begin
+  SystemFileName:=ToSingleByteFileSystemEncodedFileName(Directory);
+  exists:=fpstat(pointer(SystemFileName),Info)>=0;
+  DirectoryExists:=exists and fpS_ISDIR(Info.st_mode);
+  { if we shall not follow the link we only need to check for a symlink if the
+    target directory itself should not exist }
+  if not exists and not FollowLink then
+    DirectoryExists:=(fplstat(pointer(SystemFileName),Info)>=0) and fpS_ISLNK(Info.st_mode);
 end;
 
 
@@ -1128,7 +1169,7 @@ var
   fs : tstatfs;
 Begin
   if ((Drive in [Low(FixDriveStr)..High(FixDriveStr)]) and (not (fixdrivestr[Drive]=nil)) and (fpstatfs(StrPas(fixdrivestr[drive]),@fs)<>-1)) or
-     ((Drive <= High(drivestr)) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
+     ((Drive in [Low(DriveStr)..High(DriveStr)]) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
    Diskfree:=int64(fs.bavail)*int64(fs.bsize)
   else
    Diskfree:=-1;
@@ -1141,7 +1182,7 @@ var
   fs : tstatfs;
 Begin
   if ((Drive in [Low(FixDriveStr)..High(FixDriveStr)]) and (not (fixdrivestr[Drive]=nil)) and (fpstatfs(StrPas(fixdrivestr[drive]),@fs)<>-1)) or
-     ((drive <= High(drivestr)) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
+     ((Drive in [Low(DriveStr)..High(DriveStr)]) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
    DiskSize:=int64(fs.blocks)*int64(fs.bsize)
   else
    DiskSize:=-1;
@@ -1657,5 +1698,6 @@ Initialization
 
 Finalization
   FreeDriveStr;
+  FreeTerminateProcs;
   DoneExceptions;
 end.

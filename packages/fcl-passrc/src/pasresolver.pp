@@ -2,7 +2,7 @@
     This file is part of the Free Component Library
 
     Pascal resolver
-    Copyright (c) 2018  Mattias Gaertner  mattias@freepascal.org
+    Copyright (c) 2019  Mattias Gaertner  mattias@freepascal.org
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -50,6 +50,15 @@ Works:
   - const param makes children const too
   - const  TRecordValues
   - function default(record type): record
+  - advanced records:
+    - $modeswitch AdvancedRecords
+    - visibility public, private, strict private
+    - sub type
+    - const, var, class var
+    - function/procedure/class function/class procedure
+    - property, class property, default property
+    - constructor
+    - RTTI
 - class:
   - forward declaration
   - instance.a
@@ -144,6 +153,7 @@ Works:
 - built-in functions pred, succ for range type and enums
 - untyped parameters
 - built-in procedure str(const boolean|integer|enumvalue|classinstance,var s: string)
+- built-in procedure writestr(var s: string; Args: arguments...); varargs
 - pointer TPasPointerType
   - nil, assigned(), typecast, class, classref, dynarray, procvar
   - forward declaration
@@ -210,8 +220,39 @@ Works:
 - type alias type overloads
 - $writeableconst off $J-
 - $warn identifier ON|off|error|default
+- anonymous methods:
+  - assign in proc and program begin and initialization   p:=procedure begin end
+  - pass as arg  doit(procedure begin end)
+  - modifiers  assembler varargs cdecl
+  - typecast
+  - with
+  - self
+- built-in procedure Val(const s: string; var e: enumtype; out Code: integertype);
+- intrinsic functions Lo and Hi, depending on $mode (ObjFPC or Delphi):
+  - In $MODE DELPHI:
+    function Lo/Hi(i: <any integer type>): Byte
+  - In $MODE OBJFPC:
+    function Lo/Hi(i: Byte/ShortInt/Word/SmallInt): Byte
+    function Lo/Hi(i: LongWord/LongInt/UIntSingle/IntSingle): Word
+    function Lo/Hi(i: QWord/Int64/UIntDouble/IntDouble): LongWord
+- helpers:
+  - class
+  - record
+  - type helper for simple type variables
+  - InterfaceHelpers for fast gathering of helpers from uses sections
+  - "inherited" and "inherited name" for Delphi and ObjFPC
+  - for i in typehelped
+  - nested: type, const, class var
+  - visibility
+  - property
+  - helper method, Self as var argument
 
 ToDo:
+- operator overload
+   - operator enumerator
+   - binaryexpr
+   - advanced records
+- Include/Exclude for set of int/char/bool
 - error if property method resolution is not used
 - $H-hintpos$H+
 - $pop, $push
@@ -220,21 +261,15 @@ ToDo:
   - property defaultvalue
   - IntSet:=[-1]
   - CharSet:=[#13]
-- Include/Exclude for set of int/char/bool
 - proc: check if forward and impl default values match
 - call array of proc without ()
-- array+array
-- set of CharRange
-- object
-- generics, nested param lists
+- attributes
 - type helpers
 - record/class helpers
-- generics
+- array of const
+- generics, nested param lists
+- object
 - futures
-- operator overload
-   - operator enumerator
-- attributes
-- anonymous functions
 - TPasFileType
 - labels
 - $zerobasedstrings on|off
@@ -275,12 +310,23 @@ unit PasResolver;
 {$mode objfpc}{$H+}
 {$inline on}
 
+{$ifdef fpc}
+  {$define UsePChar}
+  {$define HasInt64}
+{$endif}
+
 {$IFOPT Q+}{$DEFINE OverflowCheckOn}{$ENDIF}
 {$IFOPT R+}{$DEFINE RangeCheckOn}{$ENDIF}
 
 interface
 
 uses
+  {$ifdef pas2js}
+  js,
+  {$IFDEF NODEJS}
+  NodeJSFS,
+  {$ENDIF}
+  {$endif}
   Classes, SysUtils, Math, Types, contnrs,
   PasTree, PScanner, PParser, PasResolveEval;
 
@@ -292,7 +338,6 @@ const
     po_NoOverloadedProcs,
     po_KeepClassForward,
     po_ArrayRangeExpr,
-    po_CheckModeswitches,
     po_CheckCondFunction];
 
 type
@@ -303,14 +348,18 @@ type
     btModule,
     btUntyped,     // TPasArgument without ArgType
     btChar,        // char
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiChar,    // ansichar
+    {$endif}
     btWideChar,    // widechar
     btString,      // string
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiString,  // ansistring
     btShortString, // shortstring
+    btRawByteString, // rawbytestring
+    {$endif}
     btWideString,  // widestring
     btUnicodeString,// unicodestring
-    btRawByteString, // rawbytestring
     btSingle,      // single  1.5E-45..3.4E38, digits 7-8, bytes 4
     btDouble,      // double  5.0E-324..1.7E308, digits 15-16, bytes 8
     btExtended,    // extended  platform, double or 1.9E-4932..1.1E4932, digits 19-20, bytes 10
@@ -320,7 +369,9 @@ type
     btByteBool,    // bytebool  true=not zero
     btWordBool,    // wordbool  true=not zero
     btLongBool,    // longbool  true=not zero
+    {$ifdef HasInt64}
     btQWordBool,   // qwordbool true=not zero
+    {$endif}
     btByte,        // byte  0..255
     btShortInt,    // shortint -128..127
     btWord,        // word  unsigned 2 bytes
@@ -331,13 +382,17 @@ type
     btLongint,     // longint  signed 4 bytes
     btUIntDouble,  // unsigned integer range of double 52bit
     btIntDouble,   // integer range of double  53bit
+    {$ifdef HasInt64}
     btQWord,       // qword   0..18446744073709551615, bytes 8
     btInt64,       // int64   -9223372036854775808..9223372036854775807, bytes 8
     btComp,        // as Int64, not ordinal
+    {$endif}
     btPointer,     // pointer  or canonical pointer (e.g. @something)
+    {$ifdef fpc}
     btFile,        // file
     btText,        // text
     btVariant,     // variant
+    {$endif}
     btNil,         // nil = pointer, class, procedure, method, ...
     btProc,        // TPasProcedure
     btBuiltInProc, // TPasUnresolvedSymbolRef with CustomData is TResElDataBuiltInProc
@@ -349,26 +404,47 @@ type
     );
   TResolveBaseTypes = set of TResolverBaseType;
 const
+  btIntMax = {$ifdef HasInt64}btInt64{$else}btIntDouble{$endif};
+  btUIntMax = {$ifdef HasInt64}btQWord{$else}btUIntDouble{$endif};
   btAllInteger = [btByte,btShortInt,btWord,btSmallInt,btIntSingle,btUIntSingle,
-    btLongWord,btLongint,btIntDouble,btUIntDouble,btQWord,btInt64,btComp];
-  btAllChars = [btChar,btAnsiChar,btWideChar];
-  btAllStrings = [btString,btAnsiString,btShortString,
-    btWideString,btUnicodeString,btRawByteString];
+    btLongWord,btLongint,btIntDouble,btUIntDouble
+    {$ifdef HasInt64}
+    ,btQWord,btInt64,btComp
+    {$endif}];
+  btAllIntegerNoQWord = btAllInteger{$ifdef HasInt64}-[btQWord]{$endif};
+  btAllSignedInteger = [btShortInt,btSmallInt,btIntSingle,btLongint,btIntDouble
+    {$ifdef HasInt64}
+    ,btInt64,btComp
+    {$endif}];
+  btAllChars = [btChar,{$ifdef FPC_HAS_CPSTRING}btAnsiChar,{$endif}btWideChar];
+  btAllStrings = [btString,
+    {$ifdef FPC_HAS_CPSTRING}btAnsiString,btShortString,btRawByteString,{$endif}
+    btWideString,btUnicodeString];
   btAllStringAndChars = btAllStrings+btAllChars;
-  btAllFloats = [btSingle,btDouble,btExtended,btCExtended,btCurrency];
-  btAllBooleans = [btBoolean,btByteBool,btWordBool,btLongBool,btQWordBool];
+  btAllStringPointer = [btString,
+    {$ifdef FPC_HAS_CPSTRING}btAnsiString,btRawByteString,{$endif}
+    btWideString,btUnicodeString];
+  btAllFloats = [btSingle,btDouble,
+    btExtended,btCExtended,btCurrency];
+  btAllBooleans = [btBoolean,btByteBool,btWordBool,btLongBool
+    {$ifdef HasInt64},btQWordBool{$endif}];
   btArrayRangeTypes = btAllChars+btAllBooleans+btAllInteger;
   btAllRanges = btArrayRangeTypes+[btRange];
+  btAllWithSubType = [btSet, btArrayLit, btArrayOrSet, btRange];
   btAllStandardTypes = [
     btChar,
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiChar,
+    {$endif}
     btWideChar,
     btString,
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiString,
     btShortString,
+    btRawByteString,
+    {$endif}
     btWideString,
     btUnicodeString,
-    btRawByteString,
     btSingle,
     btDouble,
     btExtended,
@@ -378,20 +454,26 @@ const
     btByteBool,
     btWordBool,
     btLongBool,
+    {$ifdef HasInt64}
     btQWordBool,
+    {$endif}
     btByte,
     btShortInt,
     btWord,
     btSmallInt,
     btLongWord,
     btLongint,
+    {$ifdef HasInt64}
     btQWord,
     btInt64,
     btComp,
-    btPointer,
-    btFile,
+    {$endif}
+    btPointer
+    {$ifdef fpc}
+    ,btFile,
     btText,
     btVariant
+    {$endif}
     ];
 
   ResBaseTypeNames: array[TResolverBaseType] of string =(
@@ -401,14 +483,18 @@ const
     'Module',
     'Untyped',
     'Char',
+    {$ifdef FPC_HAS_CPSTRING}
     'AnsiChar',
+    {$endif}
     'WideChar',
     'String',
+    {$ifdef FPC_HAS_CPSTRING}
     'AnsiString',
     'ShortString',
+    'RawByteString',
+    {$endif}
     'WideString',
     'UnicodeString',
-    'RawByteString',
     'Single',
     'Double',
     'Extended',
@@ -418,7 +504,9 @@ const
     'ByteBool',
     'WordBool',
     'LongBool',
+    {$ifdef HasInt64}
     'QWordBool',
+    {$endif}
     'Byte',
     'ShortInt',
     'Word',
@@ -429,13 +517,17 @@ const
     'Longint',
     'UIntDouble',
     'IntDouble',
+    {$ifdef HasInt64}
     'QWord',
     'Int64',
     'Comp',
+    {$endif}
     'Pointer',
+    {$ifdef fpc}
     'File',
     'Text',
     'Variant',
+    {$endif}
     'Nil',
     'Procedure/Function',
     'BuiltInProc',
@@ -468,7 +560,11 @@ type
     bfStrProc,
     bfStrFunc,
     bfWriteStr,
+    bfVal,
+    bfLo,
+    bfHi,
     bfConcatArray,
+    bfConcatString,
     bfCopyArray,
     bfInsertArray,
     bfDeleteArray,
@@ -501,6 +597,10 @@ const
     'Str',
     'Str',
     'WriteStr',
+    'Val',
+    'Lo',
+    'Hi',
+    'Concat',
     'Concat',
     'Copy',
     'Insert',
@@ -515,6 +615,30 @@ const
 
 const
   ResolverResultVar = 'Result';
+  {$IFDEF CheckPasTreeRefCount}
+  RefIdInferenceParamsExpr = 'InferenceParamsExpr';
+  {$ENDIF}
+
+type
+  {$ifdef pas2js}
+  TPasResIterate = procedure(Item, Arg: pointer) of object;
+
+  { TPasResHashList }
+
+  TPasResHashList = class
+  private
+    FItems: TJSObject;
+  public
+    constructor Create; reintroduce;
+    procedure Add(const aName: string; Item: Pointer);
+    function Find(const aName: string): Pointer;
+    procedure ForEachCall(const Proc: TPasResIterate; Arg: Pointer);
+    procedure Clear;
+    procedure Remove(const aName: string);
+  end;
+  {$else}
+  TPasResHashList = TFPHashList;
+  {$endif}
 
 type
 
@@ -525,7 +649,7 @@ type
     FPasElement: TPasElement;
     procedure SetPasElement(AValue: TPasElement);
   public
-    Id: int64;
+    Id: TMaxPrecInt;
     MsgType: TMessageType;
     MsgNumber: integer;
     MsgPattern: String;
@@ -542,6 +666,63 @@ type
   TUnresolvedPendingRef = class(TPasUnresolvedSymbolRef)
   public
     Element: TPasType; // TPasClassOfType or TPasPointerType
+  end;
+
+  { TPasSpecializeTypeData - CustomData of TPasSpecializeType
+    for the generic type see TPasSpecializeType(Element).DestType }
+
+  TPasSpecializeTypeData = Class(TResolveData)
+  public
+    SpecializedType: TPasGenericType;
+  end;
+
+  TPRSpecializeStep = (
+    prssNone,
+    prssInterfaceBuilding,
+    prssInterfaceFinished,
+    prssImplementationBuilding,
+    prssImplementationFinished
+    );
+
+  { TPRSpecializedItem }
+
+  TPRSpecializedItem = class
+  private
+    FSpecializedEl: TPasElement;
+  public
+    GenericEl: TPasElement;
+    Index: integer;
+    Step: TPRSpecializeStep; // how much of the specialized element has been created
+    FirstSpecialize: TPasElement;
+    Params: TPasTypeArray;
+    SpecializedConstraints: TPasElementArray;
+    destructor Destroy; override;
+    property SpecializedEl: TPasElement read FSpecializedEl;
+  end;
+
+  { TPRSpecializedTypeItem }
+
+  TPRSpecializedTypeItem = class(TPRSpecializedItem)
+  private
+    FSpecializedType: TPasGenericType;
+    procedure SetSpecializedType(AValue: TPasGenericType);
+  public
+    HeaderScope: TObject; // TPasScope
+    ImplProcs: TFPList; // list of TPasProcedure
+    destructor Destroy; override;
+    property SpecializedType: TPasGenericType read FSpecializedType write SetSpecializedType;
+  end;
+
+  { TPRSpecializedProcItem }
+
+  TPRSpecializedProcItem = class(TPRSpecializedItem)
+  private
+    FSpecializedProc: TPasProcedure;
+    procedure SetSpecializedProc(const AValue: TPasProcedure);
+  public
+    ImplProc: TPasProcedure; // <>SpecializedProc, can be nil
+    destructor Destroy; override;
+    property SpecializedProc: TPasProcedure read FSpecializedProc write SetSpecializedProc;
   end;
 
   TPSRefAccess = (
@@ -579,7 +760,7 @@ type
     procedure OnClearItem(Item, Dummy: pointer);
     procedure OnCollectItem(Item, aList: pointer);
   public
-    References: TFPHashList; // hash list of TPasScopeReference
+    References: TPasResHashList; // hash list of TPasScopeReference
     constructor Create(aScope: TPasScope);
     destructor Destroy; override;
     procedure Clear;
@@ -600,9 +781,8 @@ type
 
   TPasScope = Class(TResolveData)
   public
-    VisibilityContext: TPasElement; // methods sets this to a TPasClassType,
-      // used to check if the current context is allowed to access a
-      // private/protected element
+    VisibilityContext: TPasElement; // used to check if the current context
+                             // is allowed to access a private/protected element
     class function IsStoredInElement: boolean; virtual;
     class function FreeOnPop: boolean; virtual;
     procedure IterateElements(const aName: string; StartScope: TPasScope;
@@ -611,6 +791,7 @@ type
     procedure WriteIdentifiers(Prefix: string); virtual;
   end;
   TPasScopeClass = class of TPasScope;
+  TPasScopeArray = array of TPasScope;
 
   TPasModuleScopeFlag = (
     pmsfAssertSearched, // assert constructors searched
@@ -628,11 +809,13 @@ type
     FAssertMsgConstructor: TPasConstructor;
     FRangeErrorClass: TPasClassType;
     FRangeErrorConstructor: TPasConstructor;
+    FSystemTVarRec: TPasRecordType;
     procedure SetAssertClass(const AValue: TPasClassType);
     procedure SetAssertDefConstructor(const AValue: TPasConstructor);
     procedure SetAssertMsgConstructor(const AValue: TPasConstructor);
     procedure SetRangeErrorClass(const AValue: TPasClassType);
     procedure SetRangeErrorConstructor(const AValue: TPasConstructor);
+    procedure SetSystemTVarRec(const AValue: TPasRecordType);
   public
     FirstName: string; // the 'unit1' in 'unit1', or 'ns' in 'ns.unit1'
     PendingResolvers: TFPList; // list of TPasResolver waiting for the unit interface
@@ -648,6 +831,7 @@ type
     property AssertMsgConstructor: TPasConstructor read FAssertMsgConstructor write SetAssertMsgConstructor;
     property RangeErrorClass: TPasClassType read FRangeErrorClass write SetRangeErrorClass;
     property RangeErrorConstructor: TPasConstructor read FRangeErrorConstructor write SetRangeErrorConstructor;
+    property SystemTVarRec: TPasRecordType read FSystemTVarRec write SetSystemTVarRec;
   end;
   TPasModuleScopeClass = class of TPasModuleScope;
 
@@ -683,7 +867,7 @@ type
 
   TPasIdentifierScope = Class(TPasScope)
   private
-    FItems: TFPHashList;
+    FItems: TPasResHashList; // hashlist of TPasIdentifier
     procedure InternalAdd(Item: TPasIdentifier);
     procedure OnClearItem(Item, Dummy: pointer);
     procedure OnCollectItem(Item, List: pointer);
@@ -708,6 +892,7 @@ type
     procedure WriteLocalIdentifiers(Prefix: string); virtual;
     function GetLocalIdentifiers: TFPList; virtual;
   end;
+  TPasIdentifierScopeArray = array of TPasIdentifierScope;
 
   { TPasDefaultScope - root scope }
 
@@ -715,6 +900,24 @@ type
   public
     class function IsStoredInElement: boolean; override;
   end;
+
+  { TPasIterateFilterData }
+
+  TPasIterateFilterData = record
+    OnIterate: TIterateScopeElement;
+    Data: Pointer;
+  end;
+  PPasIterateFilterData = ^TPasIterateFilterData;
+
+  { TPRHelperEntry }
+
+  TPRHelperEntry = class
+  public
+    Added: integer; // Added is bigger when it was added later to the list
+    HelperForType: TPasType; // alias resolved
+    Helper: TPasClassType;
+  end;
+  TPRHelperEntryArray = array of TPRHelperEntry;
 
   { TPasSectionScope - e.g. interface, implementation, program, library }
 
@@ -728,6 +931,7 @@ type
     Finished: boolean;
     BoolSwitches: TBoolSwitches;
     ModeSwitches: TModeSwitches;
+    Helpers: TPRHelperEntryArray; // only created for interface. Sorted ascending ComparePRHelperEntries
     constructor Create; override;
     destructor Destroy; override;
     function FindIdentifier(const Identifier: String): TPasIdentifier; override;
@@ -742,7 +946,7 @@ type
 
   TPasInitialFinalizationScope = Class(TPasScope)
   public
-    References: TPasScopeReferences; // created by TPasAnalyzer
+    References: TPasScopeReferences; // created by TPasAnalyzer, not used by resolver
     function AddReference(El: TPasElement; Access: TPSRefAccess): TPasScopeReference;
     destructor Destroy; override;
   end;
@@ -756,9 +960,55 @@ type
     destructor Destroy; override;
   end;
 
+  { TPasGenericParamsScope - used during parsing TPasGenericTemplateType(s) }
+
+  TPasGenericParamsScope = Class(TPasIdentifierScope)
+  public
+    GenericType: TPasGenericType;
+  end;
+
+  TPSGenericStep = (
+    psgsNone,
+    psgsInterfaceParsed,
+    psgsImplementationParsed
+    );
+
+  { TPasGenericScope }
+
+  TPasGenericScope = Class(TPasIdentifierScope)
+  public
+    // for generic type:
+    SpecializedItems: TObjectList; // list of TPRSpecializedItem
+    GenericStep: TPSGenericStep; // how much of the generic was parsed
+    // for specialized type:
+    SpecializedFromItem: TPRSpecializedItem;
+    destructor Destroy; override;
+  end;
+
+  { TPasArrayScope }
+
+  TPasArrayScope = Class(TPasGenericScope)
+  public
+  end;
+
+  { TPasProcTypeScope }
+
+  TPasProcTypeScope = Class(TPasGenericScope)
+  public
+  end;
+
+  { TPasClassOrRecordScope }
+
+  TPasClassOrRecordScope = Class(TPasGenericScope)
+  public
+    DefaultProperty: TPasProperty;
+    ClassConstructor: TPasClassConstructor;
+    ClassDestructor: TPasClassDestructor;
+  end;
+
   { TPasRecordScope }
 
-  TPasRecordScope = Class(TPasIdentifierScope)
+  TPasRecordScope = Class(TPasClassOrRecordScope)
   end;
 
   TPasClassScopeFlag = (
@@ -781,38 +1031,56 @@ type
 
   { TPasClassScope }
 
-  TPasClassScope = Class(TPasIdentifierScope)
+  TPasClassScope = Class(TPasClassOrRecordScope)
   public
     AncestorScope: TPasClassScope;
     CanonicalClassOf: TPasClassOfType;
     DirectAncestor: TPasType; // TPasClassType or TPasAliasType, see GetPasClassAncestor
-    DefaultProperty: TPasProperty;
+      // Note: TPasClassType.AncestorType might be nil and DirectAncestor is "TObject"
     Flags: TPasClassScopeFlags;
     AbstractProcs: TArrayOfPasProcedure;
     Interfaces: TFPList; // list corresponds to TPasClassType(Element).Interfaces,
       // elements: TPasProperty for 'implements', or TPasClassIntfMap
     destructor Destroy; override;
+  end;
+  TPasClassScopeClass = class of TPasClassScope;
+
+  { TPasGroupScope }
+
+  TPasGroupScope = Class(TPasIdentifierScope)
+  public
+    Scopes: TPasIdentifierScopeArray;
+    Count: integer;
+    OnlyTypeMembers: boolean;
+    procedure Add(Scope: TPasIdentifierScope);
+    destructor Destroy; override;
+    function GetFirstNonHelperScope: TPasIdentifierScope;
+    class function IsStoredInElement: boolean; override;
+    function FindAncestorIdentifier(const Identifier: String): TPasIdentifier;
+    function FindAncestorElement(const Identifier: String): TPasElement;
     function FindIdentifier(const Identifier: String): TPasIdentifier; override;
     procedure IterateElements(const aName: string; StartScope: TPasScope;
       const OnIterateElement: TIterateScopeElement; Data: Pointer;
       var Abort: boolean); override;
     procedure WriteIdentifiers(Prefix: string); override;
   end;
-  TPasClassScopeClass = class of TPasClassScope;
 
   TPasProcedureScopeFlag = (
-    ppsfIsGroupOverload // mode objfpc: one overload is enough for all procs in same scope
+    ppsfIsGroupOverload, // mode objfpc: one overload is enough for all procs in same scope
+    ppsfIsSpecialized
     );
   TPasProcedureScopeFlags = set of TPasProcedureScopeFlag;
 
   { TPasProcedureScope }
 
-  TPasProcedureScope = Class(TPasIdentifierScope)
+  TPasProcedureScope = Class(TPasGenericScope)
   public
     DeclarationProc: TPasProcedure; // the corresponding forward declaration
     ImplProc: TPasProcedure; // the corresponding proc with Body
-    OverriddenProc: TPasProcedure; // if IsOverride then this is the ancestor proc (virtual or override)
-    ClassScope: TPasClassScope;
+    OverriddenProc: TPasProcedure; // the ancestor proc with same signature
+    ClassRecScope: TPasClassOrRecordScope;
+    GroupScope: TPasGroupScope; // set during parsing a method body
+    NestedMembersScope: TPasGroupScope; // set during parsing a method body of a nested class
     SelfArg: TPasArgument;
     Flags: TPasProcedureScopeFlags;
     BoolSwitches: TBoolSwitches; // if Body<>nil then body start, otherwise when FinishProc
@@ -862,7 +1130,8 @@ type
     WithScope: TPasWithScope; // owner
     Index: integer;
     Expr: TPasExpr;
-    Scope: TPasScope;
+    Scope: TPasGroupScope;
+    ClassRecScope: TPasClassOrRecordScope;
     Flags: TPasWithExprScopeFlags;
     class function IsStoredInElement: boolean; override;
     class function FreeOnPop: boolean; override;
@@ -870,6 +1139,7 @@ type
       const OnIterateElement: TIterateScopeElement; Data: Pointer;
       var Abort: boolean); override;
     procedure WriteIdentifiers(Prefix: string); override;
+    destructor Destroy; override;
   end;
   TPasWithExprScopeClass = class of TPasWithExprScope;
 
@@ -892,24 +1162,31 @@ type
     Current: TPasProperty;
   end;
 
-  { TPasSubScope - base class for sub scopes aka dotted scopes }
+  { TPasSubExprScope - base class for sub scopes aka dotted scopes }
 
-  TPasSubScope = Class(TPasIdentifierScope)
+  TPasSubExprScope = Class(TPasIdentifierScope)
   public
     class function IsStoredInElement: boolean; override;
   end;
 
-  { TPasIterateFilterData }
+  { TPasDotBaseScope }
 
-  TPasIterateFilterData = record
-    OnIterate: TIterateScopeElement;
-    Data: Pointer;
+  TPasDotBaseScope = Class(TPasSubExprScope)
+  public
+    GroupScope: TPasGroupScope;
+    OnlyTypeMembers: boolean; // true=only class var/procs, false=default=all
+    ConstParent: boolean;
+    function FindIdentifier(const Identifier: String): TPasIdentifier; override;
+    procedure IterateElements(const aName: string; StartScope: TPasScope;
+      const OnIterateElement: TIterateScopeElement; Data: Pointer;
+      var Abort: boolean); override;
+    procedure WriteIdentifiers(Prefix: string); override;
+    destructor Destroy; override;
   end;
-  PPasIterateFilterData = ^TPasIterateFilterData;
 
   { TPasModuleDotScope - scope for searching unitname.<identifier> }
 
-  TPasModuleDotScope = Class(TPasSubScope)
+  TPasModuleDotScope = Class(TPasDotBaseScope)
   private
     FModule: TPasModule;
     procedure OnInternalIterate(El: TPasElement; ElScope, StartScope: TPasScope;
@@ -928,13 +1205,11 @@ type
     property Module: TPasModule read FModule write SetModule;
   end;
 
-  { TPasDotIdentifierScope }
+  { TPasDotEnumTypeScope - used for EnumType.EnumValue }
 
-  TPasDotIdentifierScope = Class(TPasSubScope)
+  TPasDotEnumTypeScope = Class(TPasDotBaseScope)
   public
-    IdentifierScope: TPasIdentifierScope;
-    OnlyTypeMembers: boolean; // true=only class var/procs, false=default=all
-    ConstParent: boolean;
+    EnumScope: TPasEnumTypeScope;
     function FindIdentifier(const Identifier: String): TPasIdentifier; override;
     procedure IterateElements(const aName: string; StartScope: TPasScope;
       const OnIterateElement: TIterateScopeElement; Data: Pointer;
@@ -942,36 +1217,45 @@ type
     procedure WriteIdentifiers(Prefix: string); override;
   end;
 
-  { TPasDotRecordScope - used for aRecord.subidentifier }
+  { TPasDotClassOrRecordScope }
 
-  TPasDotRecordScope = Class(TPasDotIdentifierScope)
-  end;
-
-  { TPasDotEnumTypeScope - used for EnumType.EnumValue }
-
-  TPasDotEnumTypeScope = Class(TPasDotIdentifierScope)
+  TPasDotClassOrRecordScope = Class(TPasDotBaseScope)
+  public
+    ClassRecScope: TPasClassOrRecordScope;
   end;
 
   { TPasDotClassScope - used for aClass.subidentifier }
 
-  TPasDotClassScope = Class(TPasDotIdentifierScope)
-  private
-    FClassScope: TPasClassScope;
-    procedure SetClassScope(AValue: TPasClassScope);
+  TPasDotClassScope = Class(TPasDotClassOrRecordScope)
   public
-    InheritedExpr: boolean; // this is 'inherited <name>' instead of '.<name'
     IsClassOf: boolean; // true if aClassOf.
-    property ClassScope: TPasClassScope read FClassScope write SetClassScope;
+  end;
+
+  { TPasInheritedScope - used for inherited; and inherited Name() }
+
+  TPasInheritedScope = Class(TPasDotClassOrRecordScope)
+  public
+    AncestorScope: TPasClassScope;
+    function FindIdentifier(const Identifier: String): TPasIdentifier; override;
+    procedure IterateElements(const aName: string; StartScope: TPasScope;
+      const OnIterateElement: TIterateScopeElement; Data: Pointer;
+      var Abort: boolean); override;
+    procedure WriteIdentifiers(Prefix: string); override;
+  end;
+
+  { TPasDotHelperScope }
+
+  TPasDotHelperScope = class(TPasDotBaseScope)
   end;
 
   TResolvedReferenceFlag = (
-    rrfDotScope, // found reference via a dot scope (TPasDotIdentifierScope)
+    rrfDotScope, // found reference via a dot scope (TPasDotBaseScope)
     rrfImplicitCallWithoutParams, // a TPrimitiveExpr is an implicit call without params
-    rrfNoImplicitCallWithoutParams, // a TPrimitiveExpr is an implicit call without params
+    rrfNoImplicitCallWithoutParams, // a TPrimitiveExpr is not an implicit call
     rrfNewInstance, // constructor call (without it call constructor as normal method)
     rrfFreeInstance, // destructor call (without it call destructor as normal method)
     rrfVMT, // use VMT for call
-    rrfConstInherited // parent is const and children are too
+    rrfConstInherited // parent is const and this child is too
     );
   TResolvedReferenceFlags = set of TResolvedReferenceFlag;
 
@@ -995,6 +1279,8 @@ type
   TPRResolveVarAccesses = set of TResolvedRefAccess;
 
 const
+  rraAllWrite = [rraAssign,rraReadAndAssign,rraVarParam,rraOutParam];
+
   ResolvedToPSRefAccess: array[TResolvedRefAccess] of TPSRefAccess = (
     psraNone, // rraNone
     psraRead,  // rraRead
@@ -1022,11 +1308,18 @@ type
     property Declaration: TPasElement read FDeclaration write SetDeclaration;
   end;
 
-  { TResolvedRefCtxConstructor - constructed class of a newinstance reference }
+  { TResolvedRefCtxConstructor - constructed type of a newinstance reference }
 
   TResolvedRefCtxConstructor = Class(TResolvedRefContext)
   public
-    Typ: TPasType; // e.g. TPasClassType
+    Typ: TPasType;
+  end;
+
+  { TResolvedRefCtxAttrProc - constructor of an attribute }
+
+  TResolvedRefCtxAttrProc = Class(TResolvedRefContext)
+  public
+    Proc: TPasConstructor;
   end;
 
   TPasResolverResultFlag = (
@@ -1045,18 +1338,19 @@ type
     SubType: TResolverBaseType; // for btSet, btArrayLit, btArrayOrSet, btRange
     IdentEl: TPasElement; // if set then this specific identifier is the value, can be a type
     LoTypeEl: TPasType; // can be nil for const expression, all alias resolved
-    HiTypeEl: TPasType; // same as BaseTypeEl, except alias types are not resolved
+    HiTypeEl: TPasType; // same as LoTypeEl, except alias types are not resolved
     ExprEl: TPasExpr;
     Flags: TPasResolverResultFlags;
   end;
-  PPasResolvedElement = ^TPasResolverResult;
+  PPasResolverResult = ^TPasResolverResult;
+  TPasResolverResultArray = array of TPasResolverResult;
 
 type
   TPasResolverComputeFlag = (
     rcSetReferenceFlags,  // set flags of references while computing type, used by Resolve* methods
     rcNoImplicitProc,    // do not call a function without params, includes rcNoImplicitProcType
     rcNoImplicitProcType, // do not call a proc type without params
-    rcConstant,  // resolve a constant expresson
+    rcConstant,  // resolve a constant expression, error if not computable
     rcType       // resolve a type expression
     );
   TPasResolverComputeFlags = set of TPasResolverComputeFlag;
@@ -1111,12 +1405,19 @@ type
     Found: TPasElement;
     ElScope: TPasScope; // Where Found was found
     StartScope: TPasScope; // where the search started
+    SkipGenerics: boolean;
   end;
   PPRFindData = ^TPRFindData;
 
+  TPRFindGenericData = record
+    Find: TPRFindData;
+    TemplateCount: integer;
+  end;
+  PPRFindGenericData = ^TPRFindGenericData;
+
   TPasResolverOption = (
     proFixCaseOfOverrides,  // fix Name of overriding proc/property to the overriden proc/property
-    proClassPropertyNonStatic,  // class property accessors are non static
+    proClassPropertyNonStatic,  // class property accessors can be non static
     proPropertyAsVarParam, // allows to pass a property as a var/out argument
     proClassOfIs, // class-of supports is and as operator
     proExtClassInstanceNoTypeMembers, // class members of external class cannot be accessed by instance
@@ -1149,6 +1450,17 @@ type
     );
   TPRProcTypeDescFlags = set of TPRProcTypeDescFlag;
 
+  TPRParentParams = record
+    InlineSpec: TInlineSpecializeExpr;
+    Params: TParamsExpr;
+  end;
+
+  TPRTemplateCompOp = (
+    prtcoAssignToTempl,
+    prtcoAssignFromTempl,
+    prtcoEqual
+    );
+
   { TPasResolver }
 
   TPasResolver = Class(TPasTreeContainer)
@@ -1158,6 +1470,7 @@ type
     function GetBaseTypes(bt: TResolverBaseType): TPasUnresolvedSymbolRef; inline;
     function GetScopes(Index: integer): TPasScope; inline;
   private
+    FActiveHelpers: TPRHelperEntryArray; // sorted ascending ComparePRHelperEntries
     FAnonymousElTypePostfix: String;
     FBaseTypeChar: TResolverBaseType;
     FBaseTypeExtended: TResolverBaseType;
@@ -1167,14 +1480,14 @@ type
     FBuiltInProcs: array[TResolverBuiltInProc] of TResElDataBuiltInProc;
     FDefaultNameSpace: String;
     FDefaultScope: TPasDefaultScope;
-    FDynArrayMaxIndex: int64;
-    FDynArrayMinIndex: int64;
+    FDynArrayMaxIndex: TMaxPrecInt;
+    FDynArrayMinIndex: TMaxPrecInt;
     FLastCreatedData: array[TResolveDataListKind] of TResolveData;
     FLastElement: TPasElement;
     FLastMsg: string;
     FLastMsgArgs: TMessageArgs;
     FLastMsgElement: TPasElement;
-    FLastMsgId: int64;
+    FLastMsgId: TMaxPrecInt;
     FLastMsgNumber: integer;
     FLastMsgPattern: string;
     FLastMsgType: TMessageType;
@@ -1189,11 +1502,11 @@ type
     FScopeClass_Section: TPasSectionScopeClass;
     FScopeClass_WithExpr: TPasWithExprScopeClass;
     FScopeCount: integer;
-    FScopes: array of TPasScope; // stack of scopes
+    FScopes: TPasScopeArray; // stack of scopes
     FStep: TPasResolverStep;
     FStoreSrcColumns: boolean;
-    FSubScopeCount: integer;
-    FSubScopes: array of TPasScope; // stack of scopes
+    FStashScopeCount: integer;
+    FStashScopes: TPasScopeArray; // stack of scopes
     FTopScope: TPasScope;
     procedure ClearResolveDataList(Kind: TResolveDataListKind);
     function GetBaseTypeNames(bt: TResolverBaseType): string;
@@ -1201,12 +1514,14 @@ type
   protected
     const
       cExact = 0;
-      cAliasExact = cExact+1;
+      cGenericExact = cExact+1;
+      cAliasExact = cGenericExact+1;
       cCompatible = cAliasExact+1;
       cIntToIntConversion = ord(High(TResolverBaseType));
-      cToFloatConversion = 2*cIntToIntConversion;
+      cFloatToFloatConversion = 2*cIntToIntConversion;
       cTypeConversion = cExact+10000; // e.g. TObject to Pointer
       cLossyConversion = cExact+100000;
+      cIntToFloatConversion = cExact+400000; // int to float is worse than bigint to smallint
       cIncompatible = High(integer);
     var
       cTGUIDToString: integer;
@@ -1216,6 +1531,7 @@ type
     type
       TFindCallElData = record
         Params: TParamsExpr;
+        TemplCnt: integer;
         Found: TPasElement; // TPasProcedure or TPasUnresolvedSymbolRef(built in proc) or TPasType (typecast)
         LastProc: TPasProcedure;
         ElScope, StartScope: TPasScope;
@@ -1225,33 +1541,38 @@ type
       end;
       PFindCallElData = ^TFindCallElData;
 
-      TFindOverloadProcKind = (
-        fopkSameSignature, // search method declaration for a body
-        fopkProc,   // check overloads for a proc
-        fopkMethod  // check overloads for a method
+      TFindProcKind = (
+        fpkProcDeclaration, // search declaration for a body
+        fpkProc,   // check overloads for a proc
+        fpkMethod  // check overloads for a method
         );
-      TFindOverloadProcData = record
+      TFindProcData = record
         Proc: TPasProcedure;
         Args: TFPList;        // List of TPasArgument objects
-        Kind: TFindOverloadProcKind;
-        OnlyScope: TPasScope;
+        Kind: TFindProcKind;
         FoundOverloadModifier: boolean;
         FoundInSameScope: integer;
         Found: TPasProcedure;
         ElScope, StartScope: TPasScope;
         FoundNonProc: TPasElement;
       end;
-      PFindOverloadProcData = ^TFindOverloadProcData;
+      PFindProcData = ^TFindProcData;
 
-    procedure OnFindFirstElement(El: TPasElement; ElScope, StartScope: TPasScope;
+    procedure OnFindFirst_PreferNoParams(El: TPasElement; ElScope, StartScope: TPasScope;
       FindFirstElementData: Pointer; var Abort: boolean); virtual;
+    procedure OnFindFirst(El: TPasElement; ElScope, StartScope: TPasScope;
+      FindFirstElementData: Pointer; var Abort: boolean); virtual;
+    procedure OnFindFirst_GenericEl(El: TPasElement; ElScope, StartScope: TPasScope;
+      FindFirstGenericData: Pointer; var Abort: boolean); virtual;
     procedure OnFindCallElements(El: TPasElement; ElScope, StartScope: TPasScope;
-      FindProcsData: Pointer; var Abort: boolean); virtual;
-    procedure OnFindOverloadProc(El: TPasElement; ElScope, StartScope: TPasScope;
-      FindOverloadData: Pointer; var Abort: boolean); virtual;
+      FindCallElData: Pointer; var Abort: boolean); virtual; // find candidates for Name(params)
+    procedure OnFindProc(El: TPasElement; ElScope, StartScope: TPasScope;
+      FindProcData: Pointer; var Abort: boolean); virtual;
+    procedure OnFindProcDeclaration(El: TPasElement; ElScope, StartScope: TPasScope;
+      FindProcData: Pointer; var Abort: boolean); virtual;
     function IsSameProcContext(ProcParentA, ProcParentB: TPasElement): boolean;
-    function FindProcOverload(const ProcName: string; Proc: TPasProcedure;
-      OnlyScope: TPasScope): TPasProcedure;
+    function FindProcSameSignature(const ProcName: string; Proc: TPasProcedure;
+      Scope: TPasIdentifierScope; OnlyLocal: boolean): TPasProcedure;
   protected
     procedure SetCurrentParser(AValue: TPasParser); override;
     procedure ScannerWarnDirective(Sender: TObject; Identifier: string;
@@ -1265,23 +1586,26 @@ type
     procedure AddSection(El: TPasSection); virtual;
     procedure AddInitialFinalizationSection(El: TPasImplBlock); virtual;
     procedure AddType(El: TPasType); virtual;
-    procedure AddRecordType(El: TPasRecordType); virtual;
-    procedure AddClassType(El: TPasClassType); virtual;
+    procedure AddArrayType(El: TPasArrayType; TypeParams: TFPList); virtual;
+    procedure AddRecordType(El: TPasRecordType; TypeParams: TFPList); virtual;
+    procedure AddClassType(El: TPasClassType; TypeParams: TFPList); virtual;
     procedure AddVariable(El: TPasVariable); virtual;
     procedure AddResourceString(El: TPasResString); virtual;
     procedure AddEnumType(El: TPasEnumType); virtual;
     procedure AddEnumValue(El: TPasEnumValue); virtual;
     procedure AddProperty(El: TPasProperty); virtual;
-    procedure AddProcedure(El: TPasProcedure); virtual;
+    procedure AddProcedureType(El: TPasProcedureType; TypeParams: TFPList); virtual;
+    procedure AddProcedure(El: TPasProcedure; TypeParams: TFPList); virtual;
     procedure AddProcedureBody(El: TProcedureBody); virtual;
     procedure AddArgument(El: TPasArgument); virtual;
     procedure AddFunctionResult(El: TPasResultElement); virtual;
+    procedure AddGenericTemplateType(El: TPasGenericTemplateType); virtual;
     procedure AddExceptOn(El: TPasImplExceptOn); virtual;
+    procedure AddWithDo(El: TPasImplWithDo); virtual;
     procedure ResolveImplBlock(Block: TPasImplBlock); virtual;
     procedure ResolveImplElement(El: TPasImplElement); virtual;
     procedure ResolveImplCaseOf(CaseOf: TPasImplCaseOf); virtual;
     procedure ResolveImplLabelMark(Mark: TPasImplLabelMark); virtual;
-    procedure ResolveImplForLoop(Loop: TPasImplForLoop); virtual;
     procedure ResolveImplWithDo(El: TPasImplWithDo); virtual;
     procedure ResolveImplAsm(El: TPasImplAsmStatement); virtual;
     procedure ResolveImplAssign(El: TPasImplAssign); virtual;
@@ -1295,16 +1619,21 @@ type
     procedure ResolveBinaryExpr(El: TBinaryExpr; Access: TResolvedRefAccess); virtual;
     procedure ResolveSubIdent(El: TBinaryExpr; Access: TResolvedRefAccess); virtual;
     procedure ResolveParamsExpr(Params: TParamsExpr; Access: TResolvedRefAccess); virtual;
+    procedure ResolveParamsExprParams(Params: TParamsExpr); virtual;
     procedure ResolveFuncParamsExpr(Params: TParamsExpr; Access: TResolvedRefAccess); virtual;
+    procedure ResolveFuncParamsExprName(NameExpr: TPasExpr; TemplParams: TFPList;
+      Params: TParamsExpr; Access: TResolvedRefAccess; CallName: string = ''); virtual;
     procedure ResolveArrayParamsExpr(Params: TParamsExpr; Access: TResolvedRefAccess); virtual;
+    procedure ResolveArrayParamsExprName(NameExpr: TPasExpr; Params: TParamsExpr; Access: TResolvedRefAccess); virtual;
     procedure ResolveArrayParamsArgs(Params: TParamsExpr;
       const ResolvedValue: TPasResolverResult; Access: TResolvedRefAccess); virtual;
-    function ResolveBracketOperatorClass(Params: TParamsExpr;
-      const ResolvedValue: TPasResolverResult; ClassScope: TPasClassScope;
+    function ResolveBracketOperatorClassOrRec(Params: TParamsExpr;
+      const ResolvedValue: TPasResolverResult;
       Access: TResolvedRefAccess): boolean; virtual;
     procedure ResolveSetParamsExpr(Params: TParamsExpr); virtual;
     procedure ResolveArrayValues(El: TArrayValues); virtual;
     procedure ResolveRecordValues(El: TRecordValues); virtual;
+    procedure ResolveInlineSpecializeExpr(El: TInlineSpecializeExpr; Access: TResolvedRefAccess); virtual;
     function ResolveAccessor(Expr: TPasExpr): TPasElement;
     procedure SetResolvedRefAccess(Expr: TPasExpr; Ref: TResolvedReference;
       Access: TResolvedRefAccess); virtual;
@@ -1315,7 +1644,8 @@ type
     procedure FinishUsesClause; virtual;
     procedure FinishSection(Section: TPasSection); virtual;
     procedure FinishInterfaceSection(Section: TPasSection); virtual;
-    procedure FinishTypeSection(El: TPasDeclarations); virtual;
+    procedure FinishTypeSection(El: TPasElement); virtual;
+    procedure FinishTypeSectionEl(El: TPasType); virtual;
     procedure FinishTypeDef(El: TPasType); virtual;
     procedure FinishEnumType(El: TPasEnumType); virtual;
     procedure FinishSetType(El: TPasSetType); virtual;
@@ -1328,32 +1658,42 @@ type
     procedure FinishClassOfType(El: TPasClassOfType); virtual;
     procedure FinishPointerType(El: TPasPointerType); virtual;
     procedure FinishArrayType(El: TPasArrayType); virtual;
+    procedure FinishAliasType(El: TPasAliasType); virtual;
+    procedure FinishGenericTemplateType(El: TPasGenericTemplateType); virtual;
+    procedure FinishSpecializeType(El: TPasSpecializeType); virtual;
     procedure FinishResourcestring(El: TPasResString); virtual;
-    procedure FinishProcedure(aProc: TPasProcedure); virtual;
+    procedure FinishProcedure(Proc: TPasProcedure); virtual;
     procedure FinishProcedureType(El: TPasProcedureType); virtual;
     procedure FinishMethodDeclHeader(Proc: TPasProcedure); virtual;
     procedure FinishMethodImplHeader(ImplProc: TPasProcedure); virtual;
+    procedure FinishSpecializations(Scope: TPasGenericScope); virtual;
     procedure FinishExceptOnExpr; virtual;
     procedure FinishExceptOnStatement; virtual;
+    procedure FinishWithDo(El: TPasImplWithDo); virtual;
+    procedure FinishForLoopHeader(Loop: TPasImplForLoop); virtual;
     procedure FinishDeclaration(El: TPasElement); virtual;
     procedure FinishVariable(El: TPasVariable); virtual;
-    procedure FinishPropertyOfClass(PropEl: TPasProperty); virtual;
+    procedure FinishProperty(PropEl: TPasProperty); virtual;
     procedure FinishArgument(El: TPasArgument); virtual;
     procedure FinishAncestors(aClass: TPasClassType); virtual;
     procedure FinishMethodResolution(El: TPasMethodResolution); virtual;
+    procedure FinishAttributes(El: TPasAttributes); virtual;
+    procedure FinishProcParamAccess(ProcType: TPasProcedureType; Params: TParamsExpr); virtual;
     procedure FinishPropertyParamAccess(Params: TParamsExpr;
-      Prop: TPasProperty);
-    procedure FinishCallArgAccess(Expr: TPasExpr; Access: TResolvedRefAccess);
-    procedure FinishInitialFinalization(El: TPasImplBlock);
+      Prop: TPasProperty); virtual;
+    procedure FinishCallArgAccess(Expr: TPasExpr; Access: TResolvedRefAccess); virtual;
+    procedure FinishInitialFinalization(El: TPasImplBlock); virtual;
     procedure EmitTypeHints(PosEl: TPasElement; aType: TPasType); virtual;
     function EmitElementHints(PosEl, El: TPasElement): boolean; virtual;
     procedure StoreScannerFlagsInProc(ProcScope: TPasProcedureScope);
     procedure ReplaceProcScopeImplArgsWithDeclArgs(ImplProcScope: TPasProcedureScope);
     function CreateClassIntfMap(El: TPasClassType; Index: integer): TPasClassIntfMap;
     procedure CheckConditionExpr(El: TPasExpr; const ResolvedEl: TPasResolverResult); virtual;
-    procedure CheckProcSignatureMatch(DeclProc, ImplProc: TPasProcedure; CheckNames: boolean);
+    procedure CheckProcSignatureMatch(DeclProc, ImplProc: TPasProcedure;
+      IsOverride: boolean);
     procedure CheckPendingForwardProcs(El: TPasElement);
     procedure CheckPointerCycle(El: TPasPointerType);
+    procedure CheckGenericTemplateTypes(El: TPasGenericType); virtual;
     procedure ComputeUnaryNot(El: TUnaryExpr; var ResolvedEl: TPasResolverResult;
       Flags: TPasResolverComputeFlags); virtual;
     procedure ComputeBinaryExpr(Bin: TBinaryExpr;
@@ -1362,11 +1702,21 @@ type
     procedure ComputeBinaryExprRes(Bin: TBinaryExpr;
       out ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
       var LeftResolved, RightResolved: TPasResolverResult); virtual;
+    function ComputeAddStringRes(
+      const LeftResolved, RightResolved: TPasResolverResult; ExprEl: TPasExpr;
+      out ResolvedEl: TPasResolverResult): boolean; virtual;
+    procedure ComputeArgumentAndExpr(
+      Arg: TPasArgument; out ArgResolved: TPasResolverResult;
+      Expr: TPasExpr; out ExprResolved: TPasResolverResult;
+      SetReferenceFlags: boolean);
+    procedure ComputeArgumentExpr(const ArgResolved: TPasResolverResult;
+      Access: TArgumentAccess; Expr: TPasExpr; out ExprResolved: TPasResolverResult;
+      SetReferenceFlags: boolean);
     procedure ComputeArrayParams(Params: TParamsExpr;
       out ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
       StartEl: TPasElement);
     procedure ComputeArrayParams_Class(Params: TParamsExpr;
-      var ResolvedEl: TPasResolverResult; ClassScope: TPasClassScope;
+      var ResolvedEl: TPasResolverResult; ClassOrRecScope: TPasClassOrRecordScope;
       Flags: TPasResolverComputeFlags; StartEl: TPasElement); virtual;
     procedure ComputeFuncParams(Params: TParamsExpr;
       out ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
@@ -1397,28 +1747,32 @@ type
     function IsCharLiteral(const Value: string; ErrorPos: TPasElement): TResolverBaseType; virtual;
     function CheckForIn(Loop: TPasImplForLoop;
       const VarResolved, InResolved: TPasResolverResult): boolean; virtual;
-    function CheckForInClass(Loop: TPasImplForLoop;
+    function CheckForInClassOrRec(Loop: TPasImplForLoop;
       const VarResolved, InResolved: TPasResolverResult): boolean; virtual;
     function CheckBuiltInMinParamCount(Proc: TResElDataBuiltInProc; Expr: TPasExpr;
       MinCount: integer; RaiseOnError: boolean): boolean;
     function CheckBuiltInMaxParamCount(Proc: TResElDataBuiltInProc; Params: TParamsExpr;
       MaxCount: integer; RaiseOnError: boolean): integer;
-    function CheckRaiseTypeArgNo(id: int64; ArgNo: integer; Param: TPasExpr;
+    function CheckRaiseTypeArgNo(id: TMaxPrecInt; ArgNo: integer; Param: TPasExpr;
       const ParamResolved: TPasResolverResult; Expected: string; RaiseOnError: boolean): integer;
     function FindUsedUnitInSection(const aName: string; Section: TPasSection): TPasModule;
     function FindUsedUnit(const aName: string; aMod: TPasModule): TPasModule;
     procedure FinishAssertCall(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr); virtual;
-    function FindExceptionConstructor(const aUnitName, aClassName: string;
+    function FindClassTypeAndConstructor(const aUnitName, aClassName: string;
       out aClass: TPasClassType; out aConstructor: TPasConstructor;
       ErrorEl: TPasElement): boolean; virtual;
     procedure FindAssertExceptionConstructors(ErrorEl: TPasElement); virtual;
     procedure FindRangeErrorConstructors(ErrorEl: TPasElement); virtual;
+    function FindTVarRec(ErrorEl: TPasElement): TPasRecordType; virtual;
+    function GetTVarRec(El: TPasArrayType): TPasRecordType; virtual;
+    function FindDefaultConstructor(aClass: TPasClassType): TPasConstructor; virtual;
   protected
+    // constant evaluation
     fExprEvaluator: TResExprEvaluator;
-    procedure OnExprEvalLog(Sender: TResExprEvaluator; const id: int64;
+    procedure OnExprEvalLog(Sender: TResExprEvaluator; const id: TMaxPrecInt;
       MsgType: TMessageType; MsgNumber: integer; const Fmt: String;
-      Args: array of const; PosEl: TPasElement); virtual;
+      Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif}; PosEl: TPasElement); virtual;
     function OnExprEvalIdentifier(Sender: TResExprEvaluator;
       Expr: TPrimitiveExpr; Flags: TResEvalFlags): TResEvalValue; virtual;
     function OnExprEvalParams(Sender: TResExprEvaluator;
@@ -1426,6 +1780,123 @@ type
     procedure OnRangeCheckEl(Sender: TResExprEvaluator; El: TPasElement;
       var MsgType: TMessageType); virtual;
     function EvalBaseTypeCast(Params: TParamsExpr; bt: TResolverBaseType): TResEvalvalue;
+  protected
+    // generic/specialize
+    type
+      TScopeStashState = record
+        ScopeCount: integer;
+        StashCount: integer;
+      end;
+    procedure AddGenericTemplateIdentifiers(GenericTemplateTypes: TFPList;
+      Scope: TPasIdentifierScope);
+    procedure AddSpecializedTemplateIdentifiers(GenericTemplateTypes: TFPList;
+      SpecializedItem: TPRSpecializedItem; Scope: TPasIdentifierScope;
+      CheckConstraints: boolean);
+    function CreateInferenceTypesForCall(Params: TParamsExpr;
+      TargetProc: TPasProcedure): TFPList;
+    function GetSpecializedEl(El: TPasElement; GenericEl: TPasElement;
+      Params: TFPList): TPasElement;
+    function CheckGenericConstraintFitsParam(ParamType: TPasType;
+      SpecializedItem: TPRSpecializedItem; // set to specialize constraints
+      TemplType: TPasGenericTemplateType; ConEl: TPasElement;
+      Operation: TPRTemplateCompOp;
+      ErrorPos: TPasElement // can be nil to get a compatibility Result
+      ): integer;
+    function CheckTemplateFitsParam(ParamType: TPasType;
+      GenTempl: TPasGenericTemplateType;
+      SpecializedItem: TPRSpecializedItem; // set to specialize constraints
+      Operation: TPRTemplateCompOp;
+      ErrorPos: TPasElement // can be nil to get a compatibility Result
+      ): integer;
+    function CheckTemplateFitsParamRes(GenTempl: TPasGenericTemplateType;
+      const ResolvedEl: TPasResolverResult;
+      Operation: TPRTemplateCompOp;
+      ErrorPos: TPasElement // can be nil to get a compatibility Result
+      ): integer;
+    procedure CheckTemplateFitsTemplate(ParamTemplType,
+      GenTempl: TPasGenericTemplateType; ErrorPos: TPasElement);
+    function CreateSpecializedItem(El: TPasElement; GenericEl: TPasElement;
+      const ParamsResolved: TPasTypeArray): TPRSpecializedItem; virtual;
+    function CreateSpecializedTypeName(SpecializedItems: TObjectList;
+      Item: TPRSpecializedItem): string; virtual;
+    procedure InitSpecializeScopes(El: TPasElement; out State: TScopeStashState); virtual;
+    procedure RestoreSpecializeScopes(const State: TScopeStashState); virtual;
+    procedure SpecializeGenericIntf(SpecializedItem: TPRSpecializedItem); virtual;
+    procedure SpecializeGenericImpl(SpecializedItem: TPRSpecializedItem); virtual;
+    procedure SpecializeMembers(GenMembersType, SpecMembersType: TPasMembersType); virtual;
+    procedure SpecializeMembersImpl(GenericType, SpecType: TPasMembersType;
+      SpecializedItem: TPRSpecializedTypeItem); virtual;
+    procedure SpecializeGenImplProc(GenDeclProc, SpecDeclProc: TPasProcedure;
+      SpecializedItem: TPRSpecializedItem); virtual;
+    procedure SpecializeElement(GenEl, SpecEl: TPasElement);
+    procedure SpecializePasElementProperties(GenEl, SpecEl: TPasElement);
+    procedure SpecializeVariable(GenEl, SpecEl: TPasVariable; Finish: boolean);
+    procedure SpecializeConst(GenEl, SpecEl: TPasConst);
+    procedure SpecializeProperty(GenEl, SpecEl: TPasProperty);
+    function SpecializeTypeRef(GenEl, SpecEl: TPasElement; GenTypeRef: TPasType): TPasType;
+    procedure SpecializeElType(GenEl, SpecEl: TPasElement;
+      GenElType: TPasType; var SpecElType: TPasType);
+    procedure SpecializeElExpr(GenEl, SpecEl: TPasElement;
+      GenElExpr: TPasExpr; var SpecElExpr: TPasExpr);
+    procedure SpecializeElImplEl(GenEl, SpecEl: TPasElement;
+      GenImplEl: TPasImplElement; var SpecImplEl: TPasImplElement);
+    procedure SpecializeElImplAlias(GenEl, SpecEl: TPasImplBlock;
+      GenImplAlias: TPasImplElement; var SpecImplAlias: TPasImplElement
+      {$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+    procedure SpecializeElList(GenEl, SpecEl: TPasElement;
+      GenList, SpecList: TFPList; AllowReferences: boolean
+      {$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+    procedure SpecializeElArray(GenEl, SpecEl: TPasElement;
+      GenList: TPasElementArray; var SpecList: TPasElementArray; AllowReferences: boolean
+      {$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+    procedure SpecializeProcedure(GenEl, SpecEl: TPasProcedure; SpecializedItem: TPRSpecializedItem);
+    procedure SpecializeOperator(GenEl, SpecEl: TPasOperator);
+    procedure SpecializeProcedureType(GenEl, SpecEl: TPasProcedureType; SpecializedItem: TPRSpecializedItem);
+    procedure SpecializeProcedureBody(GenEl, SpecEl: TProcedureBody);
+    procedure SpecializeDeclarations(GenEl, SpecEl: TPasDeclarations);
+    procedure SpecializeSpecializeType(GenEl, SpecEl: TPasSpecializeType);
+    procedure SpecializeGenericTemplateType(GenEl, SpecEl: TPasGenericTemplateType);
+    procedure SpecializeArgument(GenEl, SpecEl: TPasArgument);
+    procedure SpecializeImplBlock(GenEl, SpecEl: TPasImplBlock);
+    procedure SpecializeImplAsmStatement(GenEl, SpecEl: TPasImplAsmStatement);
+    procedure SpecializeImplRepeatUntil(GenEl, SpecEl: TPasImplRepeatUntil);
+    procedure SpecializeImplIfElse(GenEl, SpecEl: TPasImplIfElse);
+    procedure SpecializeImplWhileDo(GenEl, SpecEl: TPasImplWhileDo);
+    procedure SpecializeImplWithDo(GenEl, SpecEl: TPasImplWithDo);
+    procedure SpecializeImplCaseOf(GenEl, SpecEl: TPasImplCaseOf);
+    procedure SpecializeImplCaseStatement(GenEl, SpecEl: TPasImplCaseStatement);
+    procedure SpecializeImplAssign(GenEl, SpecEl: TPasImplAssign);
+    procedure SpecializeImplSimple(GenEl, SpecEl: TPasImplSimple);
+    procedure SpecializeImplForLoop(GenEl, SpecEl: TPasImplForLoop);
+    procedure SpecializeImplTry(GenEl, SpecEl: TPasImplTry);
+    procedure SpecializeImplExceptOn(GenEl, SpecEl: TPasImplExceptOn);
+    procedure SpecializeImplRaise(GenEl, SpecEl: TPasImplRaise);
+    procedure SpecializeExpr(GenEl, SpecEl: TPasExpr);
+    procedure SpecializeExprArray(GenEl, SpecEl: TPasElement;
+      GenArray: TPasExprArray; var SpecArray: TPasExprArray);
+    procedure SpecializePrimitiveExpr(GenEl, SpecEl: TPrimitiveExpr);
+    procedure SpecializeUnaryExpr(GenEl, SpecEl: TUnaryExpr);
+    procedure SpecializeBinaryExpr(GenEl, SpecEl: TBinaryExpr);
+    procedure SpecializeBoolConstExpr(GenEl, SpecEl: TBoolConstExpr);
+    procedure SpecializeParamsExpr(GenEl, SpecEl: TParamsExpr);
+    procedure SpecializeRecordValues(GenEl, SpecEl: TRecordValues);
+    procedure SpecializeArrayValues(GenEl, SpecEl: TArrayValues);
+    procedure SpecializeInlineSpecializeExpr(GenEl, SpecEl: TInlineSpecializeExpr);
+    procedure SpecializeProcedureExpr(GenEl, SpecEl: TProcedureExpr);
+    procedure SpecializeResString(GenEl, SpecEl: TPasResString);
+    procedure SpecializeAliasType(GenEl, SpecEl: TPasAliasType);
+    procedure SpecializePointerType(GenEl, SpecEl: TPasPointerType);
+    procedure SpecializeRangeType(GenEl, SpecEl: TPasRangeType);
+    procedure SpecializeArrayType(GenEl, SpecEl: TPasArrayType; SpecializedItem: TPRSpecializedTypeItem);
+    procedure SpecializeRecordType(GenEl, SpecEl: TPasRecordType; SpecializedItem: TPRSpecializedTypeItem);
+    procedure SpecializeClassType(GenEl, SpecEl: TPasClassType; SpecializedItem: TPRSpecializedTypeItem);
+    procedure SpecializeEnumValue(GenEl, SpecEl: TPasEnumValue);
+    procedure SpecializeEnumType(GenEl, SpecEl: TPasEnumType);
+    procedure SpecializeSetType(GenEl, SpecEl: TPasSetType);
+    procedure SpecializeVariant(GenEl, SpecEl: TPasVariant);
+    procedure SpecializeStringType(GenEl, SpecEl: TPasStringType);
+    procedure SpecializeAttributes(GenEl, SpecEl: TPasAttributes);
+    procedure SpecializeMethodResolution(GenEl, SpecEl: TPasMethodResolution);
   protected
     // custom types (added by descendant resolvers)
     function CheckAssignCompatibilityCustom(
@@ -1463,31 +1934,31 @@ type
     function BI_Assigned_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_Assigned_OnGetCallResult(Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     procedure BI_Assigned_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr); virtual;
     function BI_Chr_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_Chr_OnGetCallResult(Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     procedure BI_Chr_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_Ord_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_Ord_OnGetCallResult(Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     procedure BI_Ord_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_LowHigh_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_LowHigh_OnGetCallResult(Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     procedure BI_LowHigh_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_PredSucc_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_PredSucc_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_PredSucc_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     procedure BI_PredSucc_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_Str_CheckParam(IsFunc: boolean; Param: TPasExpr;
@@ -1499,22 +1970,38 @@ type
       Params: TParamsExpr); virtual;
     function BI_StrFunc_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_StrFunc_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
-    procedure BI_StrFunc_OnEval({%H-}Proc: TResElDataBuiltInProc;
+    procedure BI_StrFunc_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_StrFunc_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_WriteStrProc_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_WriteStrProc_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr); virtual;
+    function BI_Val_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
+      Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
+    procedure BI_Val_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr); virtual;
+    function BI_LoHi_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
+      Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
+    procedure BI_LoHi_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_LoHi_OnEval(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_ConcatArray_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_ConcatArray_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_ConcatArray_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    function BI_ConcatString_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
+      Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
+    procedure BI_ConcatString_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_ConcatString_OnEval(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     function BI_CopyArray_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_CopyArray_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_CopyArray_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     function BI_InsertArray_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_InsertArray_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
@@ -1525,8 +2012,8 @@ type
       Params: TParamsExpr); virtual;
     function BI_TypeInfo_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_TypeInfo_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_TypeInfo_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
     function BI_Assert_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
     procedure BI_Assert_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
@@ -1541,9 +2028,9 @@ type
       Params: TParamsExpr); virtual;
     function BI_Default_OnGetCallCompatibility(Proc: TResElDataBuiltInProc;
       Expr: TPasExpr; RaiseOnError: boolean): integer; virtual;
-    procedure BI_Default_OnGetCallResult({%H-}Proc: TResElDataBuiltInProc;
-      {%H-}Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
-    procedure BI_Default_OnEval({%H-}Proc: TResElDataBuiltInProc;
+    procedure BI_Default_OnGetCallResult(Proc: TResElDataBuiltInProc;
+      Params: TParamsExpr; out ResolvedEl: TPasResolverResult); virtual;
+    procedure BI_Default_OnEval(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
   public
     constructor Create;
@@ -1556,23 +2043,31 @@ type
       overload; override;
     function CreateElement(AClass: TPTreeElement; const AName: String;
       AParent: TPasElement; AVisibility: TPasMemberVisibility;
-      const ASrcPos: TPasSourcePos): TPasElement;
+      const ASrcPos: TPasSourcePos; TypeParams: TFPList = nil): TPasElement;
       overload; override;
     function FindModule(const AName: String; NameExpr, InFileExpr: TPasExpr): TPasModule; override;
     function FindUnit(const AName, InFilename: String;
       NameExpr, InFileExpr: TPasExpr): TPasModule; virtual; abstract;
-    function FindElement(const aName: String): TPasElement; override; // used by TPasParser
+    function FindElement(const aName: String): TPasElement; override;  // used by TPasParser
+    function FindElementFor(const aName: String; AParent: TPasElement; TypeParamCount: integer): TPasElement; override; // used by TPasParser
     function FindElementWithoutParams(const AName: String; ErrorPosEl: TPasElement;
-      NoProcsWithArgs: boolean): TPasElement;
+      NoProcsWithArgs, NoGenerics: boolean): TPasElement;
     function FindElementWithoutParams(const AName: String; out Data: TPRFindData;
-      ErrorPosEl: TPasElement; NoProcsWithArgs: boolean): TPasElement;
+      ErrorPosEl: TPasElement; NoProcsWithArgs, NoGenerics: boolean): TPasElement;
+    function FindFirstEl(const AName: String; out Data: TPRFindData;
+      ErrorPosEl: TPasElement): TPasElement;
     procedure FindLongestUnitName(var El: TPasElement; Expr: TPasExpr);
+    function FindGenericEl(const AName: string; TemplateCount: integer;
+      out Find: TPRFindData; ErrorPosEl: TPasElement): TPasElement; virtual;
     procedure IterateElements(const aName: string;
       const OnIterateElement: TIterateScopeElement; Data: Pointer;
       var Abort: boolean); virtual;
     procedure CheckFoundElement(const FindData: TPRFindData;
       Ref: TResolvedReference); virtual;
+    procedure CheckFoundElementVisibility(const FindData: TPRFindData;
+      Ref: TResolvedReference); virtual;
     function GetVisibilityContext: TPasElement;
+    procedure BeginScope(ScopeType: TPasScopeType; El: TPasElement); override;
     procedure FinishScope(ScopeType: TPasScopeType; El: TPasElement); override;
     procedure FinishTypeAlias(var NewType: TPasType); override;
     function IsUnitIntfFinished(AModule: TPasModule): boolean;
@@ -1607,57 +2102,87 @@ type
       Access: TResolvedRefAccess;
       FindData: PPRFindData = nil): TResolvedReference; virtual;
     // scopes
+    function GetLocalScope: TPasScope; inline;
+    function GetParentLocalScope: TPasScope; inline;
     function CreateScope(El: TPasElement; ScopeClass: TPasScopeClass): TPasScope; virtual;
+    function CreateGroupScope(HiType: TPasType; WithTopHelpers: boolean = true): TPasGroupScope; virtual;
+    procedure GroupScope_AddTypeAndAncestors(Scope: TPasGroupScope; HiType: TPasType; WithTopHelpers: boolean = true);
     procedure PopScope;
+    procedure PopWithScope(El: TPasImplWithDo);
+    procedure PopGenericParamScope(El: TPasGenericType); virtual;
     procedure PushScope(Scope: TPasScope); overload;
     function PushScope(El: TPasElement; ScopeClass: TPasScopeClass): TPasScope; overload;
+    function PushGroupScope(HiType: TPasType): TPasGroupScope;
     function PushModuleDotScope(aModule: TPasModule): TPasModuleDotScope;
-    function PushClassDotScope(var CurClassType: TPasClassType): TPasDotClassScope;
-    function PushRecordDotScope(CurRecordType: TPasRecordType): TPasDotRecordScope;
-    function PushEnumDotScope(CurEnumType: TPasEnumType): TPasDotEnumTypeScope;
-    procedure ResetSubScopes(out Depth: integer);
-    procedure RestoreSubScopes(Depth: integer);
-    function GetInheritedExprScope(ErrorEl: TPasElement): TPasProcedureScope;
+    function PushClassDotScope(var CurClassType: TPasClassType; WithTopHelpers: boolean = true): TPasDotClassScope;
+    function PushRecordDotScope(CurRecordType: TPasRecordType): TPasDotClassOrRecordScope;
+    function PushInheritedScope(ClassOrRec: TPasMembersType;
+      WithTopHelpers: boolean; AncestorScope: TPasClassScope): TPasInheritedScope;
+    function PushEnumDotScope(HiType: TPasType; EnumLoType: TPasEnumType): TPasDotEnumTypeScope;
+    function PushHelperDotScope(HiType: TPasType): TPasDotBaseScope;
+    function PushTemplateDotScope(TemplType: TPasGenericTemplateType; ErrorEl: TPasElement): TPasDotBaseScope;
+    function PushDotScope(HiType: TPasType): TPasDotBaseScope;
+    function PushWithExprScope(Expr: TPasExpr): TPasWithExprScope;
+    function StashScopes(NewScopeCnt: integer): integer; // returns old StashDepth
+    function StashSubExprScopes: integer; // returns old StashDepth
+    procedure RestoreStashedScopes(StashDepth: integer);
+    procedure DeleteScope(Index: integer); virtual;
+    procedure InsertScope(Scope: TPasScope; Index: integer); virtual;
+    function GetCurrentProcScope(ErrorEl: TPasElement): TPasProcedureScope;
+    function GetProcScope(El: TPasElement): TPasProcedureScope;
+    function GetCurrentSelfScope(ErrorEl: TPasElement): TPasProcedureScope;
+    function GetSelfScope(El: TPasElement): TPasProcedureScope;
+    procedure AddHelper(Helper: TPasClassType; var List: TPRHelperEntryArray);
+    procedure AddActiveHelper(Helper: TPasClassType); virtual;
     // log and messages
     class function MangleSourceLineNumber(Line, Column: integer): integer;
     class procedure UnmangleSourceLineNumber(LineNumber: integer;
       out Line, Column: integer);
     class function GetDbgSourcePosStr(El: TPasElement): string;
     function GetElementSourcePosStr(El: TPasElement): string;
-    procedure SetLastMsg(const id: int64; MsgType: TMessageType; MsgNumber: integer;
-      Const Fmt : String; Args : Array of const; PosEl: TPasElement);
-    procedure LogMsg(const id: int64; MsgType: TMessageType; MsgNumber: integer;
-      const Fmt: String; Args: Array of const; PosEl: TPasElement); overload;
+    procedure SetLastMsg(const id: TMaxPrecInt; MsgType: TMessageType; MsgNumber: integer;
+      Const Fmt : String; Args : Array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      PosEl: TPasElement);
+    procedure LogMsg(const id: TMaxPrecInt; MsgType: TMessageType; MsgNumber: integer;
+      const Fmt: String; Args: Array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      PosEl: TPasElement); overload;
     class function GetWarnIdentifierNumbers(Identifier: string;
       out MsgNumbers: TIntegerDynArray): boolean; virtual;
     procedure GetIncompatibleTypeDesc(const GotType, ExpType: TPasResolverResult;
       out GotDesc, ExpDesc: String); overload;
     procedure GetIncompatibleTypeDesc(const GotType, ExpType: TPasType;
       out GotDesc, ExpDesc: String); overload;
-    procedure RaiseMsg(const Id: int64; MsgNumber: integer; const Fmt: String;
-      Args: Array of const; ErrorPosEl: TPasElement); virtual;
-    procedure RaiseNotYetImplemented(id: int64; El: TPasElement; Msg: string = ''); virtual;
-    procedure RaiseInternalError(id: int64; const Msg: string = '');
-    procedure RaiseInvalidScopeForElement(id: int64; El: TPasElement; const Msg: string = '');
-    procedure RaiseIdentifierNotFound(id: int64; Identifier: string; El: TPasElement);
-    procedure RaiseXExpectedButYFound(id: int64; const X,Y: string; El: TPasElement);
-    procedure RaiseContextXExpectedButYFound(id: int64; const C,X,Y: string; El: TPasElement);
-    procedure RaiseContextXInvalidY(id: int64; const X,Y: string; El: TPasElement);
-    procedure RaiseConstantExprExp(id: int64; ErrorEl: TPasElement);
-    procedure RaiseVarExpected(id: int64; ErrorEl: TPasElement; IdentEl: TPasElement);
-    procedure RaiseRangeCheck(id: int64; ErrorEl: TPasElement);
-    procedure RaiseIncompatibleTypeDesc(id: int64; MsgNumber: integer;
-      const Args: array of const; const GotDesc, ExpDesc: String; ErrorEl: TPasElement);
-    procedure RaiseIncompatibleType(id: int64; MsgNumber: integer;
-      const Args: array of const; GotType, ExpType: TPasType; ErrorEl: TPasElement);
-    procedure RaiseIncompatibleTypeRes(id: int64; MsgNumber: integer;
-      const Args: array of const; const GotType, ExpType: TPasResolverResult;
+    procedure RaiseMsg(const Id: TMaxPrecInt; MsgNumber: integer; const Fmt: String;
+      Args: Array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      ErrorPosEl: TPasElement); virtual;
+    procedure RaiseNotYetImplemented(id: TMaxPrecInt; El: TPasElement; Msg: string = ''); virtual;
+    procedure RaiseInternalError(id: TMaxPrecInt; const Msg: string = '');
+    procedure RaiseInvalidScopeForElement(id: TMaxPrecInt; El: TPasElement; const Msg: string = '');
+    procedure RaiseIdentifierNotFound(id: TMaxPrecInt; Identifier: string; El: TPasElement);
+    procedure RaiseXExpectedButYFound(id: TMaxPrecInt; const X,Y: string; El: TPasElement);
+    procedure RaiseXExpectedButTypeYFound(id: TMaxPrecInt; const X: string; Y: TPasType; El: TPasElement);
+    procedure RaiseContextXExpectedButYFound(id: TMaxPrecInt; const C,X,Y: string; El: TPasElement);
+    procedure RaiseContextXInvalidY(id: TMaxPrecInt; const X,Y: string; El: TPasElement);
+    procedure RaiseConstantExprExp(id: TMaxPrecInt; ErrorEl: TPasElement);
+    procedure RaiseVarExpected(id: TMaxPrecInt; ErrorEl: TPasElement; IdentEl: TPasElement);
+    procedure RaiseRangeCheck(id: TMaxPrecInt; ErrorEl: TPasElement);
+    procedure RaiseIncompatibleTypeDesc(id: TMaxPrecInt; MsgNumber: integer;
+      const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      const GotDesc, ExpDesc: String; ErrorEl: TPasElement);
+    procedure RaiseIncompatibleType(id: TMaxPrecInt; MsgNumber: integer;
+      const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      GotType, ExpType: TPasType; ErrorEl: TPasElement);
+    procedure RaiseIncompatibleTypeRes(id: TMaxPrecInt; MsgNumber: integer;
+      const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+      const GotType, ExpType: TPasResolverResult;
       ErrorEl: TPasElement);
-    procedure RaiseInvalidProcTypeModifier(id: int64; ProcType: TPasProcedureType;
+    procedure RaiseHelpersCannotBeUsedAsType(id: TMaxPrecInt; ErrorEl: TPasElement);
+    procedure RaiseInvalidProcTypeModifier(id: TMaxPrecInt; ProcType: TPasProcedureType;
       ptm: TProcTypeModifier; ErrorEl: TPasElement);
-    procedure RaiseInvalidProcModifier(id: int64; Proc: TPasProcedure;
+    procedure RaiseInvalidProcModifier(id: TMaxPrecInt; Proc: TPasProcedure;
       pm: TProcedureModifier; ErrorEl: TPasElement);
     procedure WriteScopes;
+    procedure WriteScopesShort(Title: string);
     // find value and type of an element
     procedure ComputeElement(El: TPasElement; out ResolvedEl: TPasResolverResult;
       Flags: TPasResolverComputeFlags; StartEl: TPasElement = nil);
@@ -1666,6 +2191,9 @@ type
     // checking compatibilility
     function IsSameType(TypeA, TypeB: TPasType; ResolveAlias: TPRResolveAlias): boolean; // check if it is exactly the same
     function HasExactType(const ResolvedEl: TPasResolverResult): boolean; // false if HiTypeEl was guessed, e.g. 1 guessed a btLongint
+    function IndexOfGenericParam(Params: TPasExprArray): integer;
+    procedure CheckUseAsType(aType: TPasElement; id: TMaxPrecInt;
+      ErrorEl: TPasElement);
     function CheckCallProcCompatibility(ProcType: TPasProcedureType;
       Params: TParamsExpr; RaiseOnError: boolean;
       SetReferenceFlags: boolean = false): integer;
@@ -1675,6 +2203,9 @@ type
       Params: TParamsExpr; RaiseOnError: boolean; EmitHints: boolean = false): integer;
     function CheckParamCompatibility(Expr: TPasExpr; Param: TPasArgument;
       ParamNo: integer; RaiseOnError: boolean; SetReferenceFlags: boolean = false): integer;
+    function CheckParamResCompatibility(Expr: TPasExpr; const ExprResolved,
+      ParamResolved: TPasResolverResult; ParamNo: integer; RaiseOnError: boolean;
+      SetReferenceFlags: boolean): integer;
     function CheckAssignCompatibilityUserType(
       const LHS, RHS: TPasResolverResult; ErrorEl: TPasElement;
       RaiseOnIncompatible: boolean): integer;
@@ -1692,18 +2223,16 @@ type
     function CheckTypeCastArray(FromType, ToType: TPasArrayType;
       ErrorEl: TPasElement; RaiseOnError: boolean): integer;
     function CheckSrcIsADstType(
-      const ResolvedSrcType, ResolvedDestType: TPasResolverResult;
-      ErrorEl: TPasElement): integer;
-    function CheckClassIsClass(SrcType, DestType: TPasType;
-      ErrorEl: TPasElement): integer; virtual;
-    function CheckClassesAreRelated(TypeA, TypeB: TPasType;
-      ErrorEl: TPasElement): integer;
+      const ResolvedSrcType, ResolvedDestType: TPasResolverResult): integer;
+    function CheckClassIsClass(SrcType, DestType: TPasType): integer; virtual;
+    function CheckClassesAreRelated(TypeA, TypeB: TPasType): integer;
     function GetClassImplementsIntf(ClassEl, Intf: TPasClassType): TPasClassType;
-    function CheckOverloadProcCompatibility(Proc1, Proc2: TPasProcedure): boolean;
+    function CheckProcOverloadCompatibility(Proc1, Proc2: TPasProcedure): boolean;
     function CheckProcTypeCompatibility(Proc1, Proc2: TPasProcedureType;
       IsAssign: boolean; ErrorEl: TPasElement; RaiseOnIncompatible: boolean): boolean;
-    function CheckProcArgCompatibility(Arg1, Arg2: TPasArgument): boolean;
-    function CheckElTypeCompatibility(Arg1, Arg2: TPasType; ResolveAlias: TPRResolveAlias): boolean;
+    function CheckProcArgCompatibility(Arg1, Arg2: TPasArgument): integer;
+    function CheckElTypeCompatibility(Arg1, Arg2: TPasType;
+      ResolveAlias: TPRResolveAlias): integer;
     function CheckCanBeLHS(const ResolvedEl: TPasResolverResult;
       ErrorOnFalse: boolean; ErrorEl: TPasElement): boolean;
     function CheckAssignCompatibility(const LHS, RHS: TPasElement;
@@ -1722,9 +2251,11 @@ type
     function IsVariableConst(El, PosEl: TPasElement; RaiseIfConst: boolean): boolean; virtual;
     function ResolvedElCanBeVarParam(const ResolvedEl: TPasResolverResult;
       PosEl: TPasElement; RaiseIfConst: boolean = true): boolean;
-    function ResolvedElIsClassInstance(const ResolvedEl: TPasResolverResult): boolean;
+    function ResolvedElIsClassOrRecordInstance(const ResolvedEl: TPasResolverResult): boolean;
     // utility functions
+    function ElHasModeSwitch(El: TPasElement; ms: TModeSwitch): boolean;
     function GetElModeSwitches(El: TPasElement): TModeSwitches;
+    function ElHasBoolSwitch(El: TPasElement; bs: TBoolSwitch): boolean;
     function GetElBoolSwitches(El: TPasElement): TBoolSwitches;
     function GetProcTypeDescription(ProcType: TPasProcedureType;
       Flags: TPRProcTypeDescFlags = [prptdUseName,prptdResolveSimpleAlias]): string;
@@ -1733,6 +2264,8 @@ type
     function GetTypeDescription(const R: TPasResolverResult; AddPath: boolean = false): string; virtual;
     function GetBaseDescription(const R: TPasResolverResult; AddPath: boolean = false): string; virtual;
     function GetProcFirstImplEl(Proc: TPasProcedure): TPasImplElement;
+    function GetProcTemplateTypes(Proc: TPasProcedure): TFPList; // list of TPasGenericTemplateType
+    function GetProcName(Proc: TPasProcedure; WithTemplates: boolean = true): string;
     function GetPasPropertyAncestor(El: TPasProperty; WithRedeclarations: boolean = false): TPasProperty;
     function GetPasPropertyType(El: TPasProperty): TPasType;
     function GetPasPropertyArgs(El: TPasProperty): TFPList;
@@ -1742,40 +2275,66 @@ type
     function GetPasPropertyStoredExpr(El: TPasProperty): TPasExpr;
     function GetPasPropertyDefaultExpr(El: TPasProperty): TPasExpr;
     function GetPasClassAncestor(ClassEl: TPasClassType; SkipAlias: boolean): TPasType;
+    function GetParentProcBody(El: TPasElement): TProcedureBody;
+    function ProcHasImplElements(Proc: TPasProcedure): boolean; virtual;
     function IndexOfImplementedInterface(ClassEl: TPasClassType; aType: TPasType): integer;
     function GetLoop(El: TPasElement): TPasImplElement;
-    function ResolveAliasType(aType: TPasType): TPasType;
+    function ResolveAliasType(aType: TPasType; SkipTypeAlias: boolean = true): TPasType;
     function ResolveAliasTypeEl(El: TPasElement): TPasType; inline;
     function ExprIsAddrTarget(El: TPasExpr): boolean;
-    function IsNameExpr(El: TPasExpr): boolean; inline; // TSelfExpr or TPrimitiveExpr with Kind=pekIdent
-    function GetNameExprValue(El: TPasExpr): string; // TSelfExpr or TPrimitiveExpr with Kind=pekIdent
+    function IsNameExpr(El: TPasExpr): boolean; inline; // TPrimitiveExpr with Kind=pekIdent
+    function GetNameExprValue(El: TPasExpr): string; // TPrimitiveExpr with Kind=pekIdent
     function GetNextDottedExpr(El: TPasExpr): TPasExpr;
+    function GetLeftMostExpr(El: TPasExpr): TPasExpr;
+    function GetRightMostExpr(El: TPasExpr): TPasExpr;
+    procedure GetParamsOfNameExpr(El: TPasExpr; out ParentParams: TPRParentParams);
+    function GetInlineSpecOfNameExpr(El: TPasExpr): TInlineSpecializeExpr;
     function GetUsesUnitInFilename(InFileExpr: TPasExpr): string;
     function GetPathStart(El: TPasExpr): TPasExpr;
     function GetNewInstanceExpr(El: TPasExpr): TPasExpr;
     function ParentNeedsExprResult(El: TPasExpr): boolean;
-    function GetReference_NewInstanceClass(Ref: TResolvedReference): TPasClassType;
+    function GetReference_ConstructorType(Ref: TResolvedReference; Expr: TPasExpr): TPasResolverResult;
+    function GetParamsValueRef(Params: TParamsExpr): TResolvedReference;
+    function GetSetType(const ResolvedSet: TPasResolverResult): TPasSetType;
     function IsDynArray(TypeEl: TPasType; OptionalOpenArray: boolean = true): boolean;
     function IsOpenArray(TypeEl: TPasType): boolean;
     function IsDynOrOpenArray(TypeEl: TPasType): boolean;
+    function IsArrayOfConst(TypeEl: TPasType): boolean;
+    function GetArrayElType(ArrType: TPasArrayType): TPasType;
     function IsVarInit(Expr: TPasExpr): boolean;
     function IsEmptyArrayExpr(const ResolvedEl: TPasResolverResult): boolean;
     function IsClassMethod(El: TPasElement): boolean;
+    function IsClassField(El: TPasElement): boolean;
+    function GetFunctionType(El: TPasElement): TPasFunctionType;
+    function MethodIsStatic(El: TPasProcedure): boolean;
+    function IsMethod(El: TPasProcedure): boolean;
+    function IsHelperMethod(El: TPasElement): boolean; virtual;
+    function IsHelper(El: TPasElement): boolean;
     function IsExternalClass_Name(aClass: TPasClassType; const ExtName: string): boolean;
     function IsProcedureType(const ResolvedEl: TPasResolverResult; HasValue: boolean): boolean;
     function IsArrayType(const ResolvedEl: TPasResolverResult): boolean;
     function IsArrayExpr(Expr: TParamsExpr): TPasArrayType;
     function IsArrayOperatorAdd(Expr: TPasExpr): boolean;
     function IsTypeCast(Params: TParamsExpr): boolean;
+    function IsGenericTemplType(const ResolvedEl: TPasResolverResult): boolean;
+    function GetTypeParameterCount(aType: TPasGenericType): integer;
+    function GetGenericConstraintKeyword(El: TPasElement): TToken;
+    function GetGenericConstraintErrorEl(ConstraintEl, TemplType: TPasElement): TPasElement;
+    function IsFullySpecialized(El: TPasGenericType): boolean; overload;
+    function IsFullySpecialized(Proc: TPasProcedure): boolean; overload;
     function IsInterfaceType(const ResolvedEl: TPasResolverResult;
       IntfType: TPasClassInterfaceType): boolean; overload;
     function IsInterfaceType(TypeEl: TPasType; IntfType: TPasClassInterfaceType): boolean; overload;
     function IsTGUID(RecTypeEl: TPasRecordType): boolean; virtual;
     function IsTGUIDString(const ResolvedEl: TPasResolverResult): boolean; virtual;
+    function IsCustomAttribute(El: TPasElement): boolean; virtual;
+    function IsSystemUnit(El: TPasModule): boolean; virtual;
+    function GetAttributeCallsEl(El: TPasElement): TPasExprArray; virtual;
+    function GetAttributeCalls(Members: TFPList; Index: integer): TPasExprArray; virtual;
     function ProcNeedsParams(El: TPasProcedureType): boolean;
     function IsProcOverride(AncestorProc, DescendantProc: TPasProcedure): boolean;
     function GetTopLvlProc(El: TPasElement): TPasProcedure;
-    function GetRangeLength(RangeExpr: TPasExpr): MaxPrecInt;
+    function GetRangeLength(RangeExpr: TPasExpr): TMaxPrecInt;
     function EvalRangeLimit(RangeExpr: TPasExpr; Flags: TResEvalFlags;
       EvalLow: boolean; ErrorEl: TPasElement): TResEvalValue; virtual; // compute low() or high()
     function EvalTypeRange(Decl: TPasType; Flags: TResEvalFlags): TResEvalValue; virtual; // compute low() and high()
@@ -1784,14 +2343,17 @@ type
     function GetCombinedBoolean(Bool1, Bool2: TResolverBaseType; ErrorEl: TPasElement): TResolverBaseType; virtual;
     function GetCombinedInt(const Int1, Int2: TPasResolverResult; ErrorEl: TPasElement): TResolverBaseType; virtual;
     procedure GetIntegerProps(bt: TResolverBaseType; out Precision: word; out Signed: boolean);
-    function GetIntegerRange(bt: TResolverBaseType; out MinVal, MaxVal: MaxPrecInt): boolean;
+    function GetIntegerRange(bt: TResolverBaseType; out MinVal, MaxVal: TMaxPrecInt): boolean;
     function GetIntegerBaseType(Precision: word; Signed: boolean; ErrorEl: TPasElement): TResolverBaseType;
-    function GetSmallestIntegerBaseType(MinVal, MaxVal: MaxPrecInt): TResolverBaseType;
+    function GetSmallestIntegerBaseType(MinVal, MaxVal: TMaxPrecInt): TResolverBaseType; // returns BaseTypeExtended if too big
     function GetCombinedChar(const Char1, Char2: TPasResolverResult; ErrorEl: TPasElement): TResolverBaseType; virtual;
     function GetCombinedString(const Str1, Str2: TPasResolverResult; ErrorEl: TPasElement): TResolverBaseType; virtual;
+    function GetCombinedBaseType(const A, B: TPasResolverResult; ErrorEl: TPasElement): TResolverBaseType; virtual;
     function IsElementSkipped(El: TPasElement): boolean; virtual;
     function FindLocalBuiltInSymbol(El: TPasElement): TPasElement; virtual;
     function GetLastSection: TPasSection;
+    function GetShiftAndMaskForLoHiFunc(BaseType: TResolverBaseType;
+      isLoFunc: Boolean; out Mask: LongWord): Integer;
   public
     // options
     property Options: TPasResolverOptions read FOptions write FOptions;
@@ -1805,12 +2367,13 @@ type
     property BaseTypeLength: TResolverBaseType read FBaseTypeLength write FBaseTypeLength;
     property BuiltInProcs[bp: TResolverBuiltInProc]: TResElDataBuiltInProc read GetBuiltInProcs;
     property ExprEvaluator: TResExprEvaluator read fExprEvaluator;
-    property DynArrayMinIndex: int64 read FDynArrayMinIndex write FDynArrayMinIndex;
-    property DynArrayMaxIndex: int64 read FDynArrayMaxIndex write FDynArrayMaxIndex;
+    property DynArrayMinIndex: TMaxPrecInt read FDynArrayMinIndex write FDynArrayMinIndex;
+    property DynArrayMaxIndex: TMaxPrecInt read FDynArrayMaxIndex write FDynArrayMaxIndex;
     // parsed values
     property DefaultNameSpace: String read FDefaultNameSpace;
     property RootElement: TPasModule read FRootElement write SetRootElement;
     property Step: TPasResolverStep read FStep;
+    property ActiveHelpers: TPRHelperEntryArray read FActiveHelpers;
     // scopes
     property StoreSrcColumns: boolean read FStoreSrcColumns write FStoreSrcColumns; {
        If true Line and Column is mangled together in TPasElement.SourceLineNumber.
@@ -1830,7 +2393,7 @@ type
     property LastMsg: string read FLastMsg write FLastMsg;
     property LastMsgArgs: TMessageArgs read FLastMsgArgs write FLastMsgArgs;
     property LastMsgElement: TPasElement read FLastMsgElement write FLastMsgElement;
-    property LastMsgId: int64 read FLastMsgId write FLastMsgId;
+    property LastMsgId: TMaxPrecInt read FLastMsgId write FLastMsgId;
     property LastMsgNumber: integer read FLastMsgNumber write FLastMsgNumber;
     property LastMsgPattern: string read FLastMsgPattern write FLastMsgPattern;
     property LastMsgType: TMessageType read FLastMsgType write FLastMsgType;
@@ -1859,6 +2422,7 @@ procedure SetResolverValueExpr(out ResolvedType: TPasResolverResult;
 function ProcNeedsImplProc(Proc: TPasProcedure): boolean;
 function ProcNeedsBody(Proc: TPasProcedure): boolean;
 function ProcHasGroupOverload(Proc: TPasProcedure): boolean;
+procedure ClearHelperList(var List: TPRHelperEntryArray);
 function ChompDottedIdentifier(const Identifier: string): string;
 function FirstDottedIdentifier(const Identifier: string): string;
 function IsDottedIdentifierPrefix(const Prefix, Identifier: string): boolean;
@@ -1880,7 +2444,7 @@ function GetTreeDbg(El: TPasElement; Indent: integer): string;
   procedure LineBreak(SubIndent: integer);
   begin
     Inc(Indent,SubIndent);
-    Result:=Result+LineEnding+Space(Indent);
+    Result:=Result+LineEnding+StringOfChar(' ',Indent);
   end;
 
 var
@@ -1988,8 +2552,8 @@ begin
       dec(Indent,2);
       end;
     Result:=Result+')';
-    if El is TPasFunction then
-      Result:=Result+':'+GetTreeDbg(TPasFunctionType(TPasFunction(El).ProcType).ResultEl,Indent);
+    if (El is TPasProcedure) and (TPasProcedure(El).ProcType is TPasFunctionType) then
+      Result:=Result+':'+GetTreeDbg(TPasFunctionType(TPasProcedure(El).ProcType).ResultEl,Indent);
     if TPasProcedureType(El).IsOfObject then
       Result:=Result+' '+ProcTypeModifiers[ptmOfObject];
     if TPasProcedureType(El).IsNested then
@@ -2101,6 +2665,8 @@ begin
     Result:=ExprKindNames[TBinaryExpr(El).Kind]
   else if C=TPasClassType then
     Result:=ObjKindNames[TPasClassType(El).ObjKind]
+  else if C=TPasUnresolvedSymbolRef then
+    Result:=El.Name
   else
     begin
     Result:=GetElementTypeName(TPasElementBaseClass(C));
@@ -2189,6 +2755,10 @@ begin
     Result:='class procedure'
   else if C=TPasClassFunction then
     Result:='class function'
+  else if C=TPasAnonymousProcedure then
+    Result:='anonymous procedure'
+  else if C=TPasAnonymousFunction then
+    Result:='anonymous function'
   else if C=TPasMethodResolution then
     Result:='method resolution'
   else if C=TInterfaceSection then
@@ -2310,6 +2880,16 @@ begin
   Data:=Proc.CustomData;
   Result:=(Data is TPasProcedureScope)
     and (ppsfIsGroupOverload in TPasProcedureScope(Data).Flags);
+end;
+
+procedure ClearHelperList(var List: TPRHelperEntryArray);
+var
+  i: Integer;
+begin
+  if length(List)=0 then exit;
+  for i:=0 to length(List)-1 do
+    TPRHelperEntry(List[i]).Free;
+  List:=nil;
 end;
 
 function ChompDottedIdentifier(const Identifier: string): string;
@@ -2470,6 +3050,303 @@ begin
   str(a,Result);
 end;
 
+{ TPRSpecializedItem }
+
+destructor TPRSpecializedItem.Destroy;
+var
+  i: Integer;
+begin
+  for i:=0 to length(SpecializedConstraints)-1 do
+    SpecializedConstraints[i].Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
+  SetLength(SpecializedConstraints,0);
+  inherited Destroy;
+end;
+
+{ TPRSpecializedTypeItem }
+
+procedure TPRSpecializedTypeItem.SetSpecializedType(AValue: TPasGenericType);
+begin
+  if FSpecializedType=AValue then Exit;
+  if FSpecializedType<>nil then
+    FSpecializedType.Release{$IFDEF CheckPasTreeRefCount}('TPRSpecializedTypeItem.SpecializedType'){$ENDIF};
+  FSpecializedEl:=AValue;
+  FSpecializedType:=AValue;
+  if FSpecializedType<>nil then
+    FSpecializedType.AddRef{$IFDEF CheckPasTreeRefCount}('TPRSpecializedTypeItem.SpecializedType'){$ENDIF};
+end;
+
+destructor TPRSpecializedTypeItem.Destroy;
+var
+  i: Integer;
+begin
+  if ImplProcs<>nil then
+    begin
+    for i:=0 to ImplProcs.Count-1 do
+      TPasElement(ImplProcs[i]).Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
+    ImplProcs.Free;
+    ImplProcs:=nil;
+    end;
+  HeaderScope.Free;
+  HeaderScope:=nil;
+  SpecializedType:=nil;
+  inherited Destroy;
+end;
+
+{ TPRSpecializedProcItem }
+
+procedure TPRSpecializedProcItem.SetSpecializedProc(const AValue: TPasProcedure
+  );
+begin
+  if FSpecializedProc=AValue then Exit;
+  if FSpecializedProc<>nil then
+    FSpecializedProc.Release{$IFDEF CheckPasTreeRefCount}('TPRSpecializedProcItem.SpecializedProc'){$ENDIF};
+  FSpecializedEl:=AValue;
+  FSpecializedProc:=AValue;
+  if FSpecializedProc<>nil then
+    FSpecializedProc.AddRef{$IFDEF CheckPasTreeRefCount}('TPRSpecializedProcItem.SpecializedProc'){$ENDIF};
+end;
+
+destructor TPRSpecializedProcItem.Destroy;
+begin
+  if ImplProc<>nil then
+    begin
+    ImplProc.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
+    ImplProc:=nil;
+    end;
+  SpecializedProc:=nil;
+  inherited Destroy;
+end;
+
+
+{ TPasGenericScope }
+
+destructor TPasGenericScope.Destroy;
+begin
+  if SpecializedItems<>nil then
+    begin
+    SpecializedItems.Free;
+    SpecializedItems:=nil;
+    end;
+  inherited Destroy;
+end;
+
+{ TPasInheritedScope }
+
+function TPasInheritedScope.FindIdentifier(const Identifier: String
+  ): TPasIdentifier;
+var
+  aClassScope: TPasClassScope;
+begin
+  Result:=inherited FindIdentifier(Identifier);
+  if Result<>nil then exit;
+  aClassScope:=AncestorScope;
+  while aClassScope<>nil do
+    begin
+    Result:=aClassScope.FindIdentifier(Identifier);
+    if Result<>nil then exit;
+    aClassScope:=aClassScope.AncestorScope;
+    end;
+end;
+
+procedure TPasInheritedScope.IterateElements(const aName: string;
+  StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
+  Data: Pointer; var Abort: boolean);
+var
+  aClassScope: TPasClassScope;
+begin
+  inherited IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
+  if Abort then exit;
+  aClassScope:=AncestorScope;
+  while aClassScope<>nil do
+    begin
+    aClassScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
+    if Abort then exit;
+    aClassScope:=aClassScope.AncestorScope;
+    end;
+end;
+
+procedure TPasInheritedScope.WriteIdentifiers(Prefix: string);
+var
+  aClassScope: TPasClassScope;
+begin
+  inherited WriteIdentifiers(Prefix);
+  aClassScope:=AncestorScope;
+  while aClassScope<>nil do
+    begin
+    aClassScope.WriteIdentifiers(Prefix);
+    aClassScope:=aClassScope.AncestorScope;
+    end;
+end;
+
+{ TPasDotEnumTypeScope }
+
+function TPasDotEnumTypeScope.FindIdentifier(const Identifier: String
+  ): TPasIdentifier;
+begin
+  Result:=EnumScope.FindLocalIdentifier(Identifier);
+  if Result<>nil then exit;
+  Result:=inherited FindIdentifier(Identifier);
+end;
+
+procedure TPasDotEnumTypeScope.IterateElements(const aName: string;
+  StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
+  Data: Pointer; var Abort: boolean);
+begin
+  EnumScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
+  if Abort then exit;
+  inherited IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
+end;
+
+procedure TPasDotEnumTypeScope.WriteIdentifiers(Prefix: string);
+begin
+  EnumScope.WriteIdentifiers(Prefix);
+  inherited WriteIdentifiers(Prefix);
+end;
+
+{ TPasGroupScope }
+
+procedure TPasGroupScope.Add(Scope: TPasIdentifierScope);
+var
+  i: Integer;
+begin
+  for i:=0 to Count-1 do
+    if Scopes[i]=Scope then exit; // already added
+  if Scope.FreeOnPop then
+    raise Exception.Create('TPasGroupScope.Add '+GetObjName(Scope)+' '+GetObjName(Scope.Element));
+  if Count=length(Scopes) then
+    SetLength(Scopes,Count*2+4);
+  Scopes[Count]:=Scope;
+  inc(Count);
+end;
+
+destructor TPasGroupScope.Destroy;
+begin
+  Scopes:=nil;
+  Count:=0;
+  inherited Destroy;
+end;
+
+function TPasGroupScope.GetFirstNonHelperScope: TPasIdentifierScope;
+var
+  i: Integer;
+  Scope: TPasIdentifierScope;
+begin
+  for i:=0 to Count-1 do
+    begin
+    Scope:=Scopes[i];
+    if (Scope.ClassType<>TPasClassScope)
+        or (TPasClassType(Scope.Element).HelperForType=nil) then
+      exit(Scope);
+    end;
+  Result:=nil;
+end;
+
+class function TPasGroupScope.IsStoredInElement: boolean;
+begin
+  Result:=false;
+end;
+
+function TPasGroupScope.FindAncestorIdentifier(const Identifier: String
+  ): TPasIdentifier;
+var
+  i: Integer;
+begin
+  for i:=1 to Count-1 do
+    begin
+    Result:=Scopes[i].FindIdentifier(Identifier);
+    if Result<>nil then exit;
+    end;
+  Result:=nil;
+end;
+
+function TPasGroupScope.FindAncestorElement(const Identifier: String
+  ): TPasElement;
+var
+  Item: TPasIdentifier;
+begin
+  Item:=FindAncestorIdentifier(Identifier);
+  if Item<>nil then
+    Result:=Item.Element
+  else
+    Result:=nil;
+end;
+
+function TPasGroupScope.FindIdentifier(const Identifier: String
+  ): TPasIdentifier;
+var
+  i: Integer;
+begin
+  for i:=0 to Count-1 do
+    begin
+    Result:=Scopes[i].FindIdentifier(Identifier);
+    if Result<>nil then exit;
+    end;
+  Result:=nil;
+end;
+
+procedure TPasGroupScope.IterateElements(const aName: string;
+  StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
+  Data: Pointer; var Abort: boolean);
+var
+  i: Integer;
+begin
+  for i:=0 to Count-1 do
+    begin
+    Scopes[i].IterateElements(aName,StartScope,OnIterateElement,Data,Abort);
+    if Abort then exit;
+    end;
+end;
+
+procedure TPasGroupScope.WriteIdentifiers(Prefix: string);
+var
+  i: Integer;
+begin
+  for i:=0 to Count-1 do
+    Scopes[i].WriteIdentifiers(Prefix+'Group['+IntToStr(i)+'/'+IntToStr(Count)+']');
+end;
+
+{$ifdef pas2js}
+{ TPasResHashList }
+
+constructor TPasResHashList.Create;
+begin
+  FItems:=TJSObject.new;
+end;
+
+procedure TPasResHashList.Add(const aName: string; Item: Pointer);
+begin
+  FItems['%'+aName]:=Item;
+end;
+
+function TPasResHashList.Find(const aName: string): Pointer;
+begin
+  if FItems.hasOwnProperty('%'+aName) then
+    Result:=Pointer(FItems['%'+aName])
+  else
+    Result:=nil;
+end;
+
+procedure TPasResHashList.ForEachCall(const Proc: TPasResIterate; Arg: Pointer);
+var
+  key: string;
+begin
+  for key in FItems do
+    if FItems.hasOwnProperty(key) then
+      Proc(Pointer(FItems[key]),Arg);
+end;
+
+procedure TPasResHashList.Clear;
+begin
+  FItems:=TJSObject.new;
+end;
+
+procedure TPasResHashList.Remove(const aName: string);
+begin
+  if FItems.hasOwnProperty('%'+aName) then
+    JSDelete(FItems,'%'+aName);
+end;
+{$endif}
+
 { TResElDataBuiltInProc }
 
 destructor TResElDataBuiltInProc.Destroy;
@@ -2560,14 +3437,18 @@ end;
 
 constructor TPasScopeReferences.Create(aScope: TPasScope);
 begin
-  References:=TFPHashList.Create;
+  References:=TPasResHashList.Create;
   FScope:=aScope;
 end;
 
 destructor TPasScopeReferences.Destroy;
 begin
   Clear;
+  {$ifdef pas2js}
+  References:=nil;
+  {$else}
   FreeAndNil(References);
+  {$endif}
   inherited Destroy;
 end;
 
@@ -2701,24 +3582,30 @@ begin
   {$ENDIF}
 end;
 
-{ TPasDotIdentifierScope }
+{ TPasDotBaseScope }
 
-function TPasDotIdentifierScope.FindIdentifier(const Identifier: String
+function TPasDotBaseScope.FindIdentifier(const Identifier: String
   ): TPasIdentifier;
 begin
-  Result:=IdentifierScope.FindIdentifier(Identifier);
+  Result:=GroupScope.FindIdentifier(Identifier);
 end;
 
-procedure TPasDotIdentifierScope.IterateElements(const aName: string;
+procedure TPasDotBaseScope.IterateElements(const aName: string;
   StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
   Data: Pointer; var Abort: boolean);
 begin
-  IdentifierScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
+  GroupScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
 end;
 
-procedure TPasDotIdentifierScope.WriteIdentifiers(Prefix: string);
+procedure TPasDotBaseScope.WriteIdentifiers(Prefix: string);
 begin
-  IdentifierScope.WriteIdentifiers(Prefix);
+  GroupScope.WriteIdentifiers(Prefix);
+end;
+
+destructor TPasDotBaseScope.Destroy;
+begin
+  FreeAndNil(GroupScope);
+  inherited Destroy;
 end;
 
 { TPasWithExprScope }
@@ -2748,6 +3635,12 @@ begin
   {AllowWriteln-}
 end;
 
+destructor TPasWithExprScope.Destroy;
+begin
+  FreeAndNil(Scope);
+  inherited Destroy;
+end;
+
 { TPasWithScope }
 
 constructor TPasWithScope.Create;
@@ -2772,63 +3665,38 @@ end;
 
 function TPasProcedureScope.FindIdentifier(const Identifier: String
   ): TPasIdentifier;
-var
-  CurScope: TPasIdentifierScope;
-  ParentEl: TPasElement;
 begin
   Result:=inherited FindIdentifier(Identifier);
-  if Result<>nil then exit;
-  CurScope:=ClassScope;
-  if CurScope=nil then exit;
-  repeat
-    Result:=CurScope.FindIdentifier(Identifier);
-    if Result<>nil then exit;
-    ParentEl:=CurScope.Element.Parent;
-    if ParentEl=nil then exit;
-    if (ParentEl.ClassType=TPasClassType) then
-      CurScope:=TPasClassScope(ParentEl.CustomData)
-    else if (ParentEl.ClassType=TPasRecordType) then
-      CurScope:=TPasRecordScope(ParentEl.CustomData)
-    else
-      exit;
-  until false;
+  if (Result<>nil) or (GroupScope=nil) then exit;
+  Result:=GroupScope.FindIdentifier(Identifier);
 end;
 
 procedure TPasProcedureScope.IterateElements(const aName: string;
   StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
   Data: Pointer; var Abort: boolean);
-var
-  CurScope: TPasIdentifierScope;
-  ParentEl: TPasElement;
 begin
   inherited IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
   if Abort then exit;
-  CurScope:=ClassScope;
-  if CurScope=nil then exit;
-  repeat
-    CurScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
-    if Abort then exit;
-    ParentEl:=CurScope.Element.Parent;
-    if ParentEl=nil then exit;
-    if (ParentEl.ClassType=TPasClassType) then
-      CurScope:=TPasClassScope(ParentEl.CustomData)
-    else if (ParentEl.ClassType=TPasRecordType) then
-      CurScope:=TPasRecordScope(ParentEl.CustomData)
-    else
-      exit;
-  until false;
+  if GroupScope=nil then exit;
+  GroupScope.IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
 end;
 
 function TPasProcedureScope.GetSelfScope: TPasProcedureScope;
 var
   Proc: TPasProcedure;
+  El: TPasElement;
 begin
   Result:=Self;
   repeat
-    if Result.ClassScope<>nil then exit;
-    Proc:=TPasProcedure(Element);
-    if not (Proc.Parent is TProcedureBody) then exit(nil);
-    Proc:=Proc.Parent.Parent as TPasProcedure;
+    if Result.ClassRecScope<>nil then exit;
+    Proc:=TPasProcedure(Result.Element);
+    El:=Proc.Parent;
+    repeat
+      if El=nil then exit(nil);
+      if El is TProcedureBody then break;
+      El:=El.Parent;
+    until false;
+    Proc:=El.Parent as TPasProcedure;
     Result:=TPasProcedureScope(Proc.CustomData);
   until false;
 end;
@@ -2836,16 +3704,18 @@ end;
 procedure TPasProcedureScope.WriteIdentifiers(Prefix: string);
 begin
   inherited WriteIdentifiers(Prefix);
-  if ClassScope<>nil then
-    ClassScope.WriteIdentifiers(Prefix+'CS  ');
+  if GroupScope<>nil then
+    GroupScope.WriteIdentifiers(Prefix+'GS ');
 end;
 
 destructor TPasProcedureScope.Destroy;
 begin
-  FreeAndNil(References);
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasProcedureScope.Destroy START ',ClassName);
   {$ENDIF}
+  FreeAndNil(References);
+  FreeAndNil(GroupScope);
+  NestedMembersScope:=nil; // NestedMembersScope is auto freed
   inherited Destroy;
   ReleaseAndNil(TPasElement(SelfArg){$IFDEF CheckPasTreeRefCount},'TPasProcedureScope.SelfArg'{$ENDIF});
   {$IFDEF VerbosePasResolverMem}
@@ -2896,41 +3766,6 @@ begin
     ReleaseAndNil(TPasElement(CanonicalClassOf){$IFDEF CheckPasTreeRefCount},'TPasClassScope.CanonicalClassOf'{$ENDIF});
     end;
   inherited Destroy;
-end;
-
-function TPasClassScope.FindIdentifier(const Identifier: String
-  ): TPasIdentifier;
-begin
-  Result:=inherited FindIdentifier(Identifier);
-  if Result<>nil then exit;
-  if AncestorScope<>nil then
-    Result:=AncestorScope.FindIdentifier(Identifier);
-end;
-
-procedure TPasClassScope.IterateElements(const aName: string;
-  StartScope: TPasScope; const OnIterateElement: TIterateScopeElement;
-  Data: Pointer; var Abort: boolean);
-begin
-  inherited IterateElements(aName, StartScope, OnIterateElement, Data, Abort);
-  if Abort then exit;
-  if AncestorScope<>nil then
-    AncestorScope.IterateElements(aName,StartScope,OnIterateElement,Data,Abort);
-end;
-
-procedure TPasClassScope.WriteIdentifiers(Prefix: string);
-begin
-  inherited WriteIdentifiers(Prefix);
-  if AncestorScope<>nil then
-    AncestorScope.WriteIdentifiers(Prefix+'AS  ');
-end;
-
-{ TPasDotClassScope }
-
-procedure TPasDotClassScope.SetClassScope(AValue: TPasClassScope);
-begin
-  if FClassScope=AValue then Exit;
-  FClassScope:=AValue;
-  IdentifierScope:=AValue;
 end;
 
 { TPasIdentifier }
@@ -3006,9 +3841,9 @@ begin
   {$ENDIF}
 end;
 
-{ TPasSubScope }
+{ TPasSubExprScope }
 
-class function TPasSubScope.IsStoredInElement: boolean;
+class function TPasSubExprScope.IsStoredInElement: boolean;
 begin
   Result:=false;
 end;
@@ -3126,6 +3961,7 @@ begin
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasSectionScope.Destroy START ',ClassName);
   {$ENDIF}
+  ClearHelperList(Helpers);
   FreeAndNil(UsesScopes);
   inherited Destroy;
   {$IFDEF VerbosePasResolverMem}
@@ -3255,6 +4091,16 @@ begin
     FRangeErrorConstructor.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetRangeErrorConstructor'){$ENDIF};
 end;
 
+procedure TPasModuleScope.SetSystemTVarRec(const AValue: TPasRecordType);
+begin
+  if FSystemTVarRec=AValue then Exit;
+  if FSystemTVarRec<>nil then
+    FSystemTVarRec.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetSystemTVarRec'){$ENDIF};
+  FSystemTVarRec:=AValue;
+  if FSystemTVarRec<>nil then
+    FSystemTVarRec.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetSystemTVarRec'){$ENDIF};
+end;
+
 constructor TPasModuleScope.Create;
 begin
   inherited Create;
@@ -3268,6 +4114,7 @@ begin
   AssertMsgConstructor:=nil;
   RangeErrorClass:=nil;
   RangeErrorConstructor:=nil;
+  SystemTVarRec:=nil;
   FreeAndNil(PendingResolvers);
   inherited Destroy;
 end;
@@ -3355,7 +4202,7 @@ var
   Prefix: String;
 begin
   {AllowWriteln}
-  Prefix:=AnsiString(Dummy);
+  Prefix:=String(Dummy);
   while PasIdentifier<>nil do
     begin
     writeln(Prefix,'Identifier="',PasIdentifier.Identifier,'" Element=',GetObjName(PasIdentifier.Element));
@@ -3366,11 +4213,32 @@ end;
 
 procedure TPasIdentifierScope.InternalAdd(Item: TPasIdentifier);
 var
-  Index: Integer;
   OldItem: TPasIdentifier;
   LoName: string;
+  {$ifdef pas2js}
+  {$ELSE}
+  Index: Integer;
+  {$ENDIF}
 begin
   LoName:=lowercase(Item.Identifier);
+  {$ifdef pas2js}
+  OldItem:=TPasIdentifier(FItems.Find(LoName));
+  if OldItem<>nil then
+    begin
+    // insert LIFO - last in, first out
+    Item.NextSameIdentifier:=OldItem;
+    end;
+  FItems.Add(LoName,Item);
+  {$IFDEF VerbosePasResolver}
+  if Item.Owner<>nil then
+    raise Exception.Create('20160925184110');
+  Item.Owner:=Self;
+  {$ENDIF}
+  {$IFDEF VerbosePasResolver}
+  if FindIdentifier(Item.Identifier)<>Item then
+    raise Exception.Create('20181018173201');
+  {$ENDIF}
+  {$else}
   Index:=FItems.FindIndexOf(LoName);
   {$IFDEF VerbosePasResolver}
   if Item.Owner<>nil then
@@ -3397,11 +4265,12 @@ begin
       raise Exception.Create('20160925183849');
     {$ENDIF}
     end;
+  {$endif}
 end;
 
 constructor TPasIdentifierScope.Create;
 begin
-  FItems:=TFPHashList.Create;
+  FItems:=TPasResHashList.Create;
 end;
 
 destructor TPasIdentifierScope.Destroy;
@@ -3410,8 +4279,12 @@ begin
   writeln('TPasIdentifierScope.Destroy START ',ClassName);
   {$ENDIF}
   FItems.ForEachCall(@OnClearItem,nil);
+  {$ifdef pas2js}
+  FItems:=nil;
+  {$else}
   FItems.Clear;
   FreeAndNil(FItems);
+  {$endif}
   inherited Destroy;
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasIdentifierScope.Destroy END ',ClassName);
@@ -3459,13 +4332,13 @@ begin
         end
       else
         begin
-        FItems.Remove(Identifier);
+        FItems.Remove({$ifdef pas2js}LoName{$else}Identifier{$endif});
         PrevIdentifier:=Identifier;
         Identifier:=Identifier.NextSameIdentifier;
         PrevIdentifier.Free;
         PrevIdentifier:=nil;
         if Identifier<>nil then
-          FItems.Add(Loname,Identifier);
+          FItems.Add(LoName,Identifier);
         end;
       Result:=true;
       continue;
@@ -3572,8 +4445,31 @@ end;
 // inline
 function TPasResolver.IsNameExpr(El: TPasExpr): boolean;
 begin
-  Result:=(El.ClassType=TSelfExpr)
-      or ((El.ClassType=TPrimitiveExpr) and (TPrimitiveExpr(El).Kind=pekIdent));
+  Result:=(El.ClassType=TPrimitiveExpr) and (TPrimitiveExpr(El).Kind=pekIdent);
+end;
+
+// inline
+function TPasResolver.IsGenericTemplType(const ResolvedEl: TPasResolverResult
+  ): boolean;
+begin
+  Result:=(ResolvedEl.BaseType=btContext)
+      and (ResolvedEl.LoTypeEl.ClassType=TPasGenericTemplateType);
+end;
+
+// inline
+function TPasResolver.GetLocalScope: TPasScope;
+begin
+  Result:=TopScope;
+  if Result.ClassType=TPasGroupScope then
+    Result:=TPasGroupScope(Result).Scopes[0];
+end;
+
+// inline
+function TPasResolver.GetParentLocalScope: TPasScope;
+begin
+  Result:=Scopes[ScopeCount-2];
+  if Result.ClassType=TPasGroupScope then
+    Result:=TPasGroupScope(Result).Scopes[0];
 end;
 
 function TPasResolver.GetNameExprValue(El: TPasExpr): string;
@@ -3587,14 +4483,12 @@ begin
     else
       Result:='';
     end
-  else if El.ClassType=TSelfExpr then
-    Result:='self'
   else
     Result:='';
 end;
 
 function TPasResolver.GetNextDottedExpr(El: TPasExpr): TPasExpr;
-// returns TSelfExpr or TPrimitiveExpr (Kind=pekIdent)
+// returns TPrimitiveExpr (Kind=pekIdent)
 var
   Bin: TBinaryExpr;
   C: TClass;
@@ -3613,9 +4507,7 @@ begin
       // find left most
       repeat
         C:=El.ClassType;
-        if C=TSelfExpr then
-          exit(El)
-        else if C=TPrimitiveExpr then
+        if C=TPrimitiveExpr then
           begin
           if TPrimitiveExpr(El).Kind<>pekIdent then
             RaiseNotYetImplemented(20170502163825,El);
@@ -3639,6 +4531,116 @@ begin
   until false;
 end;
 
+function TPasResolver.GetLeftMostExpr(El: TPasExpr): TPasExpr;
+var
+  C: TClass;
+begin
+  Result:=El;
+  while Result<>nil do
+    begin
+    El:=Result;
+    C:=Result.ClassType;
+    if C=TBinaryExpr then
+      begin
+      if TBinaryExpr(Result).OpCode<>eopSubIdent then
+        exit;
+      Result:=TBinaryExpr(Result).left;
+      end
+    else if C=TParamsExpr then
+      begin
+      if not (TParamsExpr(Result).Kind in [pekFuncParams,pekArrayParams]) then
+        exit;
+      Result:=TParamsExpr(Result).Value;
+      end
+    else
+      exit;
+    end;
+end;
+
+function TPasResolver.GetRightMostExpr(El: TPasExpr): TPasExpr;
+var
+  C: TClass;
+begin
+  Result:=El;
+  while Result<>nil do
+    begin
+    El:=Result;
+    C:=Result.ClassType;
+    if C=TBinaryExpr then
+      begin
+      if TBinaryExpr(Result).OpCode<>eopSubIdent then
+        exit;
+      Result:=TBinaryExpr(Result).right;
+      end
+    else
+      exit;
+    end;
+end;
+
+procedure TPasResolver.GetParamsOfNameExpr(El: TPasExpr; out
+  ParentParams: TPRParentParams);
+// Checks is El is the name expression of a call or array access
+// For example: a.b.El()  a.El[]
+// Note: TPasParser guarantees that there is at most one TBinaryExpr
+//       and one TInlineSpecializeExpr between El and TParamsExpr
+var
+  Parent: TPasElement;
+  Bin: TBinaryExpr;
+  Params: TParamsExpr;
+  InlineSpec: TInlineSpecializeExpr;
+begin
+  ParentParams.InlineSpec:=nil;
+  ParentParams.Params:=nil;
+  if not IsNameExpr(El) then exit;
+  Parent:=El.Parent;
+  if Parent=nil then exit;
+  if Parent.ClassType=TBinaryExpr then
+    begin
+    Bin:=TBinaryExpr(Parent);
+    if (Bin.OpCode<>eopSubIdent) or (Bin.right<>El) then
+      exit;
+    El:=Bin;
+    Parent:=El.Parent;
+    end;
+  if Parent.ClassType=TInlineSpecializeExpr then
+    begin
+    InlineSpec:=TInlineSpecializeExpr(Parent);
+    if InlineSpec.NameExpr<>El then exit;
+    ParentParams.InlineSpec:=InlineSpec;
+    El:=InlineSpec;
+    Parent:=El.Parent;
+    if Parent=nil then exit;
+    end;
+  if Parent.ClassType<>TParamsExpr then exit;
+  Params:=TParamsExpr(Parent);
+  if Params.Value<>El then exit;
+  if not (Params.Kind in [pekFuncParams,pekArrayParams]) then exit;
+  ParentParams.Params:=Params;
+end;
+
+function TPasResolver.GetInlineSpecOfNameExpr(El: TPasExpr
+  ): TInlineSpecializeExpr;
+var
+  Parent: TPasElement;
+begin
+  Result:=nil;
+  if not IsNameExpr(El) then exit;
+  Parent:=El.Parent;
+  if Parent=nil then exit;
+  if Parent is TBinaryExpr then
+    begin
+    if (TBinaryExpr(Parent).OpCode<>eopSubIdent)
+        or (TBinaryExpr(Parent).right<>El) then
+      exit;
+    El:=TBinaryExpr(Parent); // continue
+    Parent:=El.Parent;
+    end;
+  if Parent.ClassType<>TInlineSpecializeExpr then exit;
+  Result:=TInlineSpecializeExpr(Parent);
+  if Result.NameExpr<>El then
+    Result:=nil;
+end;
+
 function TPasResolver.GetUsesUnitInFilename(InFileExpr: TPasExpr): string;
 var
   Value: TResEvalValue;
@@ -3650,10 +4652,15 @@ begin
     if (Value=nil) then
       RaiseXExpectedButYFound(20180222000004,'string literal',GetElementTypeName(InFileExpr),InFileExpr);
     case Value.Kind of
+    {$ifdef FPC_HAS_CPSTRING}
     revkString:
       Result:=ExprEvaluator.GetUTF8Str(TResEvalString(Value).S,InFileExpr);
     revkUnicodeString:
       Result:=UTF8Encode(TResEvalUTF16(Value).S);
+    {$else}
+    revkUnicodeString:
+      Result:=TResEvalUTF16(Value).S;
+    {$endif}
     else
       RaiseXExpectedButYFound(20180222000122,'string literal',Value.AsDebugString,InFileExpr);
     end;
@@ -3663,7 +4670,7 @@ begin
 end;
 
 function TPasResolver.GetPathStart(El: TPasExpr): TPasExpr;
-// get leftmost name element (e.g. TPrimitiveExpr or TSelfExpr)
+// get leftmost name element (e.g. TPrimitiveExpr)
 // nil if not found
 var
   C: TClass;
@@ -3673,8 +4680,6 @@ begin
     begin
     C:=El.ClassType;
     if C=TPrimitiveExpr then
-      exit(El)
-    else if C=TSelfExpr then
       exit(El)
     else if C=TBinaryExpr then
       begin
@@ -3754,18 +4759,36 @@ begin
   FRootElement:=AValue;
 end;
 
-procedure TPasResolver.OnFindFirstElement(El: TPasElement; ElScope,
+procedure TPasResolver.OnFindFirst_PreferNoParams(El: TPasElement; ElScope,
   StartScope: TPasScope; FindFirstElementData: Pointer; var Abort: boolean);
 var
   Data: PPRFindData absolute FindFirstElementData;
   ok: Boolean;
+  Proc: TPasProcedure;
+  Templates: TFPList;
 begin
   ok:=true;
-  //writeln('TPasResolver.OnFindFirstElement ',El.PathName);
-  if (El is TPasProcedure)
-      and ProcNeedsParams(TPasProcedure(El).ProcType) then
-    // found a proc, but it needs parameters -> remember the first and continue
-    ok:=false;
+  if (El is TPasProcedure) then
+    begin
+    Proc:=TPasProcedure(El);
+    if Data^.SkipGenerics then
+      begin
+      Templates:=GetProcTemplateTypes(Proc);
+      if (Templates<>nil) and (Templates.Count>0) then
+        ok:=false;
+      end;
+    if ok and ProcNeedsParams(Proc.ProcType) then
+      // found a proc, but it needs parameters -> remember the first and continue
+      ok:=false;
+    end
+  else if Data^.SkipGenerics then
+    begin
+    if El is TPasGenericType then
+      begin
+      if GetTypeParameterCount(TPasGenericType(El))>0 then
+        ok:=false;
+      end;
+    end;
   if ok or (Data^.Found=nil) then
     begin
     Data^.Found:=El;
@@ -3776,10 +4799,42 @@ begin
     Abort:=true;
 end;
 
-procedure TPasResolver.OnFindCallElements(El: TPasElement; ElScope,
-  StartScope: TPasScope; FindProcsData: Pointer; var Abort: boolean);
+procedure TPasResolver.OnFindFirst(El: TPasElement; ElScope,
+  StartScope: TPasScope; FindFirstElementData: Pointer; var Abort: boolean);
 var
-  Data: PFindCallElData absolute FindProcsData;
+  Data: PPRFindData absolute FindFirstElementData;
+begin
+  Data^.Found:=El;
+  Data^.ElScope:=ElScope;
+  Data^.StartScope:=StartScope;
+  Abort:=true;
+end;
+
+procedure TPasResolver.OnFindFirst_GenericEl(El: TPasElement; ElScope,
+  StartScope: TPasScope; FindFirstGenericData: Pointer; var Abort: boolean);
+var
+  Data: PPRFindGenericData absolute FindFirstGenericData;
+  GenericTemplateTypes: TFPList;
+begin
+  if El is TPasGenericType then
+    GenericTemplateTypes:=TPasGenericType(El).GenericTemplateTypes
+  else if El is TPasProcedure then
+    GenericTemplateTypes:=GetProcTemplateTypes(TPasProcedure(El))
+  else
+    exit;
+  if GenericTemplateTypes=nil then exit;
+  if GenericTemplateTypes.Count<>Data^.TemplateCount then
+    exit;
+  Data^.Find.Found:=El;
+  Data^.Find.ElScope:=ElScope;
+  Data^.Find.StartScope:=StartScope;
+  Abort:=true;
+end;
+
+procedure TPasResolver.OnFindCallElements(El: TPasElement; ElScope,
+  StartScope: TPasScope; FindCallElData: Pointer; var Abort: boolean);
+var
+  Data: PFindCallElData absolute FindCallElData;
   Proc, PrevProc: TPasProcedure;
   Distance: integer;
   BuiltInProc: TResElDataBuiltInProc;
@@ -3787,6 +4842,7 @@ var
   VarType, TypeEl: TPasType;
   C: TClass;
   ProcScope: TPasProcedureScope;
+  Templates: TFPList;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.OnFindCallElements START --------- ',GetObjName(El),' at ',GetElementSourcePosStr(El));
@@ -3865,11 +4921,21 @@ begin
       Abort:=true; // stop searching after this proc
 
     CandidateFound:=true;
-    Distance:=CheckCallProcCompatibility(Proc.ProcType,Data^.Params,false);
+    if Data^.TemplCnt>0 then
+      begin
+      // proc must have templates
+      Templates:=GetProcTemplateTypes(Proc);
+      if (Templates=nil) or (Templates.Count<>Data^.TemplCnt) then
+        Distance:=cIncompatible
+      else
+        Distance:=CheckCallProcCompatibility(Proc.ProcType,Data^.Params,false);
+      end
+    else
+      Distance:=CheckCallProcCompatibility(Proc.ProcType,Data^.Params,false);
 
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.OnFindCallElements Proc Distance=',Distance,
-      ' Data^.Found=',Data^.Found<>nil,' Data^.Distance=',ord(Data^.Distance),
+      ' Data^.Found=',Data^.Found<>nil,' Data^.Distance=',Data^.Distance,
       ' Signature={',GetProcTypeDescription(Proc.ProcType,[prptdUseName,prptdAddPaths]),'}',
       ' Abort=',Abort);
     {$ENDIF}
@@ -3879,6 +4945,14 @@ begin
     begin
     TypeEl:=ResolveAliasType(TPasType(El));
     C:=TypeEl.ClassType;
+    if Data^.TemplCnt<>0 then
+      begin
+      if (not C.InheritsFrom(TPasGenericType))
+          or (GetTypeParameterCount(TPasGenericType(TypeEl))<>Data^.TemplCnt)
+      then
+        exit;
+      end;
+
     if C=TPasUnresolvedSymbolRef then
       begin
       if TypeEl.CustomData.ClassType=TResElDataBuiltInProc then
@@ -3921,14 +4995,15 @@ begin
         or (C=TPasProcedureType)
         or (C=TPasFunctionType)
         or (C=TPasArrayType)
-        or (C=TPasRangeType) then
+        or (C=TPasRangeType)
+        or (C=TPasGenericTemplateType) then
       begin
       // type cast to user type
       Abort:=true; // can't be overloaded
       if Data^.Found<>nil then exit;
       Distance:=CheckTypeCast(TPasType(El),Data^.Params,false);
       {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.OnFindCallElements type cast to =',GetObjName(El),' Distance=',Distance);
+      writeln('TPasResolver.OnFindCallElements type cast to "',GetObjName(El),'" Distance=',Distance);
       {$ENDIF}
       CandidateFound:=true;
       end;
@@ -3937,7 +5012,12 @@ begin
     begin
     Abort:=true; // can't be overloaded
     if Data^.Found<>nil then exit;
-    VarType:=ResolveAliasType(TPasVariable(El).VarType);
+    if Data^.TemplCnt<>0 then exit;
+    if El.ClassType=TPasProperty then
+      VarType:=GetPasPropertyType(TPasProperty(El))
+    else
+      VarType:=TPasVariable(El).VarType;
+    VarType:=ResolveAliasType(VarType);
     if VarType is TPasProcedureType then
       begin
       Distance:=CheckCallProcCompatibility(TPasProcedureType(VarType),Data^.Params,false);
@@ -3951,6 +5031,7 @@ begin
     begin
     Abort:=true; // can't be overloaded
     if Data^.Found<>nil then exit;
+    if Data^.TemplCnt<>0 then exit;
     VarType:=ResolveAliasType(TPasArgument(El).ArgType);
     if VarType is TPasProcedureType then
       begin
@@ -4000,9 +5081,11 @@ begin
     writeln('TPasResolver.OnFindCallElements Found another candidate, but it is incompatible -> ignore')
     {$ENDIF}
   else if (Data^.Distance=Distance)
-      or ((Distance>=cLossyConversion) and (Data^.Distance>=cLossyConversion)) then
+      or ((Distance>=cLossyConversion) and (Data^.Distance>=cLossyConversion)
+          and ((Distance>=cIntToFloatConversion)=(Data^.Distance>=cIntToFloatConversion))) then
     begin
-    // found another compatible one -> collect
+    // found another similar compatible one -> collect
+    // Note: cLossyConversion is better than cIntToFloatConversion, not similar
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.OnFindCallElements Found another candidate Distance=',Distance,' OldDistance=',Data^.Distance);
     {$ENDIF}
@@ -4029,13 +5112,13 @@ begin
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.OnFindCallElements Found a better candidate Distance=',Distance,' Data^.Distance=',Data^.Distance);
     {$ENDIF}
-    Data^.Found:=El;
-    Data^.ElScope:=ElScope;
-    Data^.StartScope:=StartScope;
-    Data^.Distance:=Distance;
-    if (Distance<cLossyConversion) then
+    if (Distance<cLossyConversion)
+        or ((Distance>=cIntToFloatConversion)<>(Data^.Distance>=cIntToFloatConversion)) then
       begin
       // found a good one
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.OnFindCallElements Found a good candidate Distance=',Distance,' Data^.Distance=',Data^.Distance);
+      {$ENDIF}
       Data^.Count:=1;
       if Data^.List<>nil then
         Data^.List.Clear;
@@ -4044,22 +5127,33 @@ begin
       begin
       // found another lossy one
       // -> collect them
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.OnFindCallElements Found another lossy candidate Distance=',Distance,' Data^.Distance=',Data^.Distance);
+      {$ENDIF}
       inc(Data^.Count);
       end;
+    Data^.Found:=El;
+    Data^.ElScope:=ElScope;
+    Data^.StartScope:=StartScope;
+    Data^.Distance:=Distance;
     if Data^.List<>nil then
       Data^.List.Add(El);
+    end
+  else
+    begin
+    // found a worse one
     end;
 end;
 
-procedure TPasResolver.OnFindOverloadProc(El: TPasElement; ElScope,
-  StartScope: TPasScope; FindOverloadData: Pointer; var Abort: boolean);
+procedure TPasResolver.OnFindProc(El: TPasElement; ElScope,
+  StartScope: TPasScope; FindProcData: Pointer; var Abort: boolean);
 var
-  Data: PFindOverloadProcData absolute FindOverloadData;
+  Data: PFindProcData absolute FindProcData;
   Proc: TPasProcedure;
   Store, SameScope: Boolean;
   ProcScope: TPasProcedureScope;
 
-  procedure CountProcInSameModule;
+  procedure CountProcInSameScope;
   begin
     inc(Data^.FoundInSameScope);
     if Proc.IsOverload then
@@ -4067,7 +5161,7 @@ var
   end;
 
 begin
-  //writeln('TPasResolver.OnFindOverloadProc START ',El.Name,':',GetElementTypeName(El),' itself=',El=Data^.Proc);
+  //writeln('TPasResolver.OnFindProc START ',El.Name,':',GetElementTypeName(El),' itself=',El=Data^.Proc);
   if not (El is TPasProcedure) then
     begin
     // identifier is not a proc
@@ -4088,23 +5182,28 @@ begin
         exit; // no hint
       end;
     case Data^.Kind of
-      fopkProc:
-        // proc hides a non proc
-        if (Data^.Proc.GetModule=El.GetModule) then
-          // forbidden within same module
-          RaiseMsg(20170216151649,nDuplicateIdentifier,sDuplicateIdentifier,
-            [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType)
-        else
+    fpkProc:
+      // proc hides a non proc
+      if (Data^.Proc.GetModule=El.GetModule) then
+        // forbidden within same module
+        RaiseMsg(20170216151649,nDuplicateIdentifier,sDuplicateIdentifier,
+          [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType)
+      else
+        begin
+        // give a hint
+        if Data^.Proc.Parent is TPasMembersType then
           begin
-          // give a hint
-          if Data^.Proc.Parent is TPasClassType then
+          if El.Visibility=visStrictPrivate then
+          else if (El.Visibility=visPrivate) and (El.GetModule<>Data^.Proc.GetModule) then
+          else
             LogMsg(20171118205344,mtHint,nFunctionHidesIdentifier_NonProc,sFunctionHidesIdentifier,
               [GetElementSourcePosStr(El)],Data^.Proc.ProcType);
           end;
-      fopkMethod:
-        // method hides a non proc
-        RaiseMsg(20171118232543,nDuplicateIdentifier,sDuplicateIdentifier,
-          [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType);
+        end;
+    fpkMethod:
+      // method hides a non proc
+      RaiseMsg(20171118232543,nDuplicateIdentifier,sDuplicateIdentifier,
+        [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType);
     end;
     exit;
     end;
@@ -4114,107 +5213,151 @@ begin
   if El=Data^.Proc then
     begin
     // found itself -> this is normal when searching for overloads
-    CountProcInSameModule;
-    exit;
-    end;
-
-  //writeln('TPasResolver.OnFindOverloadProc Data^.OnlyScope=',GetObjName(Data^.OnlyScope),' ElScope=',GetObjName(ElScope),' Same=',Data^.OnlyScope=ElScope);
-  if (Data^.OnlyScope<>nil) and (Data^.OnlyScope<>ElScope) then
-    begin
-    // do not search any further, only one scope should be searched
-    // for example when searching the method declaration of a method body
-    Abort:=false;
+    CountProcInSameScope;
     exit;
     end;
 
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.OnFindOverloadProc ',GetTreeDbg(El,2));
+  writeln('TPasResolver.OnFindProc ',GetTreeDbg(El,2));
   {$ENDIF}
-  Store:=CheckOverloadProcCompatibility(Data^.Proc,Proc);
-  if Data^.Kind=fopkSameSignature then
-    // finding a proc with same signature is enough, see above Data^.OnlyScope
+  Store:=CheckProcOverloadCompatibility(Data^.Proc,Proc);
+  case Data^.Kind of
+  fpkProc:
+    SameScope:=Data^.Proc.GetModule=Proc.GetModule;
+  fpkMethod:
+    SameScope:=Data^.Proc.Parent=Proc.Parent;
   else
+    // use OnFindProcDeclaration instead
+    RaiseNotYetImplemented(20191010123525,Data^.Proc);
+  end;
+  if SameScope then
     begin
-    if Data^.Kind=fopkProc then
-      SameScope:=Data^.Proc.GetModule=Proc.GetModule
-    else
-      SameScope:=Data^.Proc.Parent=Proc.Parent;
-    if SameScope then
+    // same scope
+    if (msObjfpc in CurrentParser.CurrentModeswitches) then
       begin
-      // same scope
-      if (msObjfpc in CurrentParser.CurrentModeswitches) then
-        begin
-          if ProcHasGroupOverload(Data^.Proc) then
-            Include(TPasProcedureScope(Proc.CustomData).Flags,ppsfIsGroupOverload)
-          else if ProcHasGroupOverload(Proc) then
-            Include(TPasProcedureScope(Data^.Proc.CustomData).Flags,ppsfIsGroupOverload);
-        end;
-      if Store then
-        begin
-        // same scope, same signature
-        // Note: forward declaration was already handled in FinishProcedureHeader
-        RaiseMsg(20171118221821,nDuplicateIdentifier,sDuplicateIdentifier,
-                  [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
-        end
-      else
-        begin
-        // same scope, different signature
-        if (msDelphi in CurrentParser.CurrentModeswitches) then
-          begin
-          // Delphi does not allow different procs without 'overload' in a scope
-          if not Proc.IsOverload then
-            RaiseMsg(20171118222112,nPreviousDeclMissesOverload,sPreviousDeclMissesOverload,
-              [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
-          else if not Data^.Proc.IsOverload then
-            RaiseMsg(20171118222147,nOverloadedProcMissesOverload,sOverloadedProcMissesOverload,
-              [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
-          end
-        else
-          begin
-          // ObjFPC allows different procs without 'overload' modifier
-          end;
-        CountProcInSameModule;
-        end;
+        if ProcHasGroupOverload(Data^.Proc) then
+          Include(TPasProcedureScope(Proc.CustomData).Flags,ppsfIsGroupOverload)
+        else if ProcHasGroupOverload(Proc) then
+          Include(TPasProcedureScope(Data^.Proc.CustomData).Flags,ppsfIsGroupOverload);
+      end;
+    if Store then
+      begin
+      // same scope, same signature
+      // Note: forward declaration was already handled in FinishProcedureHeader
+      RaiseMsg(20171118221821,nDuplicateIdentifier,sDuplicateIdentifier,
+                [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
       end
     else
       begin
-      // different scopes
-      if Data^.Proc.IsOverride then
-      else if Data^.Proc.IsReintroduced then
+      // same scope, different signature
+      if (msDelphi in CurrentParser.CurrentModeswitches) then
+        begin
+        // Delphi does not allow different procs without 'overload' in a scope
+        if not Proc.IsOverload then
+          RaiseMsg(20171118222112,nPreviousDeclMissesOverload,sPreviousDeclMissesOverload,
+            [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
+        else if not Data^.Proc.IsOverload then
+          RaiseMsg(20171118222147,nOverloadedProcMissesOverload,sOverloadedProcMissesOverload,
+            [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+        end
       else
         begin
-        if Store
-            or ((Data^.FoundInSameScope=1) // missing 'overload' hints only for the first proc in a scope
-               and not ProcHasGroupOverload(Data^.Proc)) then
+        // ObjFPC allows different procs without 'overload' modifier
+        end;
+      CountProcInSameScope;
+      end;
+    end
+  else
+    begin
+    // different scopes
+    if Data^.Proc.IsOverride then
+    else if Data^.Proc.IsReintroduced then
+    else
+      begin
+      if Store
+          or ((Data^.FoundInSameScope=1) // missing 'overload' hints only for the first proc in a scope
+             and not ProcHasGroupOverload(Data^.Proc)) then
+        begin
+        if (Data^.Kind=fpkMethod) and (Proc.IsVirtual or Proc.IsOverride) then
+          // give a hint, that method hides a virtual method in ancestor
+          LogMsg(20170216151712,mtWarning,nMethodHidesMethodOfBaseType,
+            sMethodHidesMethodOfBaseType,
+            [Data^.Proc.Name,Proc.Parent.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
+        else
           begin
-          if (Data^.Kind=fopkMethod) and (Proc.IsVirtual or Proc.IsOverride) then
-            // give a hint, that method hides a virtual method in ancestor
-            LogMsg(20170216151712,mtWarning,nMethodHidesMethodOfBaseType,
-              sMethodHidesMethodOfBaseType,
-              [Data^.Proc.Name,Proc.Parent.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
-          else
+          // Delphi/FPC do not give a message when hiding a non virtual method
+          // -> emit Hint with other message id
+          if (Data^.Proc.Parent is TPasMembersType) then
             begin
-            // Delphi/FPC do not give a message when hiding a non virtual method
-            // -> emit Hint with other message id
-            if (Data^.Proc.Parent is TPasClassType) then
+            ProcScope:=Proc.CustomData as TPasProcedureScope;
+            if (Proc.Visibility=visStrictPrivate)
+                or ((Proc.Visibility=visPrivate)
+                  and (Proc.GetModule<>Data^.Proc.GetModule)) then
+              // a private private is hidden by definition -> no hint
+            else if (ProcScope.ImplProc<>nil)  // not abstract, external
+                and (not ProcHasImplElements(ProcScope.ImplProc)) then
+              // hidden method has implementation, but no statements -> useless
+              // -> do not give a hint for hiding this useless method
+              // Note: if this happens in the same unit, the body was not yet parsed
+            else if (Proc is TPasConstructor)
+                and (Data^.Proc.ClassType=Proc.ClassType) then
+              // do not give a hint for hiding a constructor
+            else if Store then
               begin
-              ProcScope:=Proc.CustomData as TPasProcedureScope;
-              if (ProcScope.ImplProc<>nil)  // not abstract, external
-                  and (GetProcFirstImplEl(ProcScope.ImplProc)=nil) then
-                // hidden method has implementation, but no statements -> useless
-                // -> do not give a hint for hiding this useless method
-                // Note: if this happens in the same unit, the body was not yet parsed
-              else
-                LogMsg(20171118214523,mtHint,
-                  nFunctionHidesIdentifier_NonVirtualMethod,sFunctionHidesIdentifier,
-                  [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+              // method hides ancestor method with same signature
+              LogMsg(20190316152656,mtHint,
+                nMethodHidesNonVirtualMethodExactly,sMethodHidesNonVirtualMethodExactly,
+                [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+              end
+            else
+              begin
+              //writeln('TPasResolver.OnFindProc Proc=',Proc.PathName,' Data^.Proc=',Data^.Proc.PathName,' ',Proc.Visibility);
+              LogMsg(20171118214523,mtHint,
+                nFunctionHidesIdentifier_NonVirtualMethod,sFunctionHidesIdentifier,
+                [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
               end;
             end;
-          Abort:=true;
           end;
+        Abort:=true;
         end;
       end;
     end;
+
+  if Store then
+    begin
+    Data^.Found:=Proc;
+    Data^.ElScope:=ElScope;
+    Data^.StartScope:=StartScope;
+    Abort:=true;
+    end;
+end;
+
+procedure TPasResolver.OnFindProcDeclaration(El: TPasElement; ElScope,
+  StartScope: TPasScope; FindProcData: Pointer; var Abort: boolean);
+var
+  Data: PFindProcData absolute FindProcData;
+  Proc: TPasProcedure;
+  Store: Boolean;
+begin
+  //writeln('TPasResolver.OnFindProcDeclaration START ',El.Name,':',GetElementTypeName(El),' itself=',El=Data^.Proc);
+  if not (El is TPasProcedure) then
+    begin
+    // identifier is not a proc
+    Data^.FoundNonProc:=El;
+    Abort:=true;
+    exit;
+    end;
+  if El=Data^.Proc then
+    // found itself -> this is normal when searching for overloads
+    exit;
+
+  // identifier is a proc
+  Proc:=TPasProcedure(El);
+
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.OnFindProcDeclaration ',GetTreeDbg(El,2));
+  {$ENDIF}
+  Store:=CheckProcOverloadCompatibility(Data^.Proc,Proc);
 
   if Store then
     begin
@@ -4244,23 +5387,29 @@ begin
   Result:=false;
 end;
 
-function TPasResolver.FindProcOverload(const ProcName: string;
-  Proc: TPasProcedure; OnlyScope: TPasScope): TPasProcedure;
+function TPasResolver.FindProcSameSignature(const ProcName: string;
+  Proc: TPasProcedure; Scope: TPasIdentifierScope; OnlyLocal: boolean
+  ): TPasProcedure;
 var
-  FindData: TFindOverloadProcData;
+  FindData: TFindProcData;
   Abort: boolean;
 begin
-  FindData:=Default(TFindOverloadProcData);
+  FindData:=Default(TFindProcData);
   FindData.Proc:=Proc;
   FindData.Args:=Proc.ProcType.Args;
-  FindData.Kind:=fopkSameSignature;
-  FindData.OnlyScope:=OnlyScope;
+  FindData.Kind:=fpkProcDeclaration;
   Abort:=false;
-  OnlyScope.IterateElements(ProcName,OnlyScope,@OnFindOverloadProc,@FindData,Abort);
+  //writeln('TPasResolver.FindProcSameSignature ',ProcName,' OnlyLocal=',OnlyLocal);
+  if OnlyLocal then
+    Scope.IterateLocalElements(ProcName,Scope,@OnFindProcDeclaration,@FindData,Abort)
+  else
+    Scope.IterateElements(ProcName,Scope,@OnFindProcDeclaration,@FindData,Abort);
   Result:=FindData.Found;
 end;
 
 procedure TPasResolver.SetCurrentParser(AValue: TPasParser);
+var
+  Scanner: TPascalScanner;
 begin
   //writeln('TPasResolver.SetCurrentParser ',AValue<>nil);
   if AValue=CurrentParser then exit;
@@ -4269,8 +5418,13 @@ begin
   if CurrentParser<>nil then
     begin
     CurrentParser.Options:=CurrentParser.Options+po_Resolver;
-    if (CurrentParser.Scanner<>nil) and (CurrentParser.Scanner.OnWarnDirective=nil) then
-      CurrentParser.Scanner.OnWarnDirective:=@ScannerWarnDirective;
+    if CurrentParser.Scanner<>nil then
+      begin
+      Scanner:=CurrentParser.Scanner;
+      if (Scanner.OnWarnDirective=nil) then
+        Scanner.OnWarnDirective:=@ScannerWarnDirective;
+      Scanner.SetNonToken(tkself);
+      end;
     end;
 end;
 
@@ -4302,16 +5456,58 @@ end;
 function TPasResolver.AddIdentifier(Scope: TPasIdentifierScope;
   const aName: String; El: TPasElement; const Kind: TPasIdentifierKind
   ): TPasIdentifier;
+
+  function SkipGenericTypes(Identifier: TPasIdentifier;
+    TypeParamCnt: integer): TPasIdentifier;
+  var
+    CurEl: TPasElement;
+  begin
+    while Identifier<>nil do
+      begin
+      CurEl:=Identifier.Element;
+      if CurEl is TPasGenericType then
+        begin
+        if GetTypeParameterCount(TPasGenericType(CurEl))=TypeParamCnt then
+          break;
+        end
+      else
+        begin
+        if TypeParamCnt=0 then
+          break;
+        end;
+      Identifier:=Identifier.NextSameIdentifier;
+      end;
+    Result:=Identifier;
+  end;
+
 var
+  Group: TPasGroupScope;
   Identifier, OlderIdentifier: TPasIdentifier;
-  ClassScope: TPasClassScope;
   OlderEl: TPasElement;
-  IsClassScope: Boolean;
   C: TClass;
+  i, TypeParamCnt: Integer;
+  OtherScope: TPasIdentifierScope;
+  ParentScope: TPasScope;
+  IsGeneric: Boolean;
 begin
   if aName='' then exit(nil);
-
-  IsClassScope:=(Scope is TPasClassScope);
+  if Scope is TPasGroupScope then
+    begin
+    Group:=TPasGroupScope(Scope);
+    Scope:=Group.Scopes[0];
+    end
+  else
+    Group:=nil;
+  if El is TPasGenericType then
+    begin
+    IsGeneric:=true;
+    TypeParamCnt:=GetTypeParameterCount(TPasGenericType(El));
+    end
+  else
+    begin
+    IsGeneric:=false;
+    TypeParamCnt:=0;
+    end;
 
   if (El.Visibility=visPublished) then
     begin
@@ -4324,14 +5520,15 @@ begin
       RaiseMsg(20170403223024,nSymbolCannotBePublished,sSymbolCannotBePublished,[],El);
     end;
 
-  if (Kind=pikSimple) and IsClassScope
-      and (El.ClassType<>TPasProperty) then
+  if (Kind=pikSimple) and (Group<>nil) and (El.ClassType<>TPasProperty) then
     begin
-    // check duplicate in ancestors
-    ClassScope:=TPasClassScope(Scope).AncestorScope;
-    while ClassScope<>nil do
+    // check duplicate in ancestors and helpers
+    for i:=1 to Group.Count-1 do
       begin
-      OlderIdentifier:=ClassScope.FindLocalIdentifier(aName);
+      OtherScope:=Group.Scopes[i];
+      OlderIdentifier:=OtherScope.FindLocalIdentifier(aName);
+      if IsGeneric then
+        OlderIdentifier:=SkipGenericTypes(OlderIdentifier,TypeParamCnt);
       while OlderIdentifier<>nil do
         begin
         OlderEl:=OlderIdentifier.Element;
@@ -4347,7 +5544,6 @@ begin
         RaiseMsg(20170221130001,nDuplicateIdentifier,sDuplicateIdentifier,
                  [aName,GetElementSourcePosStr(OlderEl)],El);
         end;
-      ClassScope:=ClassScope.AncestorScope;
       end;
     end;
 
@@ -4355,18 +5551,52 @@ begin
 
   // check duplicate in current scope
   OlderIdentifier:=Identifier.NextSameIdentifier;
-  if (OlderIdentifier<>nil) then
-    if (Identifier.Kind=pikSimple)
-        or (OlderIdentifier.Kind=pikSimple)
-        or (El.Visibility=visPublished) then
+  if IsGeneric and (msDelphi in CurrentParser.CurrentModeswitches) then
+    OlderIdentifier:=SkipGenericTypes(OlderIdentifier,TypeParamCnt);
+  if OlderIdentifier<>nil then
+    begin
+    OlderEl:=OlderIdentifier.Element;
+    if (OlderEl.ClassType=TPasEnumValue)
+        and (OlderEl.Parent.Parent<>Scope.Element) then
       begin
-      if (OlderIdentifier.Element.ClassType=TPasEnumValue)
-          and (OlderIdentifier.Element.Parent.Parent<>Scope.Element) then
-        // this enum was propagated from a sub type -> remove enum
-        Scope.RemoveLocalIdentifier(OlderIdentifier.Element);
+      // this enum was propagated from a sub type -> remove enum from this scope
+      if OlderIdentifier.NextSameIdentifier<>nil then
+        RaiseNotYetImplemented(20190807114726,El,GetElementSourcePosStr(OlderEl));
+      Scope.RemoveLocalIdentifier(OlderEl);
+      OlderIdentifier:=nil;
+      OlderEl:=nil;
+      end
+    else if (El.Visibility=visPublished) and (El is TPasProcedure)
+        and (OlderEl is TPasProcedure) then
+      // published method bites method in same scope
+      RaiseMsg(20190626175432,nDuplicatePublishedMethodXAtY,
+               sDuplicatePublishedMethodXAtY,
+               [aName,GetElementSourcePosStr(OlderEl)],El)
+    else if (Identifier.Kind=pikSimple)
+        or (OlderIdentifier.Kind=pikSimple) then
+      // duplicate identifier
       RaiseMsg(20170216151530,nDuplicateIdentifier,sDuplicateIdentifier,
-               [aName,GetElementSourcePosStr(OlderIdentifier.Element)],El);
+              [aName,GetElementSourcePosStr(OlderEl)],El);
+    end;
+
+  if (Scope=TopScope) and (Scope is TPasSectionScope) then
+    begin
+    ParentScope:=Scopes[ScopeCount-2];
+    if ParentScope is TPasSectionScope then
+      begin
+      OlderIdentifier:=TPasSectionScope(ParentScope).FindLocalIdentifier(aName);
+      if IsGeneric then
+        OlderIdentifier:=SkipGenericTypes(OlderIdentifier,TypeParamCnt);
+      if OlderIdentifier<>nil then
+        begin
+        OlderEl:=OlderIdentifier.Element;
+        if (Identifier.Kind=pikSimple)
+            or (OlderIdentifier.Kind=pikSimple) then
+          RaiseMsg(20190818141630,nDuplicateIdentifier,sDuplicateIdentifier,
+                   [aName,GetElementSourcePosStr(OlderEl)],El);
+        end;
       end;
+    end;
 
   Result:=Identifier;
 end;
@@ -4446,15 +5676,16 @@ end;
 
 procedure TPasResolver.FinishUsesClause;
 var
-  Section, CurSection: TPasSection;
+  Section: TPasSection;
   i, j: Integer;
   PublicEl, UseModule: TPasElement;
   Scope: TPasSectionScope;
-  UsesScope: TPasIdentifierScope;
+  UsesScope: TPasSectionScope;
   UseUnit: TPasUsesUnit;
   FirstName: String;
   p: SizeInt;
   OldIdentifier: TPasIdentifier;
+  IntfHelpers: TPRHelperEntryArray;
 begin
   CheckTopScope(ScopeClass_Section);
   Scope:=TPasSectionScope(TopScope);
@@ -4487,38 +5718,24 @@ begin
     if PublicEl.CustomData=nil then
       RaiseInternalError(20160922163358,'uses element has no resolver data: '
         +UseUnit.Name+'->'+GetObjName(PublicEl));
-    if not (PublicEl.CustomData is TPasIdentifierScope) then
+    if not (PublicEl.CustomData is TPasSectionScope) then
       RaiseInternalError(20160922163403,'uses element has invalid resolver data: '
         +UseUnit.Name+'->'+GetObjName(PublicEl)+'->'+PublicEl.CustomData.ClassName);
-
-    // check if module was already used by a different name
-    j:=i;
-    CurSection:=Section;
-    repeat
-      dec(j);
-      if j<0 then
-        begin
-        if CurSection.ClassType<>TImplementationSection then
-          break;
-        CurSection:=CurSection.GetModule.InterfaceSection;
-        if CurSection=nil then break;
-        j:=length(CurSection.UsesClause)-1;
-        if j<0 then break;
-        end;
-      if CurSection.UsesClause[j].Module=UseModule then
-        RaiseMsg(20170503004022,nDuplicateIdentifier,sDuplicateIdentifier,
-          [UseModule.Name,GetElementSourcePosStr(CurSection.UsesClause[j])],UseUnit);
-    until false;
+    UsesScope:=TPasSectionScope(PublicEl.CustomData);
 
     // add full uses name
     AddIdentifier(Scope,UseUnit.Name,UseUnit,pikSimple);
 
     // add scope
-    UsesScope:=TPasIdentifierScope(PublicEl.CustomData);
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.FinishUsesClause Add UsesScope=',GetObjName(UsesScope));
     {$ENDIF}
     Scope.UsesScopes.Add(UsesScope);
+
+    // add helpers
+    IntfHelpers:=UsesScope.Helpers;
+    for j:=0 to length(IntfHelpers)-1 do
+      AddActiveHelper(TPRHelperEntry(IntfHelpers[j]).Helper);
 
     EmitElementHints(Section,UseUnit);
     end;
@@ -4564,7 +5781,45 @@ begin
   if Section=nil then ;
 end;
 
-procedure TPasResolver.FinishTypeSection(El: TPasDeclarations);
+procedure TPasResolver.FinishTypeSection(El: TPasElement);
+
+  procedure FinishDeclarations(El: TPasDeclarations);
+  var
+    i: Integer;
+    Decl: TPasElement;
+  begin
+    for i:=0 to El.Declarations.Count-1 do
+      begin
+      Decl:=TPasElement(El.Declarations[i]);
+      if Decl is TPasType then
+        FinishTypeSectionEl(TPasType(Decl));
+      end;
+  end;
+
+  procedure FinishMembersType(El: TPasMembersType);
+  var
+    i: Integer;
+    Decl: TPasElement;
+  begin
+    for i:=0 to El.Members.Count-1 do
+      begin
+      Decl:=TPasElement(El.Members[i]);
+      if Decl is TPasType then
+        FinishTypeSectionEl(TPasType(Decl));
+      end;
+  end;
+
+begin
+  // resolve pending forwards
+  if El is TPasDeclarations then
+    FinishDeclarations(TPasDeclarations(El))
+  else if El is TPasMembersType then
+    FinishMembersType(TPasMembersType(El))
+  else
+    RaiseNotYetImplemented(20181226105933,El);
+end;
+
+procedure TPasResolver.FinishTypeSectionEl(El: TPasType);
 
   function ReplaceDestType(Decl: TPasType; var DestType: TPasType;
     const DestName: string; MustExist: boolean; ErrorEl: TPasElement
@@ -4579,12 +5834,11 @@ procedure TPasResolver.FinishTypeSection(El: TPasDeclarations);
     Data:=Default(TPRFindData);
     Data.ErrorPosEl:=ErrorEl;
     (TopScope as TPasIdentifierScope).IterateElements(DestName,
-      TopScope,@OnFindFirstElement,@Data,Abort);
-    if (Data.Found=nil) then
+      TopScope,@OnFindFirst,@Data,Abort);
+    //writeln('ReplaceDestType ',GetObjName(El),' DestType=',GetObjName(DestType),' DestType.Parent=',GetObjName(DestType.Parent),' RefCount=',DestType.RefCount);
+    if Data.Found=nil then
       if MustExist then
         begin
-        if DestType is TUnresolvedPendingRef then
-          DestType.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
         RaiseIdentifierNotFound(20170216151543,DestName,ErrorEl);
         end
       else
@@ -4592,16 +5846,16 @@ procedure TPasResolver.FinishTypeSection(El: TPasDeclarations);
     if Data.Found=DestType then exit;
     if Decl is TPasClassOfType then
       begin
-      if Data.Found.ClassType<>TPasClassType then
+      if (Data.Found.ClassType<>TPasClassType)
+          or (TPasClassType(Data.Found).ObjKind<>okClass) then
         RaiseXExpectedButYFound(20170216151548,'class',GetElementTypeName(Data.Found),ErrorEl);
       end;
     // replace unresolved
     OldDestType:=DestType;
     DestType:=TPasType(Data.Found);
     DestType.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
-    if OldDestType is TUnresolvedPendingRef then
-      OldDestType.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
     OldDestType.Release{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
+    CheckUseAsType(DestType,20190123100649,El);
     // check cycles
     if Decl is TPasPointerType then
       CheckPointerCycle(TPasPointerType(Decl));
@@ -4609,81 +5863,75 @@ procedure TPasResolver.FinishTypeSection(El: TPasDeclarations);
   end;
 
 var
-  i: Integer;
-  Decl: TPasElement;
+  C: TClass;
   ClassOfEl: TPasClassOfType;
+  TypeEl: TPasType;
   UnresolvedEl: TUnresolvedPendingRef;
   OldClassType: TPasClassType;
-  TypeEl: TPasType;
-  C: TClass;
   PtrType: TPasPointerType;
 begin
-  // resolve pending forwards
-  for i:=0 to El.Declarations.Count-1 do
+  C:=El.ClassType;
+  if C=TPasClassType then
     begin
-    Decl:=TPasElement(El.Declarations[i]);
-    C:=Decl.ClassType;
-    if C.InheritsFrom(TPasClassType) then
+    if TPasClassType(El).IsForward
+        and not (TPasClassType(El).CustomData is TResolvedReference) then
+      RaiseMsg(20170216151534,nForwardTypeNotResolved,sForwardTypeNotResolved,[El.Name],El);
+    end
+  else if (C=TPasClassOfType) then
+    begin
+    ClassOfEl:=TPasClassOfType(El);
+    TypeEl:=ResolveAliasType(ClassOfEl.DestType);
+    if (TypeEl.ClassType=TUnresolvedPendingRef) then
       begin
-      if TPasClassType(Decl).IsForward and (TPasClassType(Decl).CustomData=nil) then
-        RaiseMsg(20170216151534,nForwardTypeNotResolved,sForwardTypeNotResolved,[Decl.Name],Decl);
+      // forward class-of -> resolve now
+      UnresolvedEl:=TUnresolvedPendingRef(TypeEl);
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.FinishTypeSection resolving "',ClassOfEl.Name,'" = class of unresolved "',TypeEl.Name,'"');
+      {$ENDIF}
+      ReplaceDestType(ClassOfEl,ClassOfEl.DestType,TypeEl.Name,true,UnresolvedEl
+        {$IFDEF CheckPasTreeRefCount},'TPasAliasType.DestType'{$ENDIF});
       end
-    else if (C=TPasClassOfType) then
+    else if TypeEl.ClassType=TPasClassType then
       begin
-      ClassOfEl:=TPasClassOfType(Decl);
-      TypeEl:=ResolveAliasType(ClassOfEl.DestType);
-      if (TypeEl.ClassType=TUnresolvedPendingRef) then
-        begin
-        // forward class-of -> resolve now
-        UnresolvedEl:=TUnresolvedPendingRef(TypeEl);
-        {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.FinishTypeSection resolving "',ClassOfEl.Name,'" = class of unresolved "',TypeEl.Name,'"');
-        {$ENDIF}
-        ReplaceDestType(ClassOfEl,ClassOfEl.DestType,TypeEl.Name,true,UnresolvedEl
-          {$IFDEF CheckPasTreeRefCount},'TPasAliasType.DestType'{$ENDIF});
-        end
-      else if TypeEl.ClassType=TPasClassType then
-        begin
-        // class-of has found a type
-        // another later in the same type section has priority -> check
-        OldClassType:=TypeEl as TPasClassType;
-        if OldClassType.Parent=ClassOfEl.Parent then
-          continue; // class in same type section -> ok
-        // class not in same type section -> check
-        {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.FinishTypeSection improving "',ClassOfEl.Name,'" = class of resolved "',TypeEl.Name,'"');
-        {$ENDIF}
-        ReplaceDestType(ClassOfEl,ClassOfEl.DestType,ClassOfEl.DestType.Name,false,ClassOfEl
-          {$IFDEF CheckPasTreeRefCount},'TPasAliasType.DestType'{$ENDIF});
-        end;
+      // class-of has found a type
+      // another later in the same type section has priority -> check
+      OldClassType:=TypeEl as TPasClassType;
+      if OldClassType.Parent=ClassOfEl.Parent then
+        exit; // class in same type section -> ok
+      // class not in same type section -> check
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.FinishTypeSection improving "',ClassOfEl.Name,'" = class of resolved "',TypeEl.Name,'"');
+      {$ENDIF}
+      ReplaceDestType(ClassOfEl,ClassOfEl.DestType,ClassOfEl.DestType.Name,false,ClassOfEl
+        {$IFDEF CheckPasTreeRefCount},'TPasAliasType.DestType'{$ENDIF});
+      end;
+    end
+  else if C=TPasPointerType then
+    begin
+    PtrType:=TPasPointerType(El);
+    TypeEl:=ResolveAliasType(PtrType.DestType);
+    if (TypeEl.ClassType=TUnresolvedPendingRef) then
+      begin
+      // forward pointer -> resolve now
+      UnresolvedEl:=TUnresolvedPendingRef(TypeEl);
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.FinishTypeSection resolving "',PtrType.Name,'" = pointer of unresolved "',TypeEl.Name,'"');
+      {$ENDIF}
+      ReplaceDestType(PtrType,PtrType.DestType,TypeEl.Name,true,UnresolvedEl
+        {$IFDEF CheckPasTreeRefCount},'TPasPointerType.DestType'{$ENDIF});
       end
-    else if C=TPasPointerType then
+    else
       begin
-      PtrType:=TPasPointerType(Decl);
-      TypeEl:=ResolveAliasType(PtrType.DestType);
-      if (TypeEl.ClassType=TUnresolvedPendingRef) then
-        begin
-        // forward pointer -> resolve now
-        UnresolvedEl:=TUnresolvedPendingRef(TypeEl);
-        {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.FinishTypeSection resolving "',PtrType.Name,'" = pointer of unresolved "',TypeEl.Name,'"');
-        {$ENDIF}
-        ReplaceDestType(PtrType,PtrType.DestType,TypeEl.Name,true,UnresolvedEl
-          {$IFDEF CheckPasTreeRefCount},'TPasPointerType.DestType'{$ENDIF});
-        end
-      else
-        begin
-        // pointer-of has found a type
-        // another later in the same type section has priority -> check
-        if TypeEl.Parent=Decl.Parent then
-          continue; // class in same type section -> ok
-        // dest not in same type section -> check
-        {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.FinishTypeSection improving "',PtrType.Name,'" = pointer of resolved "',TypeEl.Name,'"');
-        {$ENDIF}
-        ReplaceDestType(PtrType,PtrType.DestType,TypeEl.Name,false,PtrType
-          {$IFDEF CheckPasTreeRefCount},'TPasPointerType.DestType'{$ENDIF});
-        end;
+      // pointer-of has found a type
+      // another later in the same type section has priority -> check
+      if TypeEl.Parent=PtrType.Parent then
+        exit; // class in same type section -> ok
+      // dest not in same type section -> check
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.FinishTypeSection improving "',PtrType.Name,'" = pointer of resolved "',TypeEl.Name,'"');
+      {$ENDIF}
+      ReplaceDestType(PtrType,PtrType.DestType,TypeEl.Name,false,PtrType
+        {$IFDEF CheckPasTreeRefCount},'TPasPointerType.DestType'{$ENDIF});
       end;
     end;
 end;
@@ -4691,10 +5939,9 @@ end;
 procedure TPasResolver.FinishTypeDef(El: TPasType);
 var
   C: TClass;
-  aType: TPasType;
 begin
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.FinishTypeDef El=',GetObjName(El));
+  //writeln('TPasResolver.FinishTypeDef El=',GetObjName(El));
   {$ENDIF}
   C:=El.ClassType;
   if C=TPasEnumType then
@@ -4714,14 +5961,13 @@ begin
   else if C=TPasArrayType then
     FinishArrayType(TPasArrayType(El))
   else if (C=TPasAliasType) or (C=TPasTypeAliasType) then
-    begin
-    aType:=ResolveAliasType(El);
-    if (aType is TPasClassType) and (aType.CustomData=nil) then
-      exit;
-    EmitTypeHints(El,TPasAliasType(El).DestType);
-    end
+    FinishAliasType(TPasAliasType(El))
   else if (C=TPasPointerType) then
-    EmitTypeHints(El,TPasPointerType(El).DestType);
+    EmitTypeHints(El,TPasPointerType(El).DestType)
+  else if C=TPasGenericTemplateType then
+    FinishGenericTemplateType(TPasGenericTemplateType(El))
+  else if C=TPasSpecializeType then
+    FinishSpecializeType(TPasSpecializeType(El));
 end;
 
 procedure TPasResolver.FinishEnumType(El: TPasEnumType);
@@ -4731,6 +5977,14 @@ begin
 end;
 
 procedure TPasResolver.FinishSetType(El: TPasSetType);
+
+  function GetEnumTypePosEl: TPasElement;
+  begin
+    Result:=El.EnumType;
+    if Result.Parent<>El then
+      Result:=El;
+  end;
+
 var
   BaseTypeData: TResElDataBaseType;
   StartResolved, EndResolved: TPasResolverResult;
@@ -4760,10 +6014,12 @@ begin
       BaseTypeData:=TResElDataBaseType(EnumType.CustomData);
       if BaseTypeData.BaseType in (btAllChars+[btBoolean,btByte]) then
         exit;
-      RaiseXExpectedButYFound(20170216151553,'char or boolean',GetElementTypeName(EnumType),EnumType);
+      RaiseXExpectedButYFound(20170216151553,'char or boolean',
+        GetElementTypeName(EnumType),GetEnumTypePosEl);
       end;
     end;
-  RaiseXExpectedButYFound(20170216151557,'enum type',GetElementTypeName(EnumType),EnumType);
+  RaiseXExpectedButYFound(20170216151557,'enum type',
+    GetElementTypeName(EnumType),GetEnumTypePosEl);
 end;
 
 procedure TPasResolver.FinishSubElementType(Parent: TPasElement; El: TPasType);
@@ -4777,6 +6033,8 @@ begin
     RaiseMsg(20170415165455,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
   if not (Parent.Parent is TPasDeclarations) then
     RaiseMsg(20170416094735,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
+  if El.Parent<>Parent then
+    RaiseNotYetImplemented(20190215085011,Parent);
   // give anonymous sub type a name
   El.Name:=Parent.Name+AnonymousElTypePostfix;
   {$IFDEF VerbosePasResolver}
@@ -4836,9 +6094,14 @@ begin
 end;
 
 procedure TPasResolver.FinishRecordType(El: TPasRecordType);
+var
+  Scope: TPasRecordScope;
 begin
-  if TopScope.Element=El then
-    PopScope;
+  if TopScope.Element<>El then
+    RaiseNotYetImplemented(20190801232042,El);
+  Scope:=El.CustomData as TPasRecordScope;
+  Scope.GenericStep:=psgsInterfaceParsed;
+  PopScope;
 end;
 
 procedure TPasResolver.FinishClassType(El: TPasClassType);
@@ -4858,21 +6121,28 @@ var
   Resolutions: array of TMethResolution;
   Map: TPasClassIntfMap;
   o: TObject;
-  Member: TPasElement;
+  Member, Parent: TPasElement;
   IntfProc: TPasProcedure;
-  FindData: TFindOverloadProcData;
+  FindData: TFindProcData;
   Abort: boolean;
   MethRes: TPasMethodResolution;
   ResolvedEl: TPasResolverResult;
   ProcName, IntfProcName: String;
   Expr: TPasExpr;
+  SectionScope: TPasSectionScope;
+  SpecializedItems: TObjectList;
+  SpecializedItem: TPRSpecializedTypeItem;
+  OldScopeState: TScopeStashState;
 begin
   Resolutions:=nil;
-  if El.CustomData is TPasClassScope then
+  ClassScope:=nil;
+  if not El.IsForward then
     begin
     if TopScope.Element<>El then
       RaiseInternalError(20180322142534,GetObjName(El)+'<>'+GetObjName(TopScope.Element));
     ClassScope:=El.CustomData as TPasClassScope;
+    if ClassScope=nil then
+      RaiseNotYetImplemented(20190803204709,El);
 
     if El.ObjKind=okClass then
       begin
@@ -4979,12 +6249,12 @@ begin
                 end;
 
             // search interface method in class
-            FindData:=Default(TFindOverloadProcData);
+            FindData:=Default(TFindProcData);
             FindData.Proc:=IntfProc;
             FindData.Args:=IntfProc.ProcType.Args;
-            FindData.Kind:=fopkSameSignature;
+            FindData.Kind:=fpkProcDeclaration;
             Abort:=false;
-            IterateElements(ProcName,@OnFindOverloadProc,@FindData,Abort);
+            IterateElements(ProcName,@OnFindProcDeclaration,@FindData,Abort);
             if FindData.Found=nil then
               RaiseMsg(20180322143202,nNoMatchingImplForIntfMethodXFound,
                 sNoMatchingImplForIntfMethodXFound,
@@ -4997,10 +6267,63 @@ begin
 
       // ToDo: hint if method resolution is not used
       end;
+
+    if El.ObjKind in okAllHelpers then
+      begin
+      // activate helper
+      AddActiveHelper(El);
+
+      // cache helpers in interface, so other modules don't have to search
+      Parent:=El.Parent;
+      while Parent<>nil do
+        begin
+        if Parent.ClassType=TInterfaceSection then
+          begin
+          SectionScope:=Parent.CustomData as TPasSectionScope;
+          AddHelper(El,SectionScope.Helpers);
+          break;
+          end;
+        Parent:=Parent.Parent;
+        end;
+      end;
+
     end;
 
   if TopScope.Element=El then
-    PopScope;
+    PopScope // pop TPasClassScope
+  else
+    ; // e.g. class forward
+
+  if TopScope is TPasGenericParamsScope then
+    PopGenericParamScope(El);
+
+  if not El.IsForward then
+    begin
+    ClassScope.GenericStep:=psgsInterfaceParsed;
+    SpecializedItems:=ClassScope.SpecializedItems;
+    if SpecializedItems<>nil then
+      // finish interfaces of started specializations
+      for i:=0 to SpecializedItems.Count-1 do
+        begin
+        SpecializedItem:=TPRSpecializedTypeItem(SpecializedItems[i]);
+        SpecializedItem.GenericEl:=El;
+        if SpecializedItem.Step<>prssNone then continue;
+        InitSpecializeScopes(El,OldScopeState);
+        {$IFDEF VerbosePasResolver}
+        WriteScopesShort('TPasResolver.FinishClassType Finishing specialize interface: '+GetObjName(SpecializedItem.SpecializedType));
+        {$ENDIF}
+        SpecializeGenericIntf(SpecializedItem);
+
+        {$IFDEF VerbosePasResolver}
+        WriteScopesShort('TPasResolver.FinishClassType Finished specialize interface: '+GetObjName(SpecializedItem.SpecializedType));
+        {$ENDIF}
+
+        RestoreSpecializeScopes(OldScopeState);
+        {$IFDEF VerbosePasResolver}
+        WriteScopesShort('TPasResolver.FinishClassType RestoreStashedScopes '+GetObjName(SpecializedItem.SpecializedType));
+        {$ENDIF}
+        end;
+    end;
 end;
 
 procedure TPasResolver.FinishClassOfType(El: TPasClassOfType);
@@ -5008,7 +6331,11 @@ var
   TypeEl: TPasType;
 begin
   TypeEl:=ResolveAliasType(El.DestType);
-  if TypeEl is TUnresolvedPendingRef then exit;
+  if TypeEl is TUnresolvedPendingRef then
+    begin
+    TypeEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
+    exit;
+    end;
   if (TypeEl is TPasClassType) and (TPasClassType(TypeEl).ObjKind=okClass) then exit;
   RaiseMsg(20170216151602,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
     [El.DestType.Name,'class'],El);
@@ -5019,9 +6346,14 @@ var
   TypeEl: TPasType;
 begin
   TypeEl:=ResolveAliasType(El.DestType);
-  if TypeEl is TUnresolvedPendingRef then exit;
+  if TypeEl is TUnresolvedPendingRef then
+    begin
+    TypeEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
+    exit;
+    end;
   if El.DestType.Parent=El then
-    RaiseMsg(20180429094237,nNotYetImplemented,sNotYetImplemented,['pointer of anonymous type'],El.DestType);
+    RaiseMsg(20180429094237,nNotYetImplemented,sNotYetImplemented,['pointer of anonymous type'], El.DestType);
+  CheckUseAsType(El.DestType,20190123095118,El);
   CheckPointerCycle(El);
 end;
 
@@ -5031,7 +6363,20 @@ var
   Expr: TPasExpr;
   RangeResolved: TPasResolverResult;
   TypeEl: TPasType;
+  Parent: TPasArrayType;
+  Scope: TPasArrayScope;
 begin
+  // check cycles
+  Parent:=El;
+  repeat
+    if Parent=El.ElType then
+      RaiseMsg(20190807104630,nIllegalExpression,sIllegalExpression,[],El);
+    if Parent.Parent is TPasArrayType then
+      Parent:=TPasArrayType(Parent.Parent)
+    else
+      break;
+  until false;
+
   for i:=0 to length(El.Ranges)-1 do
     begin
     Expr:=El.Ranges[i];
@@ -5065,12 +6410,223 @@ begin
       // full range, e.g. array[char]
     else if (RangeResolved.BaseType=btContext) and (RangeResolved.LoTypeEl is TPasEnumType) then
       // e.g. array[enumtype]
+    else if (RangeResolved.BaseType=btContext) and (RangeResolved.LoTypeEl is TPasGenericTemplateType) then
+      // e.g. Tarr<T> = array[T] of ...
+    else if RangeResolved.IdentEl<>nil then
+      RaiseXExpectedButYFound(20170216151609,'range',GetElementTypeName(RangeResolved.IdentEl),Expr)
     else
-      RaiseXExpectedButYFound(20170216151609,'range',GetElementTypeName(RangeResolved.IdentEl),Expr);
+      RaiseXExpectedButYFound(20190830215123,'range',GetResolverResultDescription(RangeResolved),Expr);
     end;
   if El.ElType=nil then
-    RaiseNotYetImplemented(20171005235610,El,'array of const');
-  FinishSubElementType(El,El.ElType);
+    begin
+    // array of const
+    if length(El.Ranges)>0 then
+      RaiseNotYetImplemented(20190215102529,El);
+    FindTVarRec(El);
+    end
+  else
+    begin
+    CheckUseAsType(El.ElType,20190123095401,El);
+    FinishSubElementType(El,El.ElType);
+    end;
+
+  if El.CustomData is TPasArrayScope then
+    begin
+    Scope:=TPasArrayScope(El.CustomData);
+    Scope.GenericStep:=psgsImplementationParsed;
+    end;
+
+  if TopScope.Element=El then
+    PopScope;
+end;
+
+procedure TPasResolver.FinishAliasType(El: TPasAliasType);
+var
+  aType: TPasType;
+begin
+  aType:=ResolveAliasType(El);
+  if (aType is TPasMembersType) and (aType.CustomData=nil) then
+    exit;
+  if (aType is TPasGenericType)
+      and (GetTypeParameterCount(TPasGenericType(aType))>0) then
+    RaiseMsg(20190818135830,nXExpectedButYFound,sXExpectedButYFound,
+      ['type',GetTypeDescription(aType)],El);
+  EmitTypeHints(El,TPasAliasType(El).DestType);
+end;
+
+procedure TPasResolver.FinishGenericTemplateType(El: TPasGenericTemplateType);
+var
+  ConEl: TPasElement;
+
+  procedure RaiseCannotBeTogether(const Id: TMaxPrecInt; const X,Y: string);
+  begin
+    RaiseMsg(Id,nConstraintXAndConstraintYCannotBeTogether,
+             sConstraintXAndConstraintYCannotBeTogether,[X,Y],
+             GetGenericConstraintErrorEl(ConEl,El));
+  end;
+
+  procedure RaiseXIsNotAValidConstraint(const Id: TMaxPrecInt; const X: string);
+  begin
+    RaiseMsg(Id,nXIsNotAValidConstraint,sXIsNotAValidConstraint,[X],
+             GetGenericConstraintErrorEl(ConEl,El));
+  end;
+
+var
+  i: Integer;
+  IsClass, IsRecord, IsConstructor: Boolean;
+  LastType: TPasType;
+  MemberType: TPasMembersType;
+  aClass: TPasClassType;
+  ConToken: TToken;
+  ResolvedEl: TPasResolverResult;
+begin
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.FinishGenericTemplateType ',GetObjName(El),' El.Parent=',GetObjName(El.Parent),' Constraints=',length(El.Constraints));
+  {$ENDIF}
+  IsClass:=false;
+  IsRecord:=false;
+  IsConstructor:=false;
+  LastType:=nil;
+  for i:=0 to length(El.Constraints)-1 do
+    begin
+    ConEl:=El.Constraints[i];
+    ConToken:=GetGenericConstraintKeyword(ConEl);
+    case ConToken of
+    tkclass:
+      begin
+      if IsClass then
+        RaiseMsg(20190720202412,nConstraintXSpecifiedMoreThanOnce,
+          sConstraintXSpecifiedMoreThanOnce,['class'],ConEl);
+      if IsRecord then
+        RaiseCannotBeTogether(20190720202516,'record','class');
+      if LastType<>nil then
+        RaiseCannotBeTogether(20190720205708,LastType.Name,'class');
+      IsClass:=true;
+      end;
+    tkrecord:
+      begin
+      if IsRecord then
+        RaiseMsg(20190720203028,nConstraintXSpecifiedMoreThanOnce,
+          sConstraintXSpecifiedMoreThanOnce,['record'],ConEl);
+      if IsClass then
+        RaiseCannotBeTogether(20190720203039,'class','record');
+      if IsConstructor then
+        RaiseCannotBeTogether(20190720203056,'constructor','record');
+      if LastType<>nil then
+        RaiseCannotBeTogether(20190720205938,LastType.Name,'record');
+      IsRecord:=true;
+      end;
+    tkconstructor:
+      begin
+      if IsConstructor then
+        RaiseMsg(20190720203123,nConstraintXSpecifiedMoreThanOnce,
+          sConstraintXSpecifiedMoreThanOnce,['constructor'],ConEl);
+      if IsRecord then
+        RaiseCannotBeTogether(20190720203148,'record','constructor');
+      if LastType<>nil then
+        RaiseCannotBeTogether(20190720210005,LastType.Name,'constructor');
+      IsConstructor:=true;
+      end;
+    else
+      if not (ConEl is TPasType) then
+        RaiseXIsNotAValidConstraint(20190912215619,GetElementTypeName(ConEl));
+      // type identifier: class, record or interface
+      ComputeElement(ConEl,ResolvedEl,[rcType]);
+      if ResolvedEl.BaseType<>btContext then
+        RaiseXIsNotAValidConstraint(20190914105144,GetElementTypeName(ConEl));
+      if IsRecord then
+        RaiseCannotBeTogether(20190720210130,'record',ResolvedEl.HiTypeEl.Name);
+      if IsClass then
+        RaiseCannotBeTogether(20190720210202,'class',ResolvedEl.HiTypeEl.Name);
+      if IsConstructor then
+        RaiseCannotBeTogether(20190720210244,'constructor',ResolvedEl.HiTypeEl.Name);
+
+      if ResolvedEl.LoTypeEl is TPasGenericTemplateType then
+        begin
+        // ok
+        if length(El.Constraints)>1 then
+          RaiseXIsNotAValidConstraint(20190831213645,ResolvedEl.HiTypeEl.Name);
+        end
+      else if ResolvedEl.LoTypeEl is TPasMembersType then
+        begin
+        MemberType:=TPasMembersType(ResolvedEl.LoTypeEl);
+        if MemberType is TPasClassType then
+          begin
+          aClass:=TPasClassType(MemberType);
+          case aClass.ObjKind of
+          okClass:
+            begin
+            // there can be at most one classtype constraint
+            if LastType<>nil then
+              RaiseCannotBeTogether(20190720210351,LastType.Name,MemberType.Name);
+            end;
+          okInterface:
+            begin
+            // there can be multiple interfacetype constraint
+            if not (LastType is TPasClassType) then
+              RaiseCannotBeTogether(20190720211236,LastType.Name,MemberType.Name);
+            if TPasClassType(LastType).ObjKind<>okInterface then
+              RaiseCannotBeTogether(20190720211304,LastType.Name,MemberType.Name);
+            end
+          else
+            RaiseXIsNotAValidConstraint(20190720210919,MemberType.Name);
+          end;
+          end
+        else
+          RaiseXIsNotAValidConstraint(20190720210809,MemberType.Name);
+        end
+      else
+        RaiseXIsNotAValidConstraint(20190720204604,GetResolverResultDescription(ResolvedEl,true));
+
+      LastType:=ResolvedEl.LoTypeEl;
+    end; // end of case
+    end; // end of for
+end;
+
+procedure TPasResolver.FinishSpecializeType(El: TPasSpecializeType);
+var
+  Params, GenericTemplateList: TFPList;
+  P: TPasElement;
+  DestType: TPasType;
+  i, ScopeDepth: Integer;
+  GenType: TPasGenericType;
+begin
+  {$IFDEF VerbosePasResolver}
+  //writeln('TPasResolver.FinishSpecializeType ');
+  {$ENDIF}
+  // resolve Params
+  ScopeDepth:=StashSubExprScopes;
+  Params:=El.Params;
+  if Params.Count=0 then
+    RaiseMsg(20190724114416,nMissingParameterX,sMissingParameterX,['type'],El);
+  for i:=0 to Params.Count-1 do
+    begin
+    P:=TPasElement(Params[i]);
+    if P is TPasExpr then
+      ResolveExpr(TPasExpr(P),rraRead)
+    else if P is TPasType then
+    else
+      RaiseMsg(20190728113336,nXExpectedButYFound,sXExpectedButYFound,['type identifier',GetObjName(P)+' parameter '+IntToStr(i+1)],El);
+    end;
+  RestoreStashedScopes(ScopeDepth);
+
+  // check DestType
+  DestType:=El.DestType;
+  if DestType=nil then
+    RaiseMsg(20190725184734,nIdentifierNotFound,sIdentifierNotFound,['specialize type'],El)
+  else if not (DestType is TPasGenericType) then
+    RaiseMsg(20190725193552,nXExpectedButYFound,sXExpectedButYFound,['generic type',DestType.Name],El);
+  GenType:=TPasGenericType(DestType);
+  // Note: there can be TBird, TBird<T> and TBird<T,U>
+  GenericTemplateList:=GenType.GenericTemplateTypes;
+  if GenericTemplateList=nil then
+    RaiseMsg(20190725194222,nWrongNumberOfParametersForGenericX,sWrongNumberOfParametersForGenericX,
+      ['type '+DestType.Name],El);
+  if GenericTemplateList.Count<>Params.Count then
+    RaiseMsg(20190801222656,nWrongNumberOfParametersForGenericX,sWrongNumberOfParametersForGenericX,
+      ['type '+DestType.Name],El);
+
+  GetSpecializedEl(El,GenType,Params);
 end;
 
 procedure TPasResolver.FinishResourcestring(El: TPasResString);
@@ -5083,27 +6639,37 @@ begin
     RaiseXExpectedButYFound(20171004135753,'string',GetTypeDescription(ResolvedEl),El.Expr);
 end;
 
-procedure TPasResolver.FinishProcedure(aProc: TPasProcedure);
+procedure TPasResolver.FinishProcedure(Proc: TPasProcedure);
 var
   i: Integer;
   Body: TProcedureBody;
   SubEl: TPasElement;
-  SubProcScope, ProcScope: TPasProcedureScope;
+  SubProcScope, ProcScope, DeclProcScope: TPasProcedureScope;
+  SpecializedItem: TPRSpecializedItem;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.FinishProcedure START');
   {$ENDIF}
   CheckTopScope(FScopeClass_Proc);
   ProcScope:=TPasProcedureScope(TopScope);
-  if ProcScope.Element<>aProc then
+  if ProcScope.Element<>Proc then
     RaiseInternalError(20170220163043);
 
-  Body:=aProc.Body;
+  SpecializedItem:=ProcScope.SpecializedFromItem;
+  if SpecializedItem<>nil then
+    begin
+    if SpecializedItem.Step<prssImplementationBuilding then
+      RaiseNotYetImplemented(20190920184908,Proc);
+    if SpecializedItem.Step>prssImplementationBuilding then
+      RaiseNotYetImplemented(20190920185123,Proc);
+    end;
+
+  Body:=Proc.Body;
   if Body<>nil then
     begin
     StoreScannerFlagsInProc(ProcScope);
     if Body.Body is TPasImplAsmStatement then
-      aProc.Modifiers:=aProc.Modifiers+[pmAssembler];
+      Proc.Modifiers:=Proc.Modifiers+[pmAssembler];
     ResolveImplBlock(Body.Body);
 
     // check if all nested forward procs are resolved
@@ -5118,43 +6684,119 @@ begin
             [GetElementTypeName(SubEl),SubEl.Name],SubEl);
         end;
       end;
+    if ProcScope.GroupScope<>nil then
+      begin
+      ProcScope.GroupScope.Free;
+      ProcScope.GroupScope:=nil;
+      if ProcScope.NestedMembersScope<>nil then
+        begin
+        for i:=0 to ScopeCount-1 do
+          if Scopes[i]=ProcScope.NestedMembersScope then
+            begin
+            DeleteScope(i);
+            break;
+            end;
+        ProcScope.NestedMembersScope.Free;
+        ProcScope.NestedMembersScope:=nil;
+        end;
+      end;
+    ProcScope.GenericStep:=psgsImplementationParsed;
+    if ProcScope.DeclarationProc<>nil then
+      begin
+      DeclProcScope:=ProcScope.DeclarationProc.CustomData as TPasProcedureScope;
+      DeclProcScope.GenericStep:=psgsImplementationParsed;
+      end;
     end;
+  if ProcScope.GroupScope<>nil then
+    RaiseNotYetImplemented(20190122142142,Proc);
+  if ProcScope.NestedMembersScope<>nil then
+    RaiseNotYetImplemented(20191014233200,Proc);
+
+  if TopScope.Element<>Proc then
+    RaiseInternalError(20190806094032);
   PopScope;
+
+  if ProcScope.GenericStep=psgsImplementationParsed then
+    begin
+    if ProcScope.DeclarationProc<>nil then
+      ProcScope:=TPasProcedureScope(ProcScope.DeclarationProc.CustomData);
+    if ProcScope.SpecializedItems<>nil then
+      FinishSpecializations(ProcScope);
+    end;
 end;
 
 procedure TPasResolver.FinishProcedureType(El: TPasProcedureType);
 var
   ProcName: String;
-  FindData: TFindOverloadProcData;
+  FindData: TFindProcData;
   DeclProc, Proc, ParentProc: TPasProcedure;
-  Abort, HasDots: boolean;
+  Abort, HasDots, IsClassConDestructor: boolean;
   DeclProcScope, ProcScope: TPasProcedureScope;
-  ParentScope: TPasScope;
+  ParentScope: TPasIdentifierScope;
   pm: TProcedureModifier;
   ptm: TProcTypeModifier;
   ObjKind: TPasObjKind;
+  ParentBody: TProcedureBody;
+  HelperForType: TPasType;
+  Args, TemplTypes: TFPList;
+  Arg: TPasArgument;
+  ProcTypeScope: TPasProcTypeScope;
 begin
-  if (El.Parent is TPasProcedure) and (TPasProcedure(El.Parent).ProcType=El) then
+  if TopScope.Element=El then
+    begin
+    ProcTypeScope:=El.CustomData as TPasProcTypeScope;
+    ProcTypeScope.GenericStep:=psgsImplementationParsed;
+    PopScope;
+    end;
+  if El.Parent is TPasProcedure then
+    Proc:=TPasProcedure(El.Parent)
+  else
+    Proc:=nil;
+  if (Proc<>nil) and (Proc.ProcType=El) then
     begin
     // finished header of a procedure declaration
-    // -> search the best fitting proc
     CheckTopScope(FScopeClass_Proc);
-    Proc:=TPasProcedure(El.Parent);
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.FinishProcedureHeader El=',GetTreeDbg(El),' ',GetElementSourcePosStr(El),' IsForward=',Proc.IsForward,' Parent=',GetObjName(El.Parent));
     {$ENDIF}
     ProcName:=Proc.Name;
+    ProcScope:=Proc.CustomData as TPasProcedureScope;
+
+    TemplTypes:=GetProcTemplateTypes(Proc);
+    if (TemplTypes<>nil) then
+      begin
+      // Proc is parametrized
+      if (Proc is TPasConstructor) or (Proc is TPasDestructor) then
+        RaiseMsg(20190911104114,nTypeParamsNotAllowedOnX,sTypeParamsNotAllowedOnX,
+          [Proc.ElementTypeName],Proc);
+      if Proc.IsVirtual or Proc.IsDynamic or Proc.IsMessage or Proc.IsOverride then
+        RaiseMsg(20190911112925,nXMethodsCannotHaveTypeParams,
+          sXMethodsCannotHaveTypeParams,['virtual, dynamic or message'],El);
+      if Proc.IsOverride then
+        RaiseMsg(20191016174218,nXMethodsCannotHaveTypeParams,
+          sXMethodsCannotHaveTypeParams,['override'],El);
+      if not (Proc.Visibility in [visDefault,visPrivate,visStrictPrivate,visProtected,visStrictProtected,visPublic]) then
+        RaiseMsg(20191016174327,nXMethodsCannotHaveTypeParams,
+          sXMethodsCannotHaveTypeParams,[VisibilityNames[Proc.Visibility]],El);
+      end;
+
+    if El is TPasFunctionType then
+      CheckUseAsType(TPasFunctionType(El).ResultEl.ResultType,20190123095743,TPasFunctionType(El).ResultEl);
 
     if (proProcTypeWithoutIsNested in Options) and El.IsNested then
       RaiseInvalidProcTypeModifier(20170402120811,El,ptmIsNested,El);
 
-    if (Proc.Parent.ClassType=TProcedureBody) then
+    ParentBody:=GetParentProcBody(Proc.Parent);
+    if (ParentBody<>nil) then
       begin
       // nested sub proc
+      if TemplTypes<>nil then
+        RaiseMsg(20190912173450,nTypeParamsNotAllowedOnX,sTypeParamsNotAllowedOnX,
+          ['nested '+Proc.ElementTypeName],Proc);
       if not (proProcTypeWithoutIsNested in Options) then
         El.IsNested:=true;
       // inherit 'of Object'
-      ParentProc:=Proc.Parent.Parent as TPasProcedure;
+      ParentProc:=ParentBody.Parent as TPasProcedure;
       if ParentProc.ProcType.IsOfObject then
         El.IsOfObject:=true;
       end;
@@ -5182,6 +6824,23 @@ begin
             sInvalidXModifierY,[GetElementTypeName(Proc),'external, '+ProcTypeModifiers[ptm]],Proc);
       end;
 
+    IsClassConDestructor:=(Proc.ClassType=TPasClassConstructor)
+                       or (Proc.ClassType=TPasClassDestructor);
+    if IsClassConDestructor then
+      begin
+      // class constructor/destructor
+      if Proc.IsVirtual then
+        RaiseMsg(20181231150237,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'virtual'],Proc);
+      if Proc.IsOverride then
+        RaiseMsg(20181231150305,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'override'],Proc);
+      if Proc.IsDynamic then
+        RaiseMsg(20181231150319,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'dynamic'],Proc);
+      if Proc.IsStatic then
+        RaiseMsg(20190216214651,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'static'],Proc);
+      if El.Args.Count>0 then
+        RaiseMsg(20181231150404,nXCannotHaveParameters,sXCannotHaveParameters,[GetElementTypeName(Proc)],Proc);
+      end;
+
     HasDots:=Pos('.',ProcName)>1;
 
     if Proc.Parent is TPasClassType then
@@ -5195,6 +6854,38 @@ begin
           RaiseMsg(20180321234324,nInvalidXModifierY,sInvalidXModifierY,[ObjKindNames[ObjKind]+' '+GetElementTypeName(Proc),'virtual'],Proc);
         if Proc.IsOverride then
           RaiseMsg(20180321234551,nInvalidXModifierY,sInvalidXModifierY,[ObjKindNames[ObjKind]+' '+GetElementTypeName(Proc),'override'],Proc);
+        if TemplTypes<>nil then
+          RaiseMsg(20190912153024,nXMethodsCannotHaveTypeParams,sXMethodsCannotHaveTypeParams,['interface'],Proc);
+        end;
+      okClassHelper,okRecordHelper,okTypeHelper:
+        begin
+        if Proc.IsAbstract then
+          RaiseMsg(20190116215744,nInvalidXModifierY,sInvalidXModifierY,[ObjKindNames[ObjKind]+' '+GetElementTypeName(Proc),'abstract'],Proc);
+        {if msDelphi in CurrentParser.CurrentModeswitches then
+          begin
+          // Delphi allows virtual/override in class helpers
+          // But using them crashes in Delphi 10.3
+          // -> do not support them
+          end
+        }
+        if Proc.IsVirtual then
+          RaiseMsg(20190116215823,nInvalidXModifierY,sInvalidXModifierY,[ObjKindNames[ObjKind]+' '+GetElementTypeName(Proc),'virtual'],Proc);
+        if Proc.IsOverride then
+          RaiseMsg(20190116215825,nInvalidXModifierY,sInvalidXModifierY,[ObjKindNames[ObjKind]+' '+GetElementTypeName(Proc),'override'],Proc);
+        HelperForType:=ResolveAliasType(TPasClassType(Proc.Parent).HelperForType);
+        if (not Proc.IsStatic) and IsClassMethod(Proc) and not IsClassConDestructor then
+          begin
+          // non static class methods require a class
+          if (not (HelperForType.ClassType=TPasClassType))
+              or (TPasClassType(HelperForType).ObjKind<>okClass) then
+            RaiseMsg(20190201153831,nClassMethodsMustBeStaticInX,sClassMethodsMustBeStaticInX,[ObjKindNames[ObjKind]],Proc);
+          end;
+        if Proc.ClassType=TPasDestructor then
+          RaiseMsg(20190302151019,nXIsNotSupported,sXIsNotSupported,['destructor'],Proc);
+        if (Proc.ClassType=TPasConstructor)
+            and (HelperForType.ClassType=TPasClassType)
+            and (TPasClassType(HelperForType).ObjKind<>okClass) then
+          RaiseMsg(20190302151514,nXIsNotSupported,sXIsNotSupported,['constructor'],Proc);
         end;
       end;
       if Proc.IsAbstract then
@@ -5214,9 +6905,35 @@ begin
         if (Proc.ClassType<>TPasClassProcedure) and (Proc.ClassType<>TPasClassFunction) then
           RaiseMsg(20170216151631,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'static'],Proc);
       end
+    else if Proc.Parent is TPasRecordType then
+      begin
+      if (Proc.ClassType=TPasConstructor)
+          and ((El.Args.Count=0)
+            or (TPasArgument(El.Args[0]).ValueExpr<>nil)) then
+        RaiseMsg(20181226231333,nParameterlessConstructorsNotAllowedInRecords,
+          sParameterlessConstructorsNotAllowedInRecords,[],El);
+      if Proc.IsReintroduced then
+        RaiseMsg(20181218195735,nInvalidXModifierY,sInvalidXModifierY,['record '+GetElementTypeName(Proc),'reintroduce'],Proc);
+      if Proc.IsVirtual then
+        RaiseMsg(20181218195431,nInvalidXModifierY,sInvalidXModifierY,['record '+GetElementTypeName(Proc),'virtual'],Proc);
+      if Proc.IsOverride then
+        RaiseMsg(20181218195437,nInvalidXModifierY,sInvalidXModifierY,['record '+GetElementTypeName(Proc),'override'],Proc);
+      if Proc.IsAbstract then
+        RaiseMsg(20181218195552,nInvalidXModifierY,sInvalidXModifierY,['record '+GetElementTypeName(Proc),'abstract'],Proc);
+      if Proc.IsForward then
+        RaiseMsg(20181218195514,nInvalidXModifierY,sInvalidXModifierY,['record '+GetElementTypeName(Proc),'forward'],Proc);
+      if IsClassMethod(Proc) and not IsClassConDestructor then
+        begin
+        // Note: class constructor/destructor must not be static
+        if not Proc.IsStatic then
+          RaiseMsg(20190106121503,nClassMethodsMustBeStaticInX,sClassMethodsMustBeStaticInX,['records'],Proc);
+        end
+      else if Proc.IsStatic then
+        RaiseMsg(20190206150922,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),'static'],Proc);
+      end
     else
       begin
-      // intf proc, forward proc, proc body, method body
+      // intf proc, forward proc, proc body, method body, anonymous proc
       if Proc.IsAbstract then
         RaiseInvalidProcModifier(20170216151634,Proc,pmAbstract,Proc);
       if Proc.IsVirtual then
@@ -5228,10 +6945,16 @@ begin
       if Proc.IsStatic then
         RaiseInvalidProcTypeModifier(20170216151640,El,ptmStatic,El);
       if (not HasDots)
-          and (Proc.ClassType<>TPasProcedure)
-          and (Proc.ClassType<>TPasFunction) then
+          and (Proc.GetProcTypeEnum in [
+               ptClassOperator,
+               ptConstructor, ptDestructor,
+               ptClassProcedure, ptClassFunction,
+               ptClassConstructor, ptClassDestructor
+               ]) then
         RaiseXExpectedButYFound(20170419232724,'full method name','short name',El);
       end;
+
+    ProcScope.GenericStep:=psgsInterfaceParsed;
 
     if HasDots then
       begin
@@ -5241,85 +6964,115 @@ begin
 
     // finish interface/implementation/nested procedure/method declaration
 
-    if not IsValidIdent(ProcName) then
+    if (ProcName='')
+        and not (Proc.GetProcTypeEnum in [ptAnonymousProcedure,ptAnonymousFunction]) then
       RaiseNotYetImplemented(20160922163407,El);
 
-    if El is TPasFunctionType then
+    if (El is TPasFunctionType) and not (ppsfIsSpecialized in ProcScope.Flags) then
       EmitTypeHints(TPasFunctionType(El).ResultEl,TPasFunctionType(El).ResultEl.ResultType);
 
+    if Proc.PublicName<>nil then
+      ResolveExpr(Proc.PublicName,rraRead);
     if Proc.LibraryExpr<>nil then
       ResolveExpr(Proc.LibraryExpr,rraRead);
     if Proc.LibrarySymbolName<>nil then
       ResolveExpr(Proc.LibrarySymbolName,rraRead);
+    if Proc.DispIDExpr<>nil then
+      ResolveExpr(Proc.DispIDExpr,rraRead);
+    if Proc.MessageExpr<>nil then
+      begin
+      // message modifier
+      ResolveExpr(Proc.MessageExpr,rraRead);
+      Args:=Proc.ProcType.Args;
+      if Args.Count<>1 then
+        RaiseMsg(20190303223701,nMessageHandlersInvalidParams,sMessageHandlersInvalidParams,[],El);
+      Arg:=TPasArgument(Args[0]);
+      if not (Arg.Access in [argVar,argOut]) then
+        RaiseMsg(20190303223834,nMessageHandlersInvalidParams,sMessageHandlersInvalidParams,[],El);
+      if (Proc.ClassType<>TPasProcedure)
+          and (Proc.ClassType<>TPasFunction) then
+        RaiseMsg(20190303224128,nXExpectedButYFound,sXExpectedButYFound,['procedure name(var Msg);message id;',GetElementTypeName(El)],El);
+      end;
 
-    if Proc.Parent is TPasClassType then
+    if Proc.Parent is TPasMembersType then
       begin
       FinishMethodDeclHeader(Proc);
       exit;
       end;
 
     // finish interface/implementation/nested procedure
-    if ProcNeedsBody(Proc) then
+    if (ProcName<>'') and ProcNeedsBody(Proc) then
       begin
-      // check if there is a forward declaration
-      ParentScope:=Scopes[ScopeCount-2];
-      //writeln('TPasResolver.FinishProcedureType FindForward2 ParentScope=',GetObjName(ParentScope),'=',GetObjName(ParentScope.Element),' Proc=',GetObjName(Proc),' at ',GetElementSourcePosStr(Proc));
-      DeclProc:=FindProcOverload(ProcName,Proc,ParentScope);
-      //writeln('TPasResolver.FinishProcedureType FindForward3 DeclProc=',GetObjName(DeclProc),' Proc.Parent=',GetObjName(Proc.Parent));
-      if (DeclProc=nil) and (Proc.Parent.ClassType=TImplementationSection) then
-        DeclProc:=FindProcOverload(ProcName,Proc,
-          (Proc.GetModule.InterfaceSection.CustomData) as TPasScope);
-      //writeln('TPasResolver.FinishProcedureType FindForward4 ',GetObjName(DeclProc),' at ',GetElementSourcePosStr(DeclProc));
-      if (DeclProc<>nil) then
+      if ppsfIsSpecialized in ProcScope.Flags then
         begin
-        if ProcNeedsImplProc(DeclProc) then
-          begin
-          // found forward declaration
-          DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
-          if DeclProcScope.ImplProc<>nil then
-            RaiseMsg(20180318222430,nDuplicateIdentifier,sDuplicateIdentifier,
-              [DeclProcScope.ImplProc.Name,GetElementSourcePosStr(DeclProcScope.ImplProc)],Proc);
-          // connect
-          {$IFDEF VerbosePasResolver}
-          writeln('TPasResolver.FinishProcedureHeader forward found: Proc2=',GetTreeDbg(DeclProc),' ',GetElementSourcePosStr(DeclProc),' IsForward=',DeclProc.IsForward,' Parent=',GetObjName(DeclProc.Parent));
-          {$ENDIF}
-          CheckProcSignatureMatch(DeclProc,Proc,true);
-          DeclProcScope.ImplProc:=Proc;
-          ProcScope:=Proc.CustomData as TPasProcedureScope;
-          ProcScope.DeclarationProc:=DeclProc;
-          // remove ImplProc from scope
-          (ParentScope as TPasIdentifierScope).RemoveLocalIdentifier(Proc);
-          // replace arguments with declaration arguments
+        if ProcScope.DeclarationProc<>nil then
           ReplaceProcScopeImplArgsWithDeclArgs(ProcScope);
-          exit;
-          end
-        else
-          RaiseMsg(20180318220543,nDuplicateIdentifier,sDuplicateIdentifier,
-            [DeclProc.Name,GetElementSourcePosStr(DeclProc)],Proc);
+        end
+      else
+        begin
+        // check if there is a forward declaration
+        //writeln('TPasResolver.FinishProcedureType ',GetObjName(TopScope),' ',GetObjName(Scopes[ScopeCount-2]));
+        ParentScope:=GetParentLocalScope as TPasIdentifierScope;
+        //writeln('TPasResolver.FinishProcedureType FindForward2 ParentScope=',GetObjName(ParentScope),'=',GetObjName(ParentScope.Element),' Proc=',GetObjName(Proc),' at ',GetElementSourcePosStr(Proc));
+        DeclProc:=FindProcSameSignature(ProcName,Proc,ParentScope,true);
+        //writeln('TPasResolver.FinishProcedureType FindForward3 DeclProc=',GetObjName(DeclProc),' Proc.Parent=',GetObjName(Proc.Parent));
+        //if DeclProc<>nil then writeln('TPasResolver.FinishProcedureType DeclProc at ',GetElementSourcePosStr(DeclProc));
+        if (DeclProc=nil) and (Proc.Parent.ClassType=TImplementationSection) then
+          DeclProc:=FindProcSameSignature(ProcName,Proc,
+            (Proc.GetModule.InterfaceSection.CustomData) as TPasIdentifierScope,true);
+        //writeln('TPasResolver.FinishProcedureType FindForward4 ',GetObjName(DeclProc),' at ',GetElementSourcePosStr(DeclProc));
+        if (DeclProc<>nil) then
+          begin
+          if ProcNeedsImplProc(DeclProc) then
+            begin
+            // found forward declaration
+            DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
+            if DeclProcScope.ImplProc<>nil then
+              RaiseMsg(20180318222430,nDuplicateIdentifier,sDuplicateIdentifier,
+                [DeclProcScope.ImplProc.Name,GetElementSourcePosStr(DeclProcScope.ImplProc)],Proc);
+            // connect
+            {$IFDEF VerbosePasResolver}
+            writeln('TPasResolver.FinishProcedureHeader forward found: Proc2=',GetTreeDbg(DeclProc),' ',GetElementSourcePosStr(DeclProc),' IsForward=',DeclProc.IsForward,' Parent=',GetObjName(DeclProc.Parent));
+            {$ENDIF}
+            CheckProcSignatureMatch(DeclProc,Proc,false);
+            DeclProcScope.ImplProc:=Proc;
+            ProcScope.DeclarationProc:=DeclProc;
+            // remove ImplProc from scope
+            ParentScope.RemoveLocalIdentifier(Proc);
+            // replace arguments with declaration arguments
+            ReplaceProcScopeImplArgsWithDeclArgs(ProcScope);
+            exit;
+            end
+          else
+            RaiseMsg(20180318220543,nDuplicateIdentifier,sDuplicateIdentifier,
+              [DeclProc.Name,GetElementSourcePosStr(DeclProc)],Proc);
+          end;
         end;
       end
     else
       begin
       // forward declaration
-      ProcScope:=Proc.CustomData as TPasProcedureScope;
       // ToDo: store the scanner flags *before* it has parsed the token after the proc
       StoreScannerFlagsInProc(ProcScope);
       end;
 
-    // check for invalid overloads
-    FindData:=Default(TFindOverloadProcData);
-    FindData.Proc:=Proc;
-    FindData.Args:=Proc.ProcType.Args;
-    FindData.Kind:=fopkProc;
-    Abort:=false;
-    IterateElements(ProcName,@OnFindOverloadProc,@FindData,Abort);
+    if ProcName<>'' then
+      begin
+      // check for invalid overloads
+      FindData:=Default(TFindProcData);
+      FindData.Proc:=Proc;
+      FindData.Args:=Proc.ProcType.Args;
+      FindData.Kind:=fpkProc;
+      Abort:=false;
+      IterateElements(ProcName,@OnFindProc,@FindData,Abort);
+      end;
     end
   else if El.Name<>'' then
     begin
     // finished proc type, e.g. type TProcedure = procedure;
     end
   else
-    RaiseNotYetImplemented(20160922163411,El.Parent);
+    RaiseNotYetImplemented(20160922163411,El.Parent,'anonymous procedure type');
 end;
 
 procedure TPasResolver.FinishMethodDeclHeader(Proc: TPasProcedure);
@@ -5333,7 +7086,7 @@ procedure TPasResolver.FinishMethodDeclHeader(Proc: TPasProcedure);
     Proc.Visibility:=OverloadProc.Visibility;
   end;
 
-  {$IF FPC_FULLVERSION<30101}
+  {$IF defined(fpc) and (FPC_FULLVERSION<30101)}
   procedure Delete(var A: TArrayOfPasProcedure; Index, Count: integer); overload;
   var
     i: Integer;
@@ -5363,25 +7116,43 @@ procedure TPasResolver.FinishMethodDeclHeader(Proc: TPasProcedure);
   {$ENDIF}
 
 var
-  Abort: boolean;
-  ClassScope: TPasClassScope;
-  FindData: TFindOverloadProcData;
+  Abort, IsClassConDestructor: boolean;
+  ClassOrRecScope: TPasClassOrRecordScope;
+  FindData: TFindProcData;
   OverloadProc: TPasProcedure;
   ProcScope: TPasProcedureScope;
   i: Integer;
+  ParentScope: TPasScope;
+  TemplTypes: TFPList;
 begin
-  Proc.ProcType.IsOfObject:=true;
+  if not (ptmStatic in Proc.ProcType.Modifiers) then
+    Proc.ProcType.IsOfObject:=true;
   ProcScope:=TopScope as TPasProcedureScope;
+  ParentScope:=Scopes[ScopeCount-2];
   // ToDo: store the scanner flags *before* it has parsed the token after the proc
   StoreScannerFlagsInProc(ProcScope);
-  ClassScope:=Scopes[ScopeCount-2] as TPasClassScope;
-  ProcScope.ClassScope:=ClassScope;
-  FindData:=Default(TFindOverloadProcData);
-  FindData.Proc:=Proc;
-  FindData.Args:=Proc.ProcType.Args;
-  FindData.Kind:=fopkMethod;
-  Abort:=false;
-  ClassScope.IterateElements(Proc.Name,ClassScope,@OnFindOverloadProc,@FindData,Abort);
+  ClassOrRecScope:=Proc.Parent.CustomData as TPasClassOrRecordScope;
+  ProcScope.ClassRecScope:=ClassOrRecScope;
+
+  TemplTypes:=GetProcTemplateTypes(Proc);
+
+  FindData:=Default(TFindProcData);
+  IsClassConDestructor:=(Proc.ClassType=TPasClassConstructor)
+                     or (Proc.ClassType=TPasClassDestructor);
+  if IsClassConDestructor then
+    begin
+    if TemplTypes<>nil then
+      RaiseNotYetImplemented(20190911105953,Proc);
+    end
+  else
+    begin
+    FindData.Proc:=Proc;
+    FindData.Args:=Proc.ProcType.Args;
+    FindData.Kind:=fpkMethod;
+    Abort:=false;
+    ParentScope.IterateElements(Proc.Name,ClassOrRecScope,
+                                @OnFindProc,@FindData,Abort);
+    end;
 
   if FindData.Found=nil then
     begin
@@ -5405,7 +7176,7 @@ begin
         RaiseMsg(20170216151708,nNoMethodInAncestorToOverride,
           sNoMethodInAncestorToOverride,[GetProcTypeDescription(Proc.ProcType)],Proc.ProcType);
       // override a virtual method
-      CheckProcSignatureMatch(OverloadProc,Proc,false);
+      CheckProcSignatureMatch(OverloadProc,Proc,true);
       // check visibility
       if Proc.Visibility<>OverloadProc.Visibility then
         case Proc.Visibility of
@@ -5426,26 +7197,29 @@ begin
       if proFixCaseOfOverrides in Options then
         Proc.Name:=OverloadProc.Name;
       // remove abstract
-      if OverloadProc.IsAbstract then
-        for i:=length(ClassScope.AbstractProcs)-1 downto 0 do
-          if ClassScope.AbstractProcs[i]=OverloadProc then
-            Delete(ClassScope.AbstractProcs,i,1);
+      if OverloadProc.IsAbstract and (ClassOrRecScope is TPasClassScope) then
+        for i:=length(TPasClassScope(ClassOrRecScope).AbstractProcs)-1 downto 0 do
+          if TPasClassScope(ClassOrRecScope).AbstractProcs[i]=OverloadProc then
+            Delete(TPasClassScope(ClassOrRecScope).AbstractProcs,i,1);
       end;
     end;
   // add abstract
-  if Proc.IsAbstract then
-    Insert(Proc,ClassScope.AbstractProcs,length(ClassScope.AbstractProcs));
+  if Proc.IsAbstract and (ClassOrRecScope is TPasClassScope) then
+    Insert(Proc,TPasClassScope(ClassOrRecScope).AbstractProcs,
+           length(TPasClassScope(ClassOrRecScope).AbstractProcs));
 end;
 
 procedure TPasResolver.FinishMethodImplHeader(ImplProc: TPasProcedure);
 var
   ProcName: String;
-  CurClassType: TPasClassType;
+  ClassRecType: TPasMembersType;
   ImplProcScope, DeclProcScope: TPasProcedureScope;
   DeclProc: TPasProcedure;
-  CurClassScope: TPasClassScope;
+  ClassOrRecScope: TPasClassOrRecordScope;
   SelfArg: TPasArgument;
   p: Integer;
+  SelfType, LoSelfType: TPasType;
+  LastNamePart: TProcedureNamePart;
 begin
   if ImplProc.IsExternal then
     RaiseMsg(20170216151715,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(ImplProc),'external'],ImplProc);
@@ -5453,85 +7227,146 @@ begin
     RaiseMsg(20170216151717,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(ImplProc),'export'],ImplProc);
 
   ProcName:=ImplProc.Name;
-  {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.FinishMethodBodyHeader searching declaration "',ProcName,'" ...');
-  {$ENDIF}
-  ImplProc.ProcType.IsOfObject:=true;
-
-  repeat
-    p:=Pos('.',ProcName);
-    if p<1 then break;
-    Delete(ProcName,1,p);
-  until false;
-
-  // search ImplProc in class
-  if not IsValidIdent(ProcName) then
-    RaiseNotYetImplemented(20160922163421,ImplProc.ProcType);
-
-  // search proc in class
   ImplProcScope:=ImplProc.CustomData as TPasProcedureScope;
-  CurClassScope:=ImplProcScope.ClassScope;
-  if CurClassScope=nil then
+
+  ClassOrRecScope:=ImplProcScope.ClassRecScope;
+  if ClassOrRecScope=nil then
     RaiseInternalError(20161013172346);
-  CurClassType:=NoNil(CurClassScope.Element) as TPasClassType;
+  ClassRecType:=NoNil(ClassOrRecScope.Element) as TPasMembersType;
+  if ImplProcScope.GroupScope=nil then
+    RaiseInternalError(20190120135017);
 
-  DeclProc:=FindProcOverload(ProcName,ImplProc,CurClassScope);
-  if DeclProc=nil then
-    RaiseIdentifierNotFound(20170216151720,ImplProc.Name,ImplProc.ProcType);
-  DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
+  if ImplProc.NameParts<>nil then
+    begin
+    LastNamePart:=TProcedureNamePart(ImplProc.NameParts[ImplProc.NameParts.Count-1]);
+    ProcName:=LastNamePart.Name;
+    end
+  else
+    begin
+    // remove path from ProcName
+    repeat
+      p:=Pos('.',ProcName);
+      if p<1 then break;
+      Delete(ProcName,1,p);
+    until false;
+    end;
 
-  // connect method declaration and body
-  if DeclProcScope.ImplProc<>nil then
-    RaiseMsg(20180212094546,nDuplicateIdentifier,sDuplicateIdentifier,
-      [DeclProcScope.ImplProc.Name,GetElementSourcePosStr(DeclProcScope.ImplProc)],
-      ImplProc);
-  if DeclProc.IsAbstract then
-    RaiseMsg(20170216151722,nAbstractMethodsMustNotHaveImplementation,sAbstractMethodsMustNotHaveImplementation,[],ImplProc);
-  if DeclProc.IsExternal then
-    RaiseXExpectedButYFound(20170216151725,'method','external method',ImplProc);
-  CheckProcSignatureMatch(DeclProc,ImplProc,true);
-  ImplProcScope.DeclarationProc:=DeclProc;
-  DeclProcScope.ImplProc:=ImplProc;
+  if ImplProcScope.DeclarationProc=nil then
+    begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.FinishMethodImplHeader searching declaration "',ImplProc.Name,'" ...');
+    {$ENDIF}
+    // search ImplProc in class
+    if not IsValidIdent(ProcName) then
+      RaiseNotYetImplemented(20160922163421,ImplProc.ProcType);
 
-  // replace arguments in scope with declaration arguments
-  ReplaceProcScopeImplArgsWithDeclArgs(ImplProcScope);
+    // search proc in class/record
+    if ImplProc.ClassType=TPasClassConstructor then
+      DeclProc:=ClassOrRecScope.ClassConstructor
+    else if ImplProc.ClassType=TPasClassDestructor then
+      DeclProc:=ClassOrRecScope.ClassDestructor
+    else
+      DeclProc:=FindProcSameSignature(ProcName,ImplProc,ClassOrRecScope,false);
+    if DeclProc=nil then
+      RaiseIdentifierNotFound(20170216151720,GetProcName(ImplProc),ImplProc.ProcType);
+    DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
+    ImplProc.ProcType.IsOfObject:=DeclProc.ProcType.IsOfObject;
+
+    // connect method declaration and body
+    if DeclProcScope.ImplProc<>nil then
+      RaiseMsg(20180212094546,nDuplicateIdentifier,sDuplicateIdentifier,
+        [DeclProcScope.ImplProc.Name,GetElementSourcePosStr(DeclProcScope.ImplProc)],
+        ImplProc);
+    if DeclProc.IsAbstract then
+      RaiseMsg(20170216151722,nAbstractMethodsMustNotHaveImplementation,sAbstractMethodsMustNotHaveImplementation,[],ImplProc);
+    if DeclProc.IsExternal then
+      RaiseXExpectedButYFound(20170216151725,'method','external method',ImplProc);
+    CheckProcSignatureMatch(DeclProc,ImplProc,false);
+    ImplProcScope.DeclarationProc:=DeclProc;
+    DeclProcScope.ImplProc:=ImplProc;
+
+    // replace arguments in scope with declaration arguments
+    ReplaceProcScopeImplArgsWithDeclArgs(ImplProcScope);
+    end
+  else if ppsfIsSpecialized in ImplProcScope.Flags then
+    begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.FinishMethodImplHeader specialized "',ImplProc.Name,'" ...');
+    {$ENDIF}
+    DeclProc:=ImplProcScope.DeclarationProc;
+    DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
+    if DeclProcScope.ImplProc<>ImplProc then
+      RaiseNotYetImplemented(20190804182220,ImplProc);
+    // replace arguments in scope with declaration arguments
+    ReplaceProcScopeImplArgsWithDeclArgs(ImplProcScope);
+    end
+  else
+    RaiseNotYetImplemented(20190804181222,ImplProc);
 
   if not DeclProc.IsStatic then
     begin
     // add 'Self'
     if (DeclProc.ClassType=TPasClassConstructor)
-        or (DeclProc.ClassType=TPasClassDestructor)
-        or (DeclProc.ClassType=TPasClassProcedure)
+        or (DeclProc.ClassType=TPasClassDestructor) then
+      // actually class constructor/destructor are static
+    else if (DeclProc.ClassType=TPasClassProcedure)
         or (DeclProc.ClassType=TPasClassFunction) then
       begin
-      if not DeclProc.IsStatic then
+      if (ClassOrRecScope is TPasClassScope)
+          and (TPasClassScope(ClassOrRecScope).CanonicalClassOf<>nil) then
         begin
-        // 'Self' in a class proc is the hidden classtype argument
+        // 'Self' in a method is the hidden classtype argument
+        // Note: this is true in classes, adv records and helpers
         SelfArg:=TPasArgument.Create('Self',DeclProc);
         ImplProcScope.SelfArg:=SelfArg;
         {$IFDEF CheckPasTreeRefCount}SelfArg.RefIds.Add('TPasProcedureScope.SelfArg');{$ENDIF}
         SelfArg.Access:=argConst;
-        SelfArg.ArgType:=CurClassScope.CanonicalClassOf;
+        SelfArg.ArgType:=TPasClassScope(ClassOrRecScope).CanonicalClassOf;
         SelfArg.ArgType.AddRef{$IFDEF CheckPasTreeRefCount}('TPasArgument.ArgType'){$ENDIF};
         AddIdentifier(ImplProcScope,'Self',SelfArg,pikSimple);
-        end;
+        end
+      else
+        RaiseInternalError(20190106121745);
       end
     else
       begin
-      // 'Self' in a proc is the hidden instance argument
+      // 'Self' in a method is the hidden instance argument
       SelfArg:=TPasArgument.Create('Self',DeclProc);
       ImplProcScope.SelfArg:=SelfArg;
       {$IFDEF CheckPasTreeRefCount}SelfArg.RefIds.Add('TPasProcedureScope.SelfArg');{$ENDIF}
-      SelfArg.Access:=argConst;
-      SelfArg.ArgType:=CurClassType;
-      CurClassType.AddRef{$IFDEF CheckPasTreeRefCount}('TPasArgument.ArgType'){$ENDIF};
+      SelfType:=ClassRecType;
+      if (SelfType.ClassType=TPasClassType)
+          and (TPasClassType(SelfType).HelperForType<>nil) then
+        begin
+        // in a helper Self is a var argument of the helped variable
+        SelfType:=TPasClassType(SelfType).HelperForType;
+        end;
+      LoSelfType:=ResolveAliasType(SelfType);
+      if (LoSelfType is TPasClassType)
+          and (TPasClassType(LoSelfType).ObjKind=okClass) then
+        SelfArg.Access:=argConst
+      else
+        SelfArg.Access:=argVar;
+      SelfArg.ArgType:=SelfType;
+      SelfType.AddRef{$IFDEF CheckPasTreeRefCount}('TPasArgument.ArgType'){$ENDIF};
       AddIdentifier(ImplProcScope,'Self',SelfArg,pikSimple);
       end;
     end;
 
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.FinishMethodBodyHeader END of searching proc "',ImplProc.Name,'" ...');
+  writeln('TPasResolver.FinishMethodImplHeader END "',ImplProc.Name,'" ...');
   {$ENDIF}
+end;
+
+procedure TPasResolver.FinishSpecializations(Scope: TPasGenericScope);
+var
+  SpecializedItems: TObjectList;
+  i: Integer;
+begin
+  SpecializedItems:=Scope.SpecializedItems;
+  if SpecializedItems=nil then exit;
+  for i:=0 to SpecializedItems.Count-1 do
+    SpecializeGenericImpl(TPRSpecializedItem(SpecializedItems[i]));
 end;
 
 procedure TPasResolver.FinishExceptOnExpr;
@@ -5553,6 +7388,229 @@ begin
   PopScope;
 end;
 
+procedure TPasResolver.FinishWithDo(El: TPasImplWithDo);
+begin
+  PopWithScope(El);
+end;
+
+procedure TPasResolver.FinishForLoopHeader(Loop: TPasImplForLoop);
+var
+  VarResolved, StartResolved, EndResolved,
+    OrigStartResolved: TPasResolverResult;
+  EnumeratorFound, HasInValues: Boolean;
+  InRange, VarRange: TResEvalValue;
+  InRangeInt, VarRangeInt: TResEvalRangeInt;
+  bt: TResolverBaseType;
+  TypeEl, ElType: TPasType;
+  C: TClass;
+begin
+  CreateScope(Loop,TPasForLoopScope);
+
+  // loop var
+  ResolveExpr(Loop.VariableName,rraReadAndAssign);
+  ComputeElement(Loop.VariableName,VarResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
+  if not ResolvedElCanBeVarParam(VarResolved,Loop.VariableName) then
+    RaiseVarExpected(20170216151955,Loop.VariableName,VarResolved.IdentEl);
+
+  // resolve start expression
+  ResolveExpr(Loop.StartExpr,rraRead);
+  ComputeElement(Loop.StartExpr,StartResolved,[rcSetReferenceFlags]);
+
+  case Loop.LoopType of
+  ltNormal,ltDown:
+    begin
+    // start value
+    if CheckAssignResCompatibility(VarResolved,StartResolved,Loop.StartExpr,true)=cIncompatible then
+      RaiseIncompatibleTypeRes(20170216151958,nIncompatibleTypesGotExpected,
+        [],StartResolved,VarResolved,Loop.StartExpr);
+    CheckAssignExprRange(VarResolved,Loop.StartExpr);
+
+    // end value
+    ResolveExpr(Loop.EndExpr,rraRead);
+    ComputeElement(Loop.EndExpr,EndResolved,[rcSetReferenceFlags]);
+    if CheckAssignResCompatibility(VarResolved,EndResolved,Loop.EndExpr,false)=cIncompatible then
+      RaiseIncompatibleTypeRes(20170216152001,nIncompatibleTypesGotExpected,
+        [],EndResolved,VarResolved,Loop.EndExpr);
+    CheckAssignExprRange(VarResolved,Loop.EndExpr);
+    end;
+  ltIn:
+    begin
+    // check range
+    EnumeratorFound:=CheckForIn(Loop,VarResolved,StartResolved);
+    if (not EnumeratorFound)
+        and not (StartResolved.IdentEl is TPasType)
+        and (rrfReadable in StartResolved.Flags) then
+      begin
+      EnumeratorFound:=CheckForInClassOrRec(Loop,VarResolved,StartResolved);
+      end;
+
+    if not EnumeratorFound then
+      begin
+      VarRange:=nil;
+      InRange:=nil;
+      try
+        OrigStartResolved:=StartResolved;
+        if StartResolved.IdentEl is TPasType then
+          begin
+          // e.g. for e in TEnum do
+          TypeEl:=StartResolved.LoTypeEl;
+          if TypeEl is TPasArrayType then
+            begin
+            if length(TPasArrayType(TypeEl).Ranges)=1 then
+              InRange:=Eval(TPasArrayType(TypeEl).Ranges[0],[refConst]);
+            end;
+          if InRange=nil then
+            InRange:=EvalTypeRange(TypeEl,[]);
+          {$IFDEF VerbosePasResolver}
+          {AllowWriteln}
+          if InRange<>nil then
+            writeln('TPasResolver.ResolveImplForLoop in type: InRange=',InRange.AsDebugString)
+          else
+            writeln('TPasResolver.ResolveImplForLoop in type: InRange=nil');
+          {AllowWriteln-}
+          {$ENDIF}
+          end
+        else if rrfReadable in StartResolved.Flags then
+          begin
+          // value  (variable or expression)
+          bt:=StartResolved.BaseType;
+          if bt in [btSet,btArrayOrSet] then
+            begin
+            if (StartResolved.IdentEl=nil) and (StartResolved.ExprEl<>nil) then
+              InRange:=Eval(StartResolved.ExprEl,[]);
+            if InRange=nil then
+              InRange:=EvalTypeRange(StartResolved.LoTypeEl,[]);
+            end
+          else if bt=btContext then
+            begin
+            TypeEl:=StartResolved.LoTypeEl;
+            C:=TypeEl.ClassType;
+            if C=TPasArrayType then
+              begin
+              ElType:=GetArrayElType(TPasArrayType(TypeEl));
+              ComputeElement(ElType,StartResolved,[rcType]);
+              StartResolved.Flags:=OrigStartResolved.Flags*[rrfReadable,rrfWritable];
+              if CheckAssignResCompatibility(VarResolved,StartResolved,Loop.StartExpr,true)=cIncompatible then
+                RaiseIncompatibleTypeRes(20171112210138,nIncompatibleTypesGotExpected,
+                  [],StartResolved,VarResolved,Loop.StartExpr);
+              EnumeratorFound:=true;
+              end;
+            end
+          else
+            begin
+            bt:=GetActualBaseType(bt);
+            case bt of
+            {$ifdef FPC_HAS_CPSTRING}
+            btAnsiString:
+              InRange:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ff);
+            {$endif}
+            btUnicodeString:
+              InRange:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ffff);
+            end;
+            end;
+          end;
+        if (not EnumeratorFound) and (InRange<>nil) then
+          begin
+          // for v in <constant> do
+          // -> check if same type
+          VarRange:=EvalTypeRange(VarResolved.LoTypeEl,[]);
+          if VarRange=nil then
+            RaiseXExpectedButYFound(20171109191528,'range',
+                         GetResolverResultDescription(VarResolved),Loop.VariableName);
+          //writeln('TPasResolver.ResolveImplForLoop ForIn VarRange=',VarRange.AsDebugString);
+          //writeln('TPasResolver.ResolveImplForLoop ForIn InRange=',InRange.AsDebugString,' ElType=',GetResolverResultDbg(StartResolved));
+          case InRange.Kind of
+          revkRangeInt,revkSetOfInt:
+            begin
+            InRangeInt:=TResEvalRangeInt(InRange);
+            case VarRange.Kind of
+            revkRangeInt:
+              begin
+              VarRangeInt:=TResEvalRangeInt(VarRange);
+              HasInValues:=(InRange.Kind<>revkSetOfInt) or (length(TResEvalSet(InRange).Ranges)>0);
+              case InRangeInt.ElKind of
+                revskEnum:
+                  if (VarRangeInt.ElKind<>revskEnum)
+                      or not IsSameType(InRangeInt.ElType,VarRangeInt.ElType,prraAlias) then
+                    RaiseXExpectedButYFound(20171109200752,GetTypeDescription(InRangeInt.ElType),
+                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
+                revskInt:
+                  if VarRangeInt.ElKind<>revskInt then
+                    RaiseXExpectedButYFound(20171109200752,'integer',
+                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
+                revskChar:
+                  if VarRangeInt.ElKind<>revskChar then
+                    RaiseXExpectedButYFound(20171109200753,'char',
+                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
+                revskBool:
+                  if VarRangeInt.ElKind<>revskBool then
+                    RaiseXExpectedButYFound(20171109200754,'boolean',
+                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
+              else
+                if HasInValues then
+                  RaiseNotYetImplemented(20171109200954,Loop.StartExpr);
+              end;
+              if HasInValues then
+                begin
+                if (VarRangeInt.RangeStart>InRangeInt.RangeStart) then
+                  begin
+                  {$IFDEF VerbosePasResolver}
+                  writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRangeInt.AsDebugString,' ',InRangeInt.AsDebugString);
+                  {$ENDIF}
+                  fExprEvaluator.EmitRangeCheckConst(20171109201428,
+                    InRangeInt.ElementAsString(InRangeInt.RangeStart),
+                    VarRangeInt.ElementAsString(VarRangeInt.RangeStart),
+                    VarRangeInt.ElementAsString(VarRangeInt.RangeEnd),Loop.VariableName,mtError);
+                  end;
+                if (VarRangeInt.RangeEnd<InRangeInt.RangeEnd) then
+                  begin
+                  {$IFDEF VerbosePasResolver}
+                  writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRangeInt.AsDebugString,' ',InRangeInt.AsDebugString);
+                  {$ENDIF}
+                  fExprEvaluator.EmitRangeCheckConst(20171109201429,
+                    InRangeInt.ElementAsString(InRangeInt.RangeEnd),
+                    VarRangeInt.ElementAsString(VarRangeInt.RangeStart),
+                    VarRangeInt.ElementAsString(VarRangeInt.RangeEnd),Loop.VariableName,mtError);
+                  end;
+                end;
+              EnumeratorFound:=true;
+              end;
+            else
+              {$IFDEF VerbosePasResolver}
+              writeln('TPasResolver.ResolveImplForLoop ForIn VarRange=',VarRange.AsDebugString);
+              {$ENDIF}
+            end;
+            end;
+          else
+            {$IFDEF VerbosePasResolver}
+            writeln('TPasResolver.ResolveImplForLoop ForIn InRange=',InRange.AsDebugString);
+            {$ENDIF}
+          end;
+          end;
+        if not EnumeratorFound then
+          begin
+          {$IFDEF VerbosePasResolver}
+          {AllowWriteln}
+          writeln('TPasResolver.ResolveImplForLoop StartResolved=',GetResolverResultDbg(StartResolved));
+          if VarRange<>nil then
+            writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRange.AsDebugString);
+          {AllowWriteln-}
+          {$ENDIF}
+          RaiseMsg(20171108223818,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
+            [GetBaseDescription(OrigStartResolved)],Loop.StartExpr);
+          end;
+      finally
+        ReleaseEvalValue(VarRange);
+        ReleaseEvalValue(InRange);
+      end;
+      end;
+
+    end;
+  else
+    RaiseNotYetImplemented(20171108221334,Loop);
+  end;
+end;
+
 procedure TPasResolver.FinishDeclaration(El: TPasElement);
 var
   C: TClass;
@@ -5561,11 +7619,13 @@ begin
   if (C=TPasVariable) or (C=TPasConst) then
     FinishVariable(TPasVariable(El))
   else if C=TPasProperty then
-    FinishPropertyOfClass(TPasProperty(El))
+    FinishProperty(TPasProperty(El))
   else if C=TPasArgument then
     FinishArgument(TPasArgument(El))
   else if C=TPasMethodResolution then
     FinishMethodResolution(TPasMethodResolution(El))
+  else if C=TPasAttributes then
+    FinishAttributes(TPasAttributes(El))
   else
     begin
     {$IFDEF VerbosePasResolver}
@@ -5590,12 +7650,17 @@ begin
     ResolveExpr(El.Expr,rraRead);
   if El.VarType<>nil then
     begin
+    if (El.Parent is TPasRecordType) and (El.VarType=El.Parent) then
+      RaiseMsg(20181218173631,nTypeXIsNotYetCompletelyDefined,
+        sTypeXIsNotYetCompletelyDefined,[El.VarType.Name],El);
+    CheckUseAsType(El.VarType,20190123095916,El);
     if El.Expr<>nil then
       CheckAssignCompatibility(El,El.Expr,true);
     end
   else if El.Expr<>nil then
     begin
-    Value:=Eval(El.Expr,[refConst]);
+    // no VarType, has Expr, e.g. const a = Expr
+    Value:=Eval(El.Expr,[refConstExt]); // e.g. const Tau = 2*PI
     ReleaseEvalValue(Value);
     end;
   if El.AbsoluteExpr<>nil then
@@ -5632,9 +7697,10 @@ begin
     EmitTypeHints(El,El.VarType);
 end;
 
-procedure TPasResolver.FinishPropertyOfClass(PropEl: TPasProperty);
+procedure TPasResolver.FinishProperty(PropEl: TPasProperty);
 var
   PropType: TPasType;
+  ClassOrRecScope: TPasClassOrRecordScope;
   ClassScope: TPasClassScope;
   AncestorProp: TPasProperty;
   IndexExpr: TPasExpr;
@@ -5642,11 +7708,16 @@ var
   procedure GetPropType;
   var
     AncEl: TPasElement;
+    GroupScope: TPasGroupScope;
   begin
     if PropType<>nil then exit;
     AncEl:=nil;
-    if ClassScope.AncestorScope<>nil then
-      AncEl:=ClassScope.AncestorScope.FindElement(PropEl.Name);
+    if (ClassScope<>nil) and (ClassScope.AncestorScope<>nil) then
+      begin
+      CheckTopScope(TPasGroupScope);
+      GroupScope:=TPasGroupScope(TopScope);
+      AncEl:=GroupScope.FindAncestorElement(PropEl.Name);
+      end;
     if AncEl is TPasProperty then
       begin
       // override or redeclaration property
@@ -5662,6 +7733,7 @@ var
       begin
       // new property or redeclaration
       PropType:=PropEl.VarType;
+      CheckUseAsType(PropEl.VarType,20190123100011,PropEl);
       end
     else
       begin
@@ -5674,9 +7746,22 @@ var
       // get inherited type
       PropType:=GetPasPropertyType(AncestorProp);
       // update DefaultProperty
-      if (ClassScope.DefaultProperty=AncestorProp) then
+      if ClassScope=nil then
+        RaiseNotYetImplemented(20181231130642,PropEl);
+      if ClassScope.DefaultProperty=AncestorProp then
         ClassScope.DefaultProperty:=PropEl;
       end;
+  end;
+
+  function CheckClassAccessorStatic(ProcIsStatic: boolean): boolean;
+  begin
+    if ClassScope=nil then
+      // record: class getter/setter must be static
+      Result:=ProcIsStatic=true
+    else if proClassPropertyNonStatic in Options then
+      Result:=true // both allowed
+    else
+      Result:=ProcIsStatic=true;
   end;
 
   procedure CheckIndexArg(ArgNo: integer; const IndexResolved: TPasResolverResult;
@@ -5710,6 +7795,7 @@ var
     ArgNo: Integer;
     PropArg, ProcArg: TPasArgument;
     PropArgResolved, ProcArgResolved: TPasResolverResult;
+    NeedCheckingAccess: Boolean;
   begin
     ArgNo:=0;
     while ArgNo<PropEl.Args.Count do
@@ -5722,10 +7808,23 @@ var
       inc(ArgNo);
 
       // check access: var, const, ...
+      NeedCheckingAccess:=false;
       if PropArg.Access<>ProcArg.Access then
-        RaiseMsg(20170216151808,nIncompatibleTypeArgNo,sIncompatibleTypeArgNo,
-          [IntToStr(ArgNo),AccessDescriptions[ProcArg.Access],
-           AccessDescriptions[PropArg.Access]],ErrorEl);
+        begin
+
+        if (PropArg.Access in [argDefault, argConst])
+            and (ProcArg.Access in [argDefault, argConst]) then
+          begin
+          // passing an arg as default to const or const to default
+          if (PropArg.ArgType<>nil)
+              and (ProcArg.ArgType<>nil) then
+            NeedCheckingAccess:=true;
+          end;
+        if not NeedCheckingAccess then
+          RaiseMsg(20170216151808,nIncompatibleTypeArgNo,sIncompatibleTypeArgNo,
+            [IntToStr(ArgNo),AccessDescriptions[ProcArg.Access],
+             AccessDescriptions[PropArg.Access]],ErrorEl);
+        end;
 
       // check argument type
       if PropArg.ArgType=nil then
@@ -5753,6 +7852,19 @@ var
           RaiseIncompatibleType(20170216151819,nIncompatibleTypeArgNo,
             [IntToStr(ArgNo)],ProcArgResolved.HiTypeEl,PropArgResolved.HiTypeEl,ErrorEl);
         end;
+
+        if NeedCheckingAccess then
+          begin
+          // passing an arg as default to const or const to default
+          // e.g.
+          //   function GetItems(const i: integer): byte;
+          //   property Items[i: integer]: byte read GetItems;
+          // => allowed for simple types
+          if not (PropArgResolved.BaseType in (btAllBooleans+btAllInteger+btAllStringAndChars+btAllFloats)) then
+            RaiseMsg(20181007181647,nIncompatibleTypeArgNo,sIncompatibleTypeArgNo,
+              [IntToStr(ArgNo),AccessDescriptions[ProcArg.Access],
+               AccessDescriptions[PropArg.Access]],ErrorEl);
+          end;
       end;
 
     if IndexVal<>nil then
@@ -5827,7 +7939,7 @@ var
       okInterface:
         // e.g. property IntfVar: IntfType read Getter implements IntfType2
         // check that IntfType is IntfType2
-        if CheckClassIsClass(PropType,IntfType,Expr)=cIncompatible then
+        if CheckClassIsClass(PropType,IntfType)=cIncompatible then
           RaiseIncompatibleType(20180323173746,nIncompatibleTypesGotExpected,
             [],OrigIntfType,PropType,Expr);
       else
@@ -5935,8 +8047,8 @@ var
   end;
 
 var
-  ResultType: TPasType;
-  CurClassType: TPasClassType;
+  ResultType, aType: TPasType;
+  MembersType: TPasMembersType;
   AccEl: TPasElement;
   Proc: TPasProcedure;
   Arg: TPasArgument;
@@ -5946,6 +8058,7 @@ var
   m: TVariableModifier;
   IndexVal: TResEvalValue;
   AncIndexExpr: TPasExpr;
+  CurClass: TPasClassType;
 begin
   CheckTopScope(TPasPropertyScope);
   PopScope;
@@ -5957,8 +8070,15 @@ begin
           ['published property','"'+VariableModifierNames[m]+'"'],PropEl);
 
   PropType:=nil;
-  CurClassType:=PropEl.Parent as TPasClassType;
-  ClassScope:=NoNil(CurClassType.CustomData) as TPasClassScope;
+  MembersType:=PropEl.Parent as TPasMembersType;
+  ClassOrRecScope:=NoNil(MembersType.CustomData) as TPasClassOrRecordScope;
+  ClassScope:=nil;
+  CurClass:=nil;
+  if ClassOrRecScope is TPasClassScope then
+    begin
+    ClassScope:=TPasClassScope(ClassOrRecScope);
+    CurClass:=TPasClassType(MembersType);
+    end;
   AncestorProp:=nil;
   GetPropType;
   IndexVal:=nil;
@@ -5981,7 +8101,10 @@ begin
       revkInt, revkUInt,
       revkFloat,
       revkCurrency,
-      revkString, revkUnicodeString,
+      {$ifdef FPC_HAS_CPSTRING}
+      revkString,
+      {$endif}
+      revkUnicodeString,
       revkEnum: ; // ok
       else
         RaiseXExpectedButYFound(20170924202837,'ordinal',GetTypeDescription(IndexResolved),PropEl.IndexExpr);
@@ -6050,7 +8173,7 @@ begin
           begin
           if Proc.ClassType<>TPasClassFunction then
             RaiseXExpectedButYFound(20170216151834,'class function',GetElementTypeName(Proc),PropEl.ReadAccessor);
-          if Proc.IsStatic=(proClassPropertyNonStatic in Options) then
+          if not CheckClassAccessorStatic(Proc.IsStatic) then
             if Proc.IsStatic then
               RaiseMsg(20170216151837,nClassPropertyAccessorMustNotBeStatic,sClassPropertyAccessorMustNotBeStatic,[],PropEl.ReadAccessor)
             else
@@ -6105,11 +8228,11 @@ begin
           begin
           if Proc.ClassType<>TPasClassProcedure then
             RaiseXExpectedButYFound(20170216151903,'class procedure',GetElementTypeName(Proc),PropEl.WriteAccessor);
-            if Proc.IsStatic=(proClassPropertyNonStatic in Options) then
-              if Proc.IsStatic then
-                RaiseMsg(20170216151905,nClassPropertyAccessorMustNotBeStatic,sClassPropertyAccessorMustNotBeStatic,[],PropEl.WriteAccessor)
-              else
-                RaiseMsg(20170216151906,nClassPropertyAccessorMustBeStatic,sClassPropertyAccessorMustBeStatic,[],PropEl.WriteAccessor);
+          if not CheckClassAccessorStatic(Proc.IsStatic) then
+            if Proc.IsStatic then
+              RaiseMsg(20170216151905,nClassPropertyAccessorMustNotBeStatic,sClassPropertyAccessorMustNotBeStatic,[],PropEl.WriteAccessor)
+            else
+              RaiseMsg(20170216151906,nClassPropertyAccessorMustBeStatic,sClassPropertyAccessorMustBeStatic,[],PropEl.WriteAccessor);
           end
         else
           begin
@@ -6161,11 +8284,19 @@ begin
       end;
     if PropEl.IsDefault then
       begin
+      if (CurClass<>nil) and (CurClass.HelperForType<>nil) then
+        begin
+        aType:=ResolveAliasType(CurClass.HelperForType);
+        if not (aType is TPasMembersType) then
+          RaiseMsg(20190117125004,nDefaultPropertyNotAllowedInHelperForX,
+            sDefaultPropertyNotAllowedInHelperForX,
+            [GetTypeDescription(CurClass.HelperForType)],PropEl);
+        end;
       // set default array property
-      if (ClassScope.DefaultProperty<>nil)
-          and (ClassScope.DefaultProperty.Parent=PropEl.Parent) then
+      if (ClassOrRecScope.DefaultProperty<>nil)
+          and (ClassOrRecScope.DefaultProperty.Parent=PropEl.Parent) then
         RaiseMsg(20170216151938,nOnlyOneDefaultPropertyIsAllowed,sOnlyOneDefaultPropertyIsAllowed,[],PropEl);
-      ClassScope.DefaultProperty:=PropEl;
+      ClassOrRecScope.DefaultProperty:=PropEl;
       end;
     EmitTypeHints(PropEl,PropEl.VarType);
   finally
@@ -6174,12 +8305,60 @@ begin
 end;
 
 procedure TPasResolver.FinishArgument(El: TPasArgument);
+
+  procedure CheckHasGenTemplRef(Arg: TPasArgument);
+
+    procedure Check(Parent: TPasElement; Cur: TPasType; TemplTypes: TFPList);
+    var
+      C: TClass;
+      Arr: TPasArrayType;
+    begin
+      if Cur=nil then exit;
+      C:=Cur.ClassType;
+      if C=TPasGenericTemplateType then
+        begin
+        if TemplTypes.IndexOf(Cur)>=0 then
+          RaiseMsg(20191007213121,nParamOfThisTypeCannotHaveDefVal,sParamOfThisTypeCannotHaveDefVal,[],El);
+        end
+      else if Cur.Parent<>Parent then
+        exit
+      else if C=TPasArrayType then
+        begin
+        Arr:=TPasArrayType(Cur);
+        Check(Arr,Arr.ElType,TemplTypes);
+        end;
+    end;
+
+  var
+    Proc: TPasProcedure;
+    TemplTypes: TFPList;
+  begin
+    if Arg.ArgType=nil then exit;
+    if not (Arg.Parent is TPasProcedureType) then exit;
+    if not (Arg.Parent.Parent is TPasProcedure) then exit;
+    Proc:=TPasProcedure(Arg.Parent.Parent);
+    TemplTypes:=GetProcTemplateTypes(Proc);
+    if TemplTypes=nil then exit;
+    Check(Arg,Arg.ArgType,TemplTypes);
+  end;
+
+var
+  IsDelphi: Boolean;
 begin
+  if not (El.Access in [argDefault,argConst,argVar,argOut,argConstRef]) then
+    RaiseMsg(20191018235644,nNotYetImplemented,sNotYetImplemented,[AccessDescriptions[El.Access]],El);
+  if El.ArgType<>nil then
+    CheckUseAsType(El.ArgType,20190123100049,El);
   if El.ValueExpr<>nil then
     begin
     ResolveExpr(El.ValueExpr,rraRead);
     if El.ArgType<>nil then
+      begin
       CheckAssignCompatibility(El,El.ValueExpr,true);
+      IsDelphi:=msDelphi in CurrentParser.CurrentModeswitches;
+      if IsDelphi then
+        CheckHasGenTemplRef(El);
+      end;
     end;
   EmitTypeHints(El,El.ArgType);
 end;
@@ -6191,13 +8370,23 @@ var
   DirectAncestor: TPasType; // e.g. TPasAliasType or TPasClassType
   AncestorClassEl: TPasClassType;
 
+  function IsDefaultAncestor(c: TPasClassType; const DefAncestorName: string): boolean;
+  begin
+    Result:=SameText(c.Name,DefAncestorName)
+        and (c.Parent is TPasSection);
+  end;
+
   procedure FindDefaultAncestor(const DefAncestorName, Expected: string);
   var
     CurEl: TPasElement;
   begin
     AncestorClassEl:=nil;
-    if (CompareText(aClass.Name,DefAncestorName)=0) then exit;
-    CurEl:=FindElementWithoutParams(DefAncestorName,aClass,false);
+    if SameText(aClass.Name,DefAncestorName) then
+      begin
+      if IsDefaultAncestor(aClass,DefAncestorName) then exit;
+      RaiseXExpectedButYFound(20190106132328,'top level '+DefAncestorName,'nested '+aClass.Name,aClass);
+      end;
+    CurEl:=FindElementWithoutParams(DefAncestorName,aClass,false,true);
     if not (CurEl is TPasType) then
       RaiseXExpectedButYFound(20180321150128,Expected,GetElementTypeName(CurEl),aClass);
     DirectAncestor:=TPasType(CurEl);
@@ -6212,32 +8401,52 @@ var
   AncestorType, El: TPasType;
   i: Integer;
   aModifier, DefAncestorName: String;
-  IsSealed: Boolean;
+  IsSealed, IsDelphi: Boolean;
   CanonicalSelf: TPasClassOfType;
   Decl: TPasElement;
-  j: integer;
-  IntfType, IntfTypeRes: TPasType;
+  j, TypeParamCnt: integer;
+  IntfType, IntfTypeRes, HelperForType, AncestorHelperFor: TPasType;
   ResIntfList, Members: TFPList;
+  GroupScope: TPasGroupScope;
+  C: TClass;
 begin
+  IsDelphi:=msDelphi in CurrentParser.CurrentModeswitches;
+
   if aClass.IsForward then
     begin
+    PopGenericParamScope(aClass);
+
     // check for duplicate forwards
-    if aClass.Parent is TPasDeclarations then
+    C:=aClass.Parent.ClassType;
+    if C.InheritsFrom(TPasDeclarations) then
       Members:=TPasDeclarations(aClass.Parent).Declarations
-    else if aClass.Parent.ClassType=TPasClassType then
-      Members:=TPasClassType(aClass.Parent).Members
+    else if (C=TPasClassType) or (C=TPasRecordType) then
+      Members:=TPasMembersType(aClass.Parent).Members
     else
       RaiseNotYetImplemented(20180430141934,aClass,GetObjName(aClass.Parent));
+    TypeParamCnt:=GetTypeParameterCount(aClass);
     for i:=0 to Members.Count-1 do
       begin
       Decl:=TPasElement(Members[i]);
-      if (CompareText(Decl.Name,aClass.Name)=0)
-          and (Decl<>aClass) then
-        RaiseMsg(20180212144132,nDuplicateIdentifier,sDuplicateIdentifier,
-          [Decl.Name,GetElementSourcePosStr(Decl)],aClass);
+      if (CompareText(Decl.Name,aClass.Name)<>0)
+          or (Decl=aClass) then continue;
+      if (Decl is TPasGenericType)
+          and (GetTypeParameterCount(TPasGenericType(Decl))<>TypeParamCnt) then
+        continue;
+      RaiseMsg(20180212144132,nDuplicateIdentifier,sDuplicateIdentifier,
+        [Decl.Name,GetElementSourcePosStr(Decl)],aClass);
+      end;
+
+    if TypeParamCnt>0 then
+      begin
+      // A generic forward needs TPasClassScope to store the specialized types.
+      // Will later be transferred to the actual class.
+      CreateScope(aClass,ScopeClass_Class);
       end;
     exit;
     end;
+
+  // not forward, actual declaration ...
 
   case aClass.ObjKind of
   okClass:
@@ -6245,9 +8454,10 @@ begin
     AncestorType:=ResolveAliasType(aClass.AncestorType);
     if (AncestorType is TPasClassType)
         and (TPasClassType(AncestorType).ObjKind=okInterface)
-        and not (msDelphi in CurrentParser.CurrentModeswitches) then
+        and not isDelphi then
       begin
       // e.g. type c = class(intf)
+      // ObjFPC allows to omit TObject as default ancestor, Delphi does not
       aClass.Interfaces.Insert(0,aClass.AncestorType);
       aClass.AncestorType:=nil;
       end;
@@ -6260,6 +8470,75 @@ begin
       RaiseMsg(20180321143613,nIllegalQualifier,sIllegalQualifier,
         [CurrentParser.Scanner.CurrentValueSwitch[vsInterfaces]],aClass);
     end;
+  okClassHelper,okRecordHelper,okTypeHelper:
+    begin
+    if aClass.IsExternal then
+      RaiseMsg(20190116192722,nIllegalQualifier,sIllegalQualifier,['external'],aClass);
+    HelperForType:=ResolveAliasType(aClass.HelperForType);
+    if HelperForType=nil then
+      RaiseNotYetImplemented(20191016125557,aClass);
+    if (aClass=HelperForType) or (aClass.HasParent(HelperForType)) then
+      RaiseMsg(20190118190935,nTypeXIsNotYetCompletelyDefined,
+        sTypeXIsNotYetCompletelyDefined,[HelperForType.Name],aClass);
+    case aClass.ObjKind of
+    okClassHelper:
+      begin
+      if not (HelperForType is TPasClassType) then
+        RaiseXExpectedButYFound(20190116194751,'class type',GetTypeDescription(aClass.HelperForType),aClass);
+      if TPasClassType(HelperForType).ObjKind<>okClass then
+        RaiseXExpectedButYFound(20190116194855,'class type',GetTypeDescription(aClass.HelperForType),aClass);
+      if TPasClassType(HelperForType).IsForward then
+        RaiseMsg(20190116194931,nTypeXIsNotYetCompletelyDefined,
+          sTypeXIsNotYetCompletelyDefined,[HelperForType.Name],aClass);
+      end;
+    okRecordHelper:
+      if isDelphi then
+        begin
+        if (HelperForType.ClassType=TPasRecordType)
+            or (HelperForType.ClassType=TPasArrayType)
+            or (HelperForType.ClassType=TPasSetType)
+            or (HelperForType.ClassType=TPasEnumType)
+            or (HelperForType.ClassType=TPasRangeType)
+            then
+          // ok
+        else if ((HelperForType.ClassType=TPasUnresolvedSymbolRef)
+            and (HelperForType.CustomData is TResElDataBaseType)) then
+        else
+          RaiseMsg(20190116200304,nTypeXCannotBeExtendedByARecordHelper,
+            sTypeXCannotBeExtendedByARecordHelper,[GetTypeDescription(HelperForType)],aClass);
+        end
+      else
+        begin
+        // mode objfpc
+        if (HelperForType.ClassType=TPasRecordType) then
+        else
+          RaiseMsg(20190116200519,nTypeXCannotBeExtendedByARecordHelper,
+            sTypeXCannotBeExtendedByARecordHelper,[GetTypeDescription(HelperForType)],aClass);
+        end;
+    okTypeHelper:
+      begin
+      if (HelperForType.ClassType=TPasRecordType)
+          or (HelperForType.ClassType=TPasArrayType)
+          or (HelperForType.ClassType=TPasSetType)
+          or (HelperForType.ClassType=TPasEnumType)
+          or (HelperForType.ClassType=TPasRangeType)
+          then
+        // ok
+      else if ((HelperForType.ClassType=TPasUnresolvedSymbolRef)
+          and (HelperForType.CustomData is TResElDataBaseType)) then
+      else if (HelperForType.ClassType=TPasClassType)
+          and (TPasClassType(HelperForType).ObjKind in [okClass,okInterface]) then
+        begin
+        if TPasClassType(HelperForType).IsForward then
+          RaiseMsg(20190116200940,nTypeXIsNotYetCompletelyDefined,
+            sTypeXIsNotYetCompletelyDefined,[HelperForType.Name],aClass);
+        end
+      else
+        RaiseMsg(20190116200304,nTypeXCannotBeExtendedByATypeHelper,
+          sTypeXCannotBeExtendedByATypeHelper,[GetTypeDescription(HelperForType)],aClass);
+      end;
+    end;
+    end
   else
     RaiseNotYetImplemented(20161010174638,aClass,'Kind='+ObjKindNames[aClass.ObjKind]);
   end;
@@ -6270,6 +8549,7 @@ begin
     aModifier:=lowercase(aClass.Modifiers[i]);
     case aModifier of
     'sealed': IsSealed:=true;
+    'abstract': ;
     else
       RaiseMsg(20170320190619,nIllegalQualifier,sIllegalQualifier,[aClass.Modifiers[i]],aClass);
     end;
@@ -6289,7 +8569,7 @@ begin
     okClass:
       begin
       DefAncestorName:='TObject';
-      if (CompareText(aClass.Name,DefAncestorName)=0) or aClass.IsExternal then
+      if aClass.IsExternal or IsDefaultAncestor(aClass,DefAncestorName) then
         begin
           // ok, no ancestor
           AncestorClassEl:=nil;
@@ -6306,11 +8586,11 @@ begin
       begin
       if aClass.InterfaceType=citCom then
         begin
-        if msDelphi in CurrentParser.CurrentModeswitches then
+        if isDelphi then
           DefAncestorName:='IInterface'
         else
           DefAncestorName:='IUnknown';
-        if SameText(DefAncestorName,aClass.Name) then
+        if IsDefaultAncestor(aClass,DefAncestorName) then
           AncestorClassEl:=nil
         else
           begin
@@ -6322,6 +8602,7 @@ begin
           end;
         end;
       end;
+    okClassHelper,okRecordHelper,okTypeHelper: ; // no root ancestor
     end;
     end
   else if AncestorType.ClassType<>TPasClassType then
@@ -6332,18 +8613,30 @@ begin
     begin
     AncestorClassEl:=TPasClassType(AncestorType);
     if AncestorClassEl.ObjKind<>aClass.ObjKind then
-      begin
       RaiseXExpectedButYFound(20180321152107,GetElementTypeName(aClass)+' type',
         GetElementTypeName(AncestorClassEl)+' type',aClass);
-      end
-    else
-      EmitTypeHints(aClass,AncestorClassEl);
+
+    if aClass.ObjKind in okAllHelpers then
+      begin
+      HelperForType:=ResolveAliasType(aClass.HelperForType);
+      AncestorHelperFor:=ResolveAliasType(AncestorClassEl.HelperForType);
+      if IsSameType(HelperForType,AncestorHelperFor,prraNone) then
+        // helper for same type as ancestor helper -> ok
+      else if (HelperForType is TPasClassType)
+          and (AncestorHelperFor is TPasClassType)
+          and (CheckClassIsClass(HelperForType,AncestorHelperFor)<>cIncompatible) then
+        // helper for descendant class of ancestor helper for -> ok
+      else
+        RaiseMsg(20190116203931,nDerivedXMustExtendASubClassY,sDerivedXMustExtendASubClassY,
+          [GetElementTypeName(aClass),AncestorClassEl.HelperForType.Name],aClass);
+      end;
+    EmitTypeHints(aClass,AncestorClassEl);
     end;
 
   AncestorClassScope:=nil;
   if AncestorClassEl=nil then
     begin
-    // root class e.g. TObject, IUnknown
+    // root class e.g. TObject, IUnknown, helper
     end
   else
     begin
@@ -6366,23 +8659,36 @@ begin
         RaiseMsg(20170216151949,nAncestorCycleDetected,sAncestorCycleDetected,[],aClass);
       if (El.ClassType=TPasAliasType)
       or (El.ClassType=TPasTypeAliasType)
+      or (El.ClassType=TPasSpecializeType)
       then
         El:=TPasAliasType(El).DestType
       else if El.ClassType=TPasClassType then
-        El:=TPasClassType(El).AncestorType;
+        El:=TPasClassType(El).AncestorType
+      else
+        RaiseNotYetImplemented(20190825195203,aClass,GetObjName(El));
     until El=nil;
     end;
 
-  // start scope for elements
+  if TopScope is TPasGenericParamsScope then
+    PopGenericParamScope(aClass);
+
+  // start scope for members
   {$IFDEF VerbosePasResolver}
   //writeln('TPasResolver.FinishAncestors ',GetObjName(aClass.CustomData));
   {$ENDIF}
-  PushScope(aClass,ScopeClass_Class);
-  ClassScope:=TPasClassScope(TopScope);
-  ClassScope.VisibilityContext:=aClass;
+  if aClass.CustomData=nil then
+    ClassScope:=TPasClassScope(CreateScope(aClass,ScopeClass_Class))
+  else
+    begin
+    // has already the scope, e.g. scope moved from a generic forward
+    ClassScope:=aClass.CustomData as TPasClassScope;
+    if pcsfAncestorResolved in ClassScope.Flags then
+      RaiseNotYetImplemented(20190803203715,aClass);
+    end;
   Include(ClassScope.Flags,pcsfAncestorResolved);
   if IsSealed then
     Include(ClassScope.Flags,pcsfSealed);
+  AddGenericTemplateIdentifiers(aClass.GenericTemplateTypes,ClassScope);
   ClassScope.DirectAncestor:=DirectAncestor;
   if AncestorClassEl<>nil then
     begin
@@ -6394,9 +8700,10 @@ begin
     end;
   if bsTypeInfo in CurrentParser.Scanner.CurrentBoolSwitches then
     Include(ClassScope.Flags,pcsfPublished);
-  if aClass.ObjKind=okClass then
+
+  if aClass.ObjKind in ([okClass]+okAllHelpers) then
     begin
-    // create canonical class-of for the "Self" in class functions
+    // create canonical class-of for the "Self" in non static class functions
     CanonicalSelf:=TPasClassOfType.Create('Self',aClass);
     ClassScope.CanonicalClassOf:=CanonicalSelf;
     {$IFDEF CheckPasTreeRefCount}CanonicalSelf.RefIds.Add('TPasClassScope.CanonicalClassOf');{$ENDIF}
@@ -6406,6 +8713,10 @@ begin
     CanonicalSelf.SourceFilename:=aClass.SourceFilename;
     CanonicalSelf.SourceLinenumber:=aClass.SourceLinenumber;
     end;
+
+  // push scope (must be done after setting aClass.AncestorScope)
+  GroupScope:=PushGroupScope(aClass);
+  GroupScope.VisibilityContext:=aClass;
 
   // check interfaces
   if aClass.Interfaces.Count>0 then
@@ -6464,7 +8775,7 @@ begin
     RaiseXExpectedButYFound(20180323132601,'interface type',
       GetResolverResultDescription(ResolvedEl),El.InterfaceName);
   aClass:=El.Parent as TPasClassType;
-  i:=IndexOfImplementedInterface(aClass,TpasType(ResolvedEl.IdentEl));
+  i:=IndexOfImplementedInterface(aClass,TPasType(ResolvedEl.IdentEl));
   if i<0 then
     RaiseXExpectedButYFound(20180323133055,'interface type',
       GetResolverResultDescription(ResolvedEl),El.InterfaceName);
@@ -6497,9 +8808,190 @@ begin
   CreateReference(IntfProc,Expr,rraRead);
   if IntfProc.ClassType<>El.ProcClass then
     RaiseXExpectedButYFound(20180323144107,GetElementTypeName(El.ProcClass),GetElementTypeName(IntfProc),El.InterfaceProc);
-  // Note: do not create map here. CheckImplements in FinishPropertyOfClass must be called before.
+  // Note: do not create map here. CheckImplements in FinishProperty must be called before.
 
   // El.ImplementationProc is resolved in FinishClassType
+end;
+
+procedure TPasResolver.FinishAttributes(El: TPasAttributes);
+var
+  i, j: Integer;
+  NameExpr, Expr: TPasExpr;
+  Bin: TBinaryExpr;
+  LeftResolved, ParamResolved: TPasResolverResult;
+  aModule: TPasModule;
+  LTypeEl: TPasType;
+  AttrName: String;
+  Data: TPRFindData;
+  CurEl, DeclEl: TPasElement;
+  ClassEl: TPasClassType;
+  aConstructor: TPasConstructor;
+  Args: TFPList;
+  AttrRef, ParamRef: TResolvedReference;
+  DotScope: TPasDotBaseScope;
+  Params: TPasExprArray;
+begin
+  for i:=0 to length(El.Calls)-1 do
+    begin
+    NameExpr:=El.Calls[i];
+    {$IFDEF VerbosePasResolver}
+    //writeln('TPasResolver.FinishAttributes El.Calls[',i,']=',GetObjName(NameExpr));
+    {$ENDIF}
+    if NameExpr is TParamsExpr then
+      NameExpr:=TParamsExpr(NameExpr).Value;
+    DotScope:=nil;
+    if NameExpr is TBinaryExpr then
+      begin
+      Bin:=TBinaryExpr(NameExpr);
+      ResolveExpr(Bin.left,rraRead);
+      ComputeElement(Bin.Left,LeftResolved,[rcType,rcSetReferenceFlags]);
+      if LeftResolved.BaseType=btModule then
+        begin
+        // e.g. unitname.identifier
+        // => search in interface and if this is our module in the implementation
+        aModule:=NoNil(LeftResolved.IdentEl) as TPasModule;
+        DotScope:=PushModuleDotScope(aModule);
+        end
+      else if (LeftResolved.BaseType=btContext)
+          and (LeftResolved.IdentEl is TPasType)
+          and (LeftResolved.LoTypeEl is TPasMembersType) then
+        begin
+        // classtype.identifier or recordtype.identifier
+        LTypeEl:=LeftResolved.LoTypeEl;
+        if LTypeEl.ClassType=TPasClassType then
+          begin
+          DotScope:=PushClassDotScope(TPasClassType(LTypeEl));
+          DotScope.OnlyTypeMembers:=true;
+          end
+        else if LTypeEl.ClassType=TPasRecordType then
+          begin
+          DotScope:=PushRecordDotScope(TPasRecordType(LTypeEl));
+          DotScope.OnlyTypeMembers:=true;
+          end
+        else
+          RaiseNotYetImplemented(20190221124930,Bin);
+        end
+      else
+        RaiseMsg(20190221102049,nXExpectedButYFound,sXExpectedButYFound,
+          ['module or type',GetResolverResultDescription(LeftResolved,true)],NameExpr);
+      NameExpr:=Bin.right;
+      end;
+    // find attribute class
+    if not IsNameExpr(NameExpr) then
+      RaiseMsg(20190221125204,nXExpectedButYFound,sXExpectedButYFound,
+        ['identifier',GetElementTypeName(Bin)],NameExpr);
+    AttrName:=TPrimitiveExpr(NameExpr).Value;
+    CurEl:=nil;
+    if not SameText(RightStr(AttrName,length('Attribute')),'Attribute') then
+      begin
+      // first search AttrName+'Attibute'
+      CurEl:=FindFirstEl(AttrName+'Attribute',Data,NameExpr);
+      end;
+    // then search the name
+    if CurEl=nil then
+      CurEl:=FindFirstEl(AttrName,Data,NameExpr);
+    if DotScope<>nil then
+      PopScope;
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.FinishAttributes Found Attr "'+AttrName+'"=',GetObjName(CurEl),' TopScope=',GetObjName(TopScope));
+    {$ENDIF}
+
+    // check if found element is a TCustomAttribute
+    if CurEl=nil then
+      begin
+      LogMsg(20190221144613,mtWarning,nUnknownCustomAttributeX,sUnknownCustomAttributeX,
+        [AttrName],NameExpr);
+      continue;
+      end;
+    if not IsCustomAttribute(CurEl) then
+      RaiseMsg(20190221130400,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
+        [GetElementTypeName(CurEl),'TCustomAttribute'],NameExpr);
+    ClassEl:=TPasClassType(CurEl);
+    AttrRef:=CreateReference(ClassEl,NameExpr,rraRead);
+    if ClassEl.IsAbstract then
+      // Delphi silently skips attributes using abstract classes/methods
+      LogMsg(20190223194424,mtWarning,nAttributeIgnoredBecauseAbstractX,
+        sAttributeIgnoredBecauseAbstractX,['class'],NameExpr);
+
+    // search constructor "Create" using the params
+    DotScope:=PushClassDotScope(ClassEl);
+    DotScope.OnlyTypeMembers:=true;
+    Expr:=El.Calls[i];
+    if Expr is TParamsExpr then
+      begin
+      // attribute with params
+      if Expr.Kind<>pekFuncParams then
+        begin
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.FinishAttributes ',ExprKindNames[Expr.Kind]);
+        {$ENDIF}
+        RaiseMsg(20190223195605,nXExpectedButYFound,sXExpectedButYFound,
+          ['(','['],Expr);
+        end;
+      // first resolve params
+      ResolveParamsExprParams(TParamsExpr(Expr));
+      // then resolve call 'Create'
+      ResolveFuncParamsExprName(Expr,nil,TParamsExpr(Expr),rraRead,'Create');
+      // then check that each parameter is a constant expression
+      Params:=TParamsExpr(Expr).Params;
+      for j:=0 to length(Params)-1 do
+        ComputeElement(Params[j],ParamResolved,[rcConstant]);
+      // check if call is constructor
+      ParamRef:=Expr.CustomData as TResolvedReference;
+      DeclEl:=ParamRef.Declaration;
+      if DeclEl.ClassType<>TPasConstructor then
+        RaiseXExpectedButYFound(20190221150212,'constructor Create',GetElementTypeName(DeclEl),NameExpr);
+      aConstructor:=TPasConstructor(DeclEl);
+      end
+    else
+      begin
+      // attribute without params
+      // -> resolve call 'Create'
+      DeclEl:=FindElementWithoutParams('Create',Data,NameExpr,false,true);
+      if DeclEl=nil then
+        RaiseIdentifierNotFound(20190221144516,'Create',NameExpr);
+      // check call is constructor
+      if DeclEl.ClassType<>TPasConstructor then
+        RaiseXExpectedButYFound(20190221145003,'constructor Create',
+          GetElementTypeName(DeclEl),NameExpr);
+      aConstructor:=TPasConstructor(DeclEl);
+      // check constructor without needed args
+      Args:=aConstructor.ProcType.Args;
+      if (Args.Count>0) and (TPasArgument(Args[0]).ValueExpr=nil) then
+        RaiseMsg(20190221145407,nWrongNumberOfParametersForCallTo,
+          sWrongNumberOfParametersForCallTo,[aConstructor.Name],Expr);
+      end;
+    if aConstructor.IsAbstract then
+      LogMsg(20190223193645,mtWarning,nAttributeIgnoredBecauseAbstractX,
+        sAttributeIgnoredBecauseAbstractX,['mrthod'],NameExpr);
+    // store reference to constructor in NameExpr
+    if AttrRef.Context<>nil then
+      RaiseNotYetImplemented(20190221164717,NameExpr,GetObjName(AttrRef.Context));
+    AttrRef.Context:=TResolvedRefCtxAttrProc.Create;
+    TResolvedRefCtxAttrProc(AttrRef.Context).Proc:=aConstructor;
+    PopScope;
+    end;
+end;
+
+procedure TPasResolver.FinishProcParamAccess(ProcType: TPasProcedureType;
+  Params: TParamsExpr);
+var
+  ParamAccess: TResolvedRefAccess;
+  i: Integer;
+  ArrParams: TPasExprArray;
+begin
+  ArrParams:=Params.Params;
+  for i:=0 to length(ArrParams)-1 do
+    begin
+    ParamAccess:=rraRead;
+    if i<ProcType.Args.Count then
+      case TPasArgument(ProcType.Args[i]).Access of
+      argVar: ParamAccess:=rraVarParam;
+      argOut: ParamAccess:=rraOutParam;
+      end;
+    AccessExpr(ArrParams[i],ParamAccess);
+    end;
+  CheckCallProcCompatibility(ProcType,Params,false,true);
 end;
 
 procedure TPasResolver.FinishPropertyParamAccess(Params: TParamsExpr;
@@ -6516,7 +9008,7 @@ begin
       argVar: ParamAccess:=rraVarParam;
       argOut: ParamAccess:=rraOutParam;
       end;
-    AccessExpr(Params.Params[i],ParamAccess);
+    FinishCallArgAccess(Params.Params[i],ParamAccess);
     end;
 end;
 
@@ -6551,8 +9043,8 @@ begin
     else if aType.ClassType=TPasPointerType then
       aType:=TPasPointerType(aType).DestType
     else if (aType.ClassType=TPasClassType) and TPasClassType(aType).IsForward
-        and (aType.CustomData<>nil) then
-      aType:=TPasType((aType.CustomData as TResolvedReference).Declaration)
+        and (aType.CustomData is TResolvedReference) then
+      aType:=TPasType(TResolvedReference(aType.CustomData).Declaration)
     else
       exit;
     end;
@@ -6561,7 +9053,7 @@ end;
 function TPasResolver.EmitElementHints(PosEl, El: TPasElement): boolean;
 begin
   if IsElementSkipped(El) then
-    RaiseMsg(20170927160030,nNotYetImplemented,sNotYetImplemented,[GetObjName(El)],PosEl);
+    RaiseNotYetImplemented(20170927160030,PosEl,GetObjName(El));
   if El.Hints=[] then exit(false);
   Result:=true;
   if hDeprecated in El.Hints then
@@ -6591,6 +9083,7 @@ procedure TPasResolver.StoreScannerFlagsInProc(ProcScope: TPasProcedureScope);
 var
   ModScope: TPasModuleScope;
 begin
+  if ppsfIsSpecialized in ProcScope.Flags then exit;
   ProcScope.BoolSwitches:=CurrentParser.Scanner.CurrentBoolSwitches;
   if bsRangeChecks in ProcScope.BoolSwitches then
     begin
@@ -6603,14 +9096,61 @@ procedure TPasResolver.ReplaceProcScopeImplArgsWithDeclArgs(
   ImplProcScope: TPasProcedureScope);
 var
   DeclProc, ImplProc: TPasProcedure;
-  DeclArgs, ImplArgs: TFPList;
-  i: Integer;
+  DeclArgs, ImplArgs, ImplTemplates, DeclTemplates: TFPList;
+  i, j: Integer;
   DeclArg, ImplArg: TPasArgument;
   Identifier: TPasIdentifier;
+  ImplNameParts: TProcedureNameParts;
+  ImplNamePart: TProcedureNamePart;
+  ImplTemplType, DeclTemplType: TPasGenericTemplateType;
 begin
   ImplProc:=ImplProcScope.Element as TPasProcedure;
-  ImplArgs:=ImplProc.ProcType.Args;
   DeclProc:=ImplProcScope.DeclarationProc;
+
+  // redirect impl generic template types with declaration types
+  ImplNameParts:=ImplProc.NameParts;
+  if ImplNameParts<>nil then
+    begin
+    // For example: "procedure TA<T>.Fly<U>;"
+
+    // The generic type templates (e.g. "T") are in the class
+    // -> remove generic type templates from proc scope
+    for i:=0 to ImplNameParts.Count-2 do
+      begin
+      ImplNamePart:=TProcedureNamePart(ImplNameParts[i]);
+      ImplTemplates:=ImplNamePart.Templates;
+      if ImplTemplates=nil then continue;
+      for j:=0 to ImplTemplates.Count-1 do
+        begin
+        ImplTemplType:=TPasGenericTemplateType(ImplTemplates[j]);
+        ImplProcScope.RemoveLocalIdentifier(ImplTemplType);
+        end;
+      end;
+    // redirect implproc parameters to declproc parameters
+    ImplTemplates:=GetProcTemplateTypes(ImplProc);
+    DeclTemplates:=GetProcTemplateTypes(DeclProc);
+    if ImplTemplates<>nil then
+      begin
+      if (DeclTemplates=nil) or (ImplTemplates.Count<>DeclTemplates.Count) then
+        RaiseNotYetImplemented(20190912153602,ImplProc); // inconsistency
+      for i:=0 to ImplTemplates.Count-1 do
+        begin
+        DeclTemplType:=TPasGenericTemplateType(DeclTemplates[i]);
+        ImplTemplType:=TPasGenericTemplateType(ImplTemplates[i]);
+        Identifier:=ImplProcScope.FindLocalIdentifier(ImplTemplType.Name);
+        if Identifier.Element<>ImplTemplType then
+          RaiseInternalError(20190912154009,GetObjName(DeclTemplType)+' '+GetObjName(ImplTemplType));
+        Identifier.Element:=DeclTemplType;
+        Identifier.Identifier:=DeclTemplType.Name;
+        end;
+      end
+    else if DeclTemplates<>nil then
+      // declproc is parametrized, implproc is not
+      RaiseNotYetImplemented(20190912153439,ImplProc); // inconsistency
+    end;
+
+  // redirect impl arguments to declaration args
+  ImplArgs:=ImplProc.ProcType.Args;
   DeclArgs:=DeclProc.ProcType.Args;
   for i:=0 to DeclArgs.Count-1 do
     begin
@@ -6628,12 +9168,12 @@ begin
     else
       RaiseNotYetImplemented(20170203161826,ImplProc);
     end;
-  if DeclProc is TPasFunction then
+  if DeclProc.ProcType is TPasFunctionType then
     begin
     // redirect implementation 'Result' to declaration FuncType.ResultEl
     Identifier:=ImplProcScope.FindLocalIdentifier(ResolverResultVar);
     if Identifier.Element is TPasResultElement then
-      Identifier.Element:=TPasFunction(DeclProc).FuncType.ResultEl;
+      Identifier.Element:=TPasFunctionType(DeclProc.ProcType).ResultEl;
     end;
 end;
 
@@ -6674,39 +9214,68 @@ end;
 procedure TPasResolver.CheckConditionExpr(El: TPasExpr;
   const ResolvedEl: TPasResolverResult);
 begin
-  if ResolvedEl.BaseType<>btBoolean then
-    RaiseXExpectedButYFound(20170216152135,
-      BaseTypeNames[btBoolean],BaseTypeNames[ResolvedEl.BaseType],El);
+  if ResolvedEl.BaseType=btBoolean then exit;
+  if IsGenericTemplType(ResolvedEl) then exit;
+  RaiseXExpectedButYFound(20170216152135,
+    BaseTypeNames[btBoolean],BaseTypeNames[ResolvedEl.BaseType],El);
 end;
 
 procedure TPasResolver.CheckProcSignatureMatch(DeclProc,
-  ImplProc: TPasProcedure; CheckNames: boolean);
+  ImplProc: TPasProcedure; IsOverride: boolean);
 var
   i: Integer;
-  DeclArgs, ImplArgs: TFPList;
+  DeclArgs, ImplArgs, ImplTemplates, DeclTemplates: TFPList;
   DeclName, ImplName: String;
   ImplResult, DeclResult: TPasType;
+  ImplTemplType, DeclTemplType: TPasGenericTemplateType;
 begin
   if ImplProc.ClassType<>DeclProc.ClassType then
     RaiseXExpectedButYFound(20170216151729,DeclProc.TypeName,ImplProc.TypeName,ImplProc);
   if ImplProc.CallingConvention<>DeclProc.CallingConvention then
     RaiseMsg(20170216151731,nCallingConventionMismatch,sCallingConventionMismatch,[],ImplProc);
-  if ImplProc is TPasFunction then
-    begin
-    // check result type
-    ImplResult:=TPasFunction(ImplProc).FuncType.ResultEl.ResultType;
-    DeclResult:=TPasFunction(DeclProc).FuncType.ResultEl.ResultType;
 
-    if not CheckElTypeCompatibility(ImplResult,DeclResult,prraSimple) then
-      RaiseIncompatibleType(20170216151734,nResultTypeMismatchExpectedButFound,
-        [],DeclResult,ImplResult,ImplProc);
+  DeclArgs:=DeclProc.ProcType.Args;
+  ImplArgs:=ImplProc.ProcType.Args;
+  if DeclArgs.Count<>ImplArgs.Count then
+    RaiseNotYetImplemented(20190912110642,ImplProc);
+
+  DeclTemplates:=GetProcTemplateTypes(DeclProc);
+  ImplTemplates:=GetProcTemplateTypes(ImplProc);
+  if DeclTemplates<>nil then
+    begin
+    // DeclProc has templates
+    if IsOverride then
+      RaiseNotYetImplemented(20190912113857,ImplProc); // inconsistency
+    if ImplTemplates=nil then
+      RaiseMsg(20190912144529,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+        [GetProcName(ImplProc),GetElementSourcePosStr(DeclProc)],ImplProc);
+
+    // declaration proc has template type aka is parametrized
+    // -> check template types
+    if ImplTemplates.Count<>DeclTemplates.Count then
+      RaiseMsg(20190912145320,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+        [GetProcName(ImplProc),GetElementSourcePosStr(TPasElement(DeclTemplates[0]))],ImplProc);
+    for i:=0 to DeclTemplates.Count-1 do
+      begin
+      DeclTemplType:=TPasGenericTemplateType(DeclTemplates[i]);
+      ImplTemplType:=TPasGenericTemplateType(ImplTemplates[i]);
+      if not SameText(DeclTemplType.Name,ImplTemplType.Name) then
+        RaiseMsg(20190912150311,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+          [GetProcName(ImplProc),GetElementSourcePosStr(TPasElement(DeclTemplType))],ImplTemplType);
+      if length(ImplTemplType.Constraints)>0 then
+        RaiseMsg(20190912150739,nImplMustNotRepeatConstraints,sImplMustNotRepeatConstraints,[],ImplTemplType);
+      end;
+    end
+  else if ImplTemplates<>nil then
+    begin
+    // ImplProc has templates, DeclProc does not
+    RaiseMsg(20190912113857,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+        [GetProcName(ImplProc),GetElementSourcePosStr(DeclProc)],ImplProc);
     end;
 
-  if CheckNames then
+  if not IsOverride then
     begin
     // check argument names
-    DeclArgs:=DeclProc.ProcType.Args;
-    ImplArgs:=ImplProc.ProcType.Args;
     for i:=0 to DeclArgs.Count-1 do
       begin
       DeclName:=TPasArgument(DeclArgs[i]).Name;
@@ -6715,6 +9284,17 @@ begin
         RaiseMsg(20170216151738,nFunctionHeaderMismatchForwardVarName,
           sFunctionHeaderMismatchForwardVarName,[DeclProc.Name,DeclName,ImplName],ImplProc);
       end;
+    end;
+
+  if ImplProc.ProcType is TPasFunctionType then
+    begin
+    // check result type
+    ImplResult:=TPasFunctionType(ImplProc.ProcType).ResultEl.ResultType;
+    DeclResult:=TPasFunctionType(DeclProc.ProcType).ResultEl.ResultType;
+
+    if CheckElTypeCompatibility(ImplResult,DeclResult,prraSimple)>cGenericExact then
+      RaiseIncompatibleType(20170216151734,nResultTypeMismatchExpectedButFound,
+        [],DeclResult,ImplResult,ImplProc);
     end;
 end;
 
@@ -6763,7 +9343,8 @@ begin
   else if C=TPasImplLabelMark then
     ResolveImplLabelMark(TPasImplLabelMark(El))
   else if C=TPasImplForLoop then
-    ResolveImplForLoop(TPasImplForLoop(El))
+    // the header was already resolved
+    ResolveImplElement(TPasImplForLoop(El).Body)
   else if C=TPasImplTry then
     begin
     ResolveImplBlock(TPasImplTry(El));
@@ -6790,7 +9371,7 @@ end;
 procedure TPasResolver.ResolveImplCaseOf(CaseOf: TPasImplCaseOf);
 type
   TRangeItem = record
-    RangeStart, RangeEnd: MaxPrecInt;
+    RangeStart, RangeEnd: TMaxPrecInt;
     Expr: TPasExpr;
     aString: UnicodeString;
     // Note: for case-of-string:
@@ -6860,7 +9441,7 @@ type
       end;
   end;
 
-  function AddRangeItem(Values: TFPList; const RangeStart, RangeEnd: MaxPrecInt;
+  function AddRangeItem(Values: TFPList; const RangeStart, RangeEnd: TMaxPrecInt;
     Expr: TPasExpr): PRangeItem;
   begin
     New(Result);
@@ -6899,7 +9480,7 @@ type
       Result:=true;
     end;
 
-    function AddStringRange(CharStart, CharEnd: MaxPrecInt): boolean;
+    function AddStringRange(CharStart, CharEnd: TMaxPrecInt): boolean;
     var
       i, o: Integer;
       s: UnicodeString;
@@ -6929,7 +9510,7 @@ type
     end;
 
   var
-    RangeStart, RangeEnd: MaxPrecInt;
+    RangeStart, RangeEnd: TMaxPrecInt;
     i: Integer;
     Item: PRangeItem;
   begin
@@ -6953,20 +9534,22 @@ type
       // Note: when FPC compares int64 with qword it converts the qword to an int64
       if TResEvalUInt(Value).UInt>HighIntAsUInt then
         ExprEvaluator.EmitRangeCheckConst(20180424212414,Value.AsString,
-          '0',IntToStr(High(MaxPrecInt)),Expr,mtError);
+          '0',IntToStr(High(TMaxPrecInt)),Expr,mtError);
       RangeStart:=TResEvalUInt(Value).UInt;
       RangeEnd:=RangeStart;
       end;
+    {$ifdef FPC_HAS_CPSTRING}
     revkString:
       if ValueSet=nil then
         exit(AddString(ExprEvaluator.GetUnicodeStr(TResEvalString(Value).S,Expr)))
       else
         begin
-        if length(TResEvalString(Value).S)<>1 then
+        RangeStart:=fExprEvaluator.StringToOrd(Value,nil);
+        if RangeStart>$ffff then
           exit(false);
-        RangeStart:=ord(TResEvalString(Value).S[1]);
         RangeEnd:=RangeStart;
         end;
+    {$endif}
     revkUnicodeString:
       if ValueSet=nil then
         exit(AddString(TResEvalUTF16(Value).S))
@@ -6995,7 +9578,7 @@ type
       // Note: when FPC compares int64 with qword it converts the qword to an int64
       if TResEvalRangeUInt(Value).RangeEnd>HighIntAsUInt then
         ExprEvaluator.EmitRangeCheckConst(20180424212648,Value.AsString,
-          '0',IntToStr(High(MaxPrecInt)),Expr,mtError);
+          '0',IntToStr(High(TMaxPrecInt)),Expr,mtError);
       RangeStart:=TResEvalRangeUInt(Value).RangeStart;
       RangeEnd:=TResEvalRangeUInt(Value).RangeEnd;
       end;
@@ -7045,8 +9628,11 @@ begin
     if (rrfReadable in CaseExprResolved.Flags) then
       ok:=CreateValues(CaseExprResolved,ValueSet);
     if not ok then
-      RaiseXExpectedButYFound(20170216151952,'ordinal expression',
-                 GetTypeDescription(CaseExprResolved.LoTypeEl),CaseOf.CaseExpr);
+      begin
+      if not IsGenericTemplType(CaseExprResolved) then
+        RaiseXExpectedButYFound(20170216151952,'ordinal expression',
+                   GetTypeDescription(CaseExprResolved.LoTypeEl),CaseOf.CaseExpr);
+      end;
 
     for i:=0 to CaseOf.Elements.Count-1 do
       begin
@@ -7062,19 +9648,22 @@ begin
           ComputeElement(OfExpr,OfExprResolved,[rcConstant,rcSetReferenceFlags]);
           if OfExprResolved.BaseType=btRange then
             ConvertRangeToElement(OfExprResolved);
+          if not ok then
+            continue;
           CheckEqualResCompatibility(CaseExprResolved,OfExprResolved,OfExpr,true);
 
-          Value:=Eval(OfExpr,[]); // allow external const, no refConst
+          Value:=Eval(OfExpr,[refConstExt]);
           if Value<>nil then
             begin
-            if not AddValue(Value,Values,ValueSet,OfExpr) then
+            if Value.Kind=revkExternal then
+              begin
+              // external const
+              end
+            else if not AddValue(Value,Values,ValueSet,OfExpr) then
               RaiseIncompatibleTypeRes(20180424210815,nIncompatibleTypesGotExpected,
                 [],OfExprResolved,CaseExprResolved,OfExpr);
             ReleaseEvalValue(Value);
             end
-          else if (OfExprResolved.IdentEl is TPasConst)
-              and (TPasConst(OfExprResolved.IdentEl).Expr=nil) then
-            // externl const
           else
             RaiseMsg(20180518102047,nConstantExpressionExpected,sConstantExpressionExpected,[],OfExpr);
           end;
@@ -7103,302 +9692,26 @@ begin
   RaiseNotYetImplemented(20161014141636,Mark);
 end;
 
-procedure TPasResolver.ResolveImplForLoop(Loop: TPasImplForLoop);
-var
-  VarResolved, StartResolved, EndResolved,
-    OrigStartResolved: TPasResolverResult;
-  EnumeratorFound, HasInValues: Boolean;
-  InRange, VarRange: TResEvalValue;
-  InRangeInt, VarRangeInt: TResEvalRangeInt;
-  bt: TResolverBaseType;
-  TypeEl: TPasType;
-  C: TClass;
-begin
-  CreateScope(Loop,TPasForLoopScope);
-
-  // loop var
-  ResolveExpr(Loop.VariableName,rraReadAndAssign);
-  ComputeElement(Loop.VariableName,VarResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
-  if not ResolvedElCanBeVarParam(VarResolved,Loop.VariableName) then
-    RaiseVarExpected(20170216151955,Loop.VariableName,VarResolved.IdentEl);
-
-  // resolve start expression
-  ResolveExpr(Loop.StartExpr,rraRead);
-  ComputeElement(Loop.StartExpr,StartResolved,[rcSetReferenceFlags]);
-
-  case Loop.LoopType of
-  ltNormal,ltDown:
-    begin
-    // start value
-    if CheckAssignResCompatibility(VarResolved,StartResolved,Loop.StartExpr,true)=cIncompatible then
-      RaiseIncompatibleTypeRes(20170216151958,nIncompatibleTypesGotExpected,
-        [],StartResolved,VarResolved,Loop.StartExpr);
-    CheckAssignExprRange(VarResolved,Loop.StartExpr);
-
-    // end value
-    ResolveExpr(Loop.EndExpr,rraRead);
-    ComputeElement(Loop.EndExpr,EndResolved,[rcSetReferenceFlags]);
-    if CheckAssignResCompatibility(VarResolved,EndResolved,Loop.EndExpr,false)=cIncompatible then
-      RaiseIncompatibleTypeRes(20170216152001,nIncompatibleTypesGotExpected,
-        [],EndResolved,VarResolved,Loop.EndExpr);
-    CheckAssignExprRange(VarResolved,Loop.EndExpr);
-    end;
-  ltIn:
-    begin
-    // check range
-    EnumeratorFound:=CheckForIn(Loop,VarResolved,StartResolved);
-    if (not EnumeratorFound) and (StartResolved.BaseType=btContext) then
-      begin
-      TypeEl:=StartResolved.LoTypeEl;
-      C:=TypeEl.ClassType;
-      if C=TPasClassType then
-        EnumeratorFound:=CheckForInClass(Loop,VarResolved,StartResolved);
-      end;
-
-    if not EnumeratorFound then
-      begin
-      VarRange:=nil;
-      InRange:=nil;
-      try
-        OrigStartResolved:=StartResolved;
-        if StartResolved.IdentEl is TPasType then
-          begin
-          // e.g. for e in TEnum do
-          TypeEl:=StartResolved.LoTypeEl;
-          if TypeEl is TPasArrayType then
-            begin
-            if length(TPasArrayType(TypeEl).Ranges)=1 then
-              InRange:=Eval(TPasArrayType(TypeEl).Ranges[0],[refConst]);
-            end;
-          if InRange=nil then
-            InRange:=EvalTypeRange(TypeEl,[]);
-          {$IFDEF VerbosePasResolver}
-          {AllowWriteln}
-          if InRange<>nil then
-            writeln('TPasResolver.ResolveImplForLoop in type: InRange=',InRange.AsDebugString)
-          else
-            writeln('TPasResolver.ResolveImplForLoop in type: InRange=nil');
-          {AllowWriteln-}
-          {$ENDIF}
-          end
-        else if rrfReadable in StartResolved.Flags then
-          begin
-          // value  (variable or expression)
-          bt:=StartResolved.BaseType;
-          if bt in [btSet,btArrayOrSet] then
-            begin
-            if (StartResolved.IdentEl=nil) and (StartResolved.ExprEl<>nil) then
-              InRange:=Eval(StartResolved.ExprEl,[refAutoConst]);
-            if InRange=nil then
-              InRange:=EvalTypeRange(StartResolved.LoTypeEl,[]);
-            end
-          else if bt=btContext then
-            begin
-            TypeEl:=StartResolved.LoTypeEl;
-            C:=TypeEl.ClassType;
-            if C=TPasArrayType then
-              begin
-              ComputeElement(TPasArrayType(TypeEl).ElType,StartResolved,[rcType]);
-              StartResolved.Flags:=OrigStartResolved.Flags*[rrfReadable,rrfWritable];
-              if CheckAssignResCompatibility(VarResolved,StartResolved,Loop.StartExpr,true)=cIncompatible then
-                RaiseIncompatibleTypeRes(20171112210138,nIncompatibleTypesGotExpected,
-                  [],StartResolved,VarResolved,Loop.StartExpr);
-              EnumeratorFound:=true;
-              end;
-            end
-          else
-            begin
-            bt:=GetActualBaseType(bt);
-            if bt=btAnsiString then
-              InRange:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ff)
-            else if bt=btUnicodeString then
-              InRange:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ffff);
-            end;
-          end;
-        if (not EnumeratorFound) and (InRange<>nil) then
-          begin
-          // for v in <constant> do
-          // -> check if same type
-          VarRange:=EvalTypeRange(VarResolved.LoTypeEl,[]);
-          if VarRange=nil then
-            RaiseXExpectedButYFound(20171109191528,'range',
-                         GetResolverResultDescription(VarResolved),Loop.VariableName);
-          //writeln('TPasResolver.ResolveImplForLoop ForIn VarRange=',VarRange.AsDebugString);
-          //writeln('TPasResolver.ResolveImplForLoop ForIn InRange=',InRange.AsDebugString,' ElType=',GetResolverResultDbg(StartResolved));
-          case InRange.Kind of
-          revkRangeInt,revkSetOfInt:
-            begin
-            InRangeInt:=TResEvalRangeInt(InRange);
-            case VarRange.Kind of
-            revkRangeInt:
-              begin
-              VarRangeInt:=TResEvalRangeInt(VarRange);
-              HasInValues:=(InRange.Kind<>revkSetOfInt) or (length(TResEvalSet(InRange).Ranges)>0);
-              case InRangeInt.ElKind of
-                revskEnum:
-                  if (VarRangeInt.ElKind<>revskEnum)
-                      or not IsSameType(InRangeInt.ElType,VarRangeInt.ElType,prraAlias) then
-                    RaiseXExpectedButYFound(20171109200752,GetTypeDescription(InRangeInt.ElType),
-                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
-                revskInt:
-                  if VarRangeInt.ElKind<>revskInt then
-                    RaiseXExpectedButYFound(20171109200752,'integer',
-                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
-                revskChar:
-                  if VarRangeInt.ElKind<>revskChar then
-                    RaiseXExpectedButYFound(20171109200753,'char',
-                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
-                revskBool:
-                  if VarRangeInt.ElKind<>revskBool then
-                    RaiseXExpectedButYFound(20171109200754,'boolean',
-                      GetResolverResultDescription(VarResolved,true),loop.VariableName);
-              else
-                if HasInValues then
-                  RaiseNotYetImplemented(20171109200954,Loop.StartExpr);
-              end;
-              if HasInValues then
-                begin
-                if (VarRangeInt.RangeStart>InRangeInt.RangeStart) then
-                  begin
-                  {$IFDEF VerbosePasResolver}
-                  writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRangeInt.AsDebugString,' ',InRangeInt.AsDebugString);
-                  {$ENDIF}
-                  fExprEvaluator.EmitRangeCheckConst(20171109201428,
-                    InRangeInt.ElementAsString(InRangeInt.RangeStart),
-                    VarRangeInt.ElementAsString(VarRangeInt.RangeStart),
-                    VarRangeInt.ElementAsString(VarRangeInt.RangeEnd),Loop.VariableName,mtError);
-                  end;
-                if (VarRangeInt.RangeEnd<InRangeInt.RangeEnd) then
-                  begin
-                  {$IFDEF VerbosePasResolver}
-                  writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRangeInt.AsDebugString,' ',InRangeInt.AsDebugString);
-                  {$ENDIF}
-                  fExprEvaluator.EmitRangeCheckConst(20171109201429,
-                    InRangeInt.ElementAsString(InRangeInt.RangeEnd),
-                    VarRangeInt.ElementAsString(VarRangeInt.RangeStart),
-                    VarRangeInt.ElementAsString(VarRangeInt.RangeEnd),Loop.VariableName,mtError);
-                  end;
-                end;
-              EnumeratorFound:=true;
-              end;
-            else
-              {$IFDEF VerbosePasResolver}
-              writeln('TPasResolver.ResolveImplForLoop ForIn VarRange=',VarRange.AsDebugString);
-              {$ENDIF}
-            end;
-            end;
-          else
-            {$IFDEF VerbosePasResolver}
-            writeln('TPasResolver.ResolveImplForLoop ForIn InRange=',InRange.AsDebugString);
-            {$ENDIF}
-          end;
-          end;
-        if not EnumeratorFound then
-          begin
-          {$IFDEF VerbosePasResolver}
-          {AllowWriteln}
-          writeln('TPasResolver.ResolveImplForLoop StartResolved=',GetResolverResultDbg(StartResolved));
-          if VarRange<>nil then
-            writeln('TPasResolver.ResolveImplForLoop VarRange=',VarRange.AsDebugString);
-          {AllowWriteln-}
-          {$ENDIF}
-          RaiseMsg(20171108223818,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
-            [GetBaseDescription(OrigStartResolved)],Loop.StartExpr);
-          end;
-      finally
-        ReleaseEvalValue(VarRange);
-        ReleaseEvalValue(InRange);
-      end;
-      end;
-
-    end;
-  else
-    RaiseNotYetImplemented(20171108221334,Loop);
-  end;
-  ResolveImplElement(Loop.Body);
-end;
-
 procedure TPasResolver.ResolveImplWithDo(El: TPasImplWithDo);
+// Note: the expressions were already resolved during parsing
+//  and the scopes were already stored in a TPasWithScope.
+//  -> simply push them onto the scope stack
 var
-  i, OldScopeCount: Integer;
-  Expr, ErrorEl: TPasExpr;
-  ExprResolved: TPasResolverResult;
-  TypeEl: TPasType;
+  i: Integer;
   WithScope: TPasWithScope;
-  WithExprScope: TPasWithExprScope;
-  ExprScope: TPasScope;
-  OnlyTypeMembers, IsClassOf: Boolean;
-  ClassEl: TPasClassType;
+  ExprScope: TPasWithExprScope;
 begin
-  OldScopeCount:=ScopeCount;
-  WithScope:=TPasWithScope(CreateScope(El,TPasWithScope));
+  if not (El.CustomData is TPasWithScope) then
+    RaiseInternalError(20181210175349);
+  WithScope:=TPasWithScope(El.CustomData);
   PushScope(WithScope);
-  for i:=0 to El.Expressions.Count-1 do
+  for i:=0 to WithScope.ExpressionScopes.Count-1 do
     begin
-    Expr:=TPasExpr(El.Expressions[i]);
-    ResolveExpr(Expr,rraRead);
-    ComputeElement(Expr,ExprResolved,[rcSetReferenceFlags]);
-    {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.ResolveImplWithDo ExprResolved=',GetResolverResultDbg(ExprResolved));
-    {$ENDIF}
-    ErrorEl:=Expr;
-    TypeEl:=ExprResolved.LoTypeEl;
-    // ToDo: use last element in Expr for error position
-    if TypeEl=nil then
-      RaiseMsg(20170216152004,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
-        [BaseTypeNames[ExprResolved.BaseType]],ErrorEl);
-
-    OnlyTypeMembers:=false;
-    IsClassOf:=false;
-    if TypeEl.ClassType=TPasRecordType then
-      begin
-      ExprScope:=NoNil(TPasRecordType(TypeEl).CustomData) as TPasRecordScope;
-      if ExprResolved.IdentEl is TPasType then
-        // e.g. with TPoint do PointInCircle
-        OnlyTypeMembers:=true;
-      end
-    else if TypeEl.ClassType=TPasClassType then
-      begin
-      ExprScope:=NoNil(TPasClassType(TypeEl).CustomData) as TPasClassScope;
-      if ExprResolved.IdentEl is TPasType then
-        // e.g. with TFPMemoryImage do FindHandlerFromExtension()
-        OnlyTypeMembers:=true;
-      end
-    else if TypeEl.ClassType=TPasClassOfType then
-      begin
-      // e.g. with ImageClass do FindHandlerFromExtension()
-      ClassEl:=ResolveAliasType(TPasClassOfType(TypeEl).DestType) as TPasClassType;
-      ExprScope:=ClassEl.CustomData as TPasClassScope;
-      OnlyTypeMembers:=true;
-      IsClassOf:=true;
-      end
-    else
-      RaiseMsg(20170216152007,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
-        [GetElementTypeName(TypeEl)],ErrorEl);
-    WithExprScope:=ScopeClass_WithExpr.Create;
-    WithExprScope.WithScope:=WithScope;
-    WithExprScope.Index:=i;
-    WithExprScope.Expr:=Expr;
-    WithExprScope.Scope:=ExprScope;
-    if not (ExprResolved.IdentEl is TPasType) then
-      Include(WithExprScope.Flags,wesfNeedTmpVar);
-    if OnlyTypeMembers then
-      Include(WithExprScope.Flags,wesfOnlyTypeMembers);
-    if IsClassOf then
-      Include(WithExprScope.Flags,wesfIsClassOf);
-    if (not (rrfWritable in ExprResolved.Flags))
-        and (ExprResolved.BaseType=btContext)
-        and (ExprResolved.LoTypeEl.ClassType=TPasRecordType) then
-      Include(WithExprScope.Flags,wesfConstParent);
-    WithScope.ExpressionScopes.Add(WithExprScope);
-    PushScope(WithExprScope);
+    ExprScope:=TPasWithExprScope(WithScope.ExpressionScopes[i]);
+    PushScope(ExprScope);
     end;
   ResolveImplElement(El.Body);
-  CheckTopScope(ScopeClass_WithExpr);
-  if TopScope<>WithScope.ExpressionScopes[WithScope.ExpressionScopes.Count-1] then
-    RaiseInternalError(20160923102846);
-  while ScopeCount>OldScopeCount do
-    PopScope;
+  PopWithScope(El);
 end;
 
 procedure TPasResolver.ResolveImplAsm(El: TPasImplAsmStatement);
@@ -7423,7 +9736,7 @@ begin
   {$ENDIF}
   // check LHS can be assigned
   ComputeElement(El.left,LeftResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
-  CheckCanBeLHS(LeftResolved,true,El.left);
+  CheckCanBeLHS(LeftResolved,true,GetRightMostExpr(El.left));
 
   // compute RHS
   ResolveExpr(El.right,rraRead);
@@ -7594,8 +9907,6 @@ begin
     ResolveParamsExpr(TParamsExpr(El),Access)
   else if ElClass=TBoolConstExpr then
   else if ElClass=TNilExpr then
-  else if ElClass=TSelfExpr then
-    ResolveNameExpr(El,'Self',Access)
   else if ElClass=TInheritedExpr then
     ResolveInherited(TInheritedExpr(El),Access)
   else if ElClass=TArrayValues then
@@ -7612,6 +9923,10 @@ begin
         [],El);
     ResolveRecordValues(TRecordValues(El));
     end
+  else if ElClass=TProcedureExpr then
+    // resolved by FinishScope(stProcedure)
+  else if ElClass=TInlineSpecializeExpr then
+    ResolveInlineSpecializeExpr(TInlineSpecializeExpr(El),Access)
   else
     RaiseNotYetImplemented(20170222184329,El);
 
@@ -7642,11 +9957,48 @@ var
   DottedName: String;
   Bin: TBinaryExpr;
   ProcScope: TPasProcedureScope;
+  ParentParams: TPRParentParams;
+  TypeCnt: Integer;
+  InlParams, TemplTypes: TFPList;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ResolveNameExpr El=',GetObjName(El),' Name="',aName,'" ',Access);
   {$ENDIF}
-  DeclEl:=FindElementWithoutParams(aName,FindData,El,false);
+  GetParamsOfNameExpr(El,ParentParams);
+  if ParentParams.InlineSpec<>nil then
+    InlParams:=ParentParams.InlineSpec.Params
+  else
+    InlParams:=nil;
+  //writeln('TPasResolver.ResolveNameExpr Inline=',GetObjName(ParentParams.InlineSpec),' Params=',GetObjName(ParentParams.Params),' ',GetObjPath(El));
+  if ParentParams.Params<>nil then
+    begin
+    case ParentParams.Params.Kind of
+    pekFuncParams:
+      ResolveFuncParamsExprName(El,InlParams,ParentParams.Params,Access);
+    pekArrayParams:
+      ResolveArrayParamsExprName(El,ParentParams.Params,Access);
+    else
+      RaiseNotYetImplemented(20190912190428,El,GetObjPath(ParentParams.Params));
+    end;
+    exit;
+    end;
+
+  if ParentParams.InlineSpec<>nil then
+    begin
+    TypeCnt:=InlParams.Count;
+    // ToDo: generic functions without params
+    DeclEl:=FindGenericEl(aName,TypeCnt,FindData,El);
+    if DeclEl<>nil then
+      begin
+      // GenType<params> -> create specialize type/proc
+      DeclEl:=GetSpecializedEl(ParentParams.InlineSpec,DeclEl,InlParams);
+      end
+    else
+      RaiseXExpectedButYFound(20190916160829,'generic type',GetElementTypeName(DeclEl),El);
+    end
+  else
+    DeclEl:=FindElementWithoutParams(aName,FindData,El,false,false);
+
   if DeclEl.ClassType=TPasUsesUnit then
     begin
     // the first name of a unit matches -> find unit with longest match
@@ -7660,14 +10012,23 @@ begin
   if DeclEl is TPasProcedure then
     begin
     // identifier is a proc and args brackets are missing
+    Proc:=TPasProcedure(DeclEl);
+    if ParentParams.InlineSpec=nil then
+      begin
+      TemplTypes:=GetProcTemplateTypes(Proc);
+      if (TemplTypes<>nil) then
+        // implicit function specialization without bracket
+        RaiseMsg(20191007222004,nCouldNotInferTypeArgXForMethodY,
+          sCouldNotInferTypeArgXForMethodY,[TPasGenericTemplateType(TemplTypes[0]).Name,Proc.Name],El);
+      end;
+
     if El.Parent.ClassType=TPasProperty then
       // a property accessor does not need args -> ok
-      // Note: the detailed tests are in FinishPropertyOfClass
+      // Note: the detailed tests are in FinishProperty
     else
       begin
       // examples: funca or @proca or a.funca or @a.funca ...
-      Proc:=TPasProcedure(DeclEl);
-      if (Access=rraAssign) and (Proc is TPasFunction)
+      if (Access=rraAssign) and (Proc.ProcType is TPasFunctionType)
           and (El.ClassType=TPrimitiveExpr)
           and (El.Parent.ClassType=TPasImplAssign)
           and (TPasImplAssign(El.Parent).left=El) then
@@ -7680,7 +10041,7 @@ begin
         if El.HasParent(ImplProc) then
           begin
           // "FuncA:=" within FuncA  -> redirect to ResultEl
-          Ref.Declaration:=(Proc as TPasFunction).FuncType.ResultEl;
+          Ref.Declaration:=TPasFunctionType(Proc.ProcType).ResultEl;
           exit;
           end;
         end;
@@ -7705,7 +10066,7 @@ begin
   else if (DeclEl.ClassType=TPasUsesUnit) or (DeclEl is TPasModule) then
     begin
     // unit reference
-    // dotted unit names needs a ref for each expression identifier
+    // dotted unit name needs a ref for each expression identifier
     // Note: El is the first TPrimitiveExpr of the dotted unit name reference
     DottedName:=DeclEl.Name;
     repeat
@@ -7734,9 +10095,13 @@ end;
 procedure TPasResolver.ResolveInherited(El: TInheritedExpr;
   Access: TResolvedRefAccess);
 var
-  ProcScope, DeclProcScope, SelfScope: TPasProcedureScope;
-  AncestorScope, ClassScope: TPasClassScope;
+  SelfScope: TPasProcedureScope;
+  AncestorScope: TPasClassScope;
+  ClassRecScope: TPasClassOrRecordScope;
   DeclProc, AncestorProc: TPasProcedure;
+  aClass: TPasClassType;
+  HelperForType: TPasType;
+  InhScope: TPasInheritedScope;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ResolveInherited El.Parent=',GetTreeDbg(El.Parent));
@@ -7750,28 +10115,69 @@ begin
     end;
 
   // 'inherited;' without expression
-  ProcScope:=GetInheritedExprScope(El);
-  SelfScope:=ProcScope.GetSelfScope;
+  SelfScope:=GetCurrentSelfScope(El);
   if SelfScope=nil then
     RaiseMsg(20170216152141,nInheritedOnlyWorksInMethods,sInheritedOnlyWorksInMethods,[],El);
-  ClassScope:=SelfScope.ClassScope;
-
-  AncestorScope:=ClassScope.AncestorScope;
-  if AncestorScope=nil then
-    begin
-    // 'inherited;' without ancestor class is silently ignored
-    exit;
-    end;
-
-  // search ancestor in element, i.e. 'inherited' expression
   DeclProc:=SelfScope.DeclarationProc;
-  DeclProcScope:=DeclProc.CustomData as TPasProcedureScope;
-  AncestorProc:=DeclProcScope.OverriddenProc;
-  if AncestorProc=nil then
+  if DeclProc=nil then
+    RaiseNotYetImplemented(20190121172251,El);
+  ClassRecScope:=SelfScope.ClassRecScope;
+
+  if not (ClassRecScope is TPasClassScope) then
     begin
-    // 'inherited;' without ancestor method is silently ignored
-    exit;
+    // inherited in record method
+    RaiseMsg(20181218194022,nTheUseOfXisNotAllowedInARecord,sTheUseOfXisNotAllowedInARecord,
+      ['inherited'],El);
     end;
+  AncestorProc:=nil;
+
+  // inherited in class/interface/helper method
+  aClass:=ClassRecScope.Element as TPasClassType;
+  HelperForType:=ResolveAliasType(aClass.HelperForType);
+  //writeln('TPasResolver.ResolveInherited aClass=',GetObjName(aClass),' HelperForType=',GetObjName(HelperForType));
+  if HelperForType is TPasMembersType then
+    begin
+    // inherited; inside helper -> skip helper ancestors and search in HelperForType
+    if msDelphi in CurrentParser.CurrentModeswitches then
+      begin
+      // Delphi skips ancestors and HelperForType
+      if not (HelperForType is TPasClassType) then
+        // 'inherited;' without ancestor class is silently ignored
+        exit;
+      AncestorScope:=TPasClassScope(HelperForType.CustomData).AncestorScope;
+      if AncestorScope=nil then
+        // 'inherited;' without ancestor class is silently ignored
+        exit;
+      InhScope:=PushInheritedScope(TPasMembersType(AncestorScope.Element),true,nil);
+      end
+    else
+      begin
+      // ObjFPC searches first in HelperForType and its ancestors, then in
+      // own ancestors
+      AncestorScope:=TPasClassScope(aClass.CustomData).AncestorScope;
+      InhScope:=PushInheritedScope(TPasMembersType(HelperForType),false,
+        AncestorScope);
+      end;
+    end
+  else
+    begin
+    // inherited; inside class/interface method
+    // -> search in ancestor and its helper(s)
+    AncestorScope:=TPasClassScope(ClassRecScope).AncestorScope;
+    if AncestorScope=nil then
+      // 'inherited;' without ancestor class is silently ignored
+      exit;
+    InhScope:=PushInheritedScope(TPasMembersType(AncestorScope.Element),true,nil);
+    end;
+  AncestorProc:=FindProcSameSignature(DeclProc.Name,DeclProc,InhScope,false);
+  PopScope;
+  if AncestorProc=nil then
+    // 'inherited;' without ancestor DeclProc is silently ignored
+    exit;
+
+  if not (AncestorProc.Parent is TPasMembersType) then
+    RaiseNotYetImplemented(20190121181234,El); // inconsistency
+
   CreateReference(AncestorProc,El,Access);
   if AncestorProc.IsAbstract then
     RaiseMsg(20170216152144,nAbstractMethodsCannotBeCalledDirectly,
@@ -7784,29 +10190,66 @@ procedure TPasResolver.ResolveInheritedCall(El: TBinaryExpr;
 // El.left is TInheritedExpr
 // El.right is the identifier and parameters
 var
-  ProcScope, SelfScope: TPasProcedureScope;
-  AncestorScope, ClassScope: TPasClassScope;
-  AncestorClass: TPasClassType;
-  InhScope: TPasDotClassScope;
+  SelfScope: TPasProcedureScope;
+  ClassRecScope: TPasClassOrRecordScope;
+  AncestorClass, aClass: TPasClassType;
+  HelperForType: TPasType;
+  OnlyTypeMembers: Boolean;
+  Proc: TPasProcedure;
+  AncestorScope: TPasClassScope;
+  InhScope: TPasInheritedScope;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ResolveInheritedCall El=',GetTreeDbg(El));
   {$ENDIF}
 
-  ProcScope:=GetInheritedExprScope(El);
-  SelfScope:=ProcScope.GetSelfScope;
+  SelfScope:=GetCurrentSelfScope(El);
   if SelfScope=nil then
     RaiseMsg(20170216152148,nInheritedOnlyWorksInMethods,sInheritedOnlyWorksInMethods,[],El);
-  ClassScope:=SelfScope.ClassScope;
+  ClassRecScope:=SelfScope.ClassRecScope;
 
-  AncestorScope:=ClassScope.AncestorScope;
+  if not (ClassRecScope is TPasClassScope) then
+    // inherited in a method of a record
+    RaiseMsg(20181218194436,nTheUseOfXisNotAllowedInARecord,sTheUseOfXisNotAllowedInARecord,
+      ['inherited'],El);
+
+  Proc:=TPasProcedure(SelfScope.Element);
+  OnlyTypeMembers:=IsClassMethod(Proc);
+
+  // inherited in a method of a class/interface/helper
+  aClass:=TPasClassType(ClassRecScope.Element);
+  AncestorScope:=TPasClassScope(ClassRecScope).AncestorScope;
+  if aClass.ObjKind in okAllHelpers then
+    begin
+    HelperForType:=ResolveAliasType(aClass.HelperForType);
+    if HelperForType is TPasMembersType then
+      begin
+      // record helper(ancestor) for aRecord
+      // or class helper(ancestor) for aClass
+      // -> search in helperfortype, then in ancestors
+      InhScope:=PushInheritedScope(TPasMembersType(HelperForType),false,
+        AncestorScope);
+      InhScope.OnlyTypeMembers:=OnlyTypeMembers;
+      ResolveExpr(El.right,Access);
+      PopScope;
+      exit;
+      end
+    else
+      begin
+      // type helper(ancestortype) for simpletype -> search in ancestortype
+      end;
+    end
+  else
+    begin
+    // class or interface -> search in ancestor and its helpers
+    end;
+  // search in ancestor and its helpers
   if AncestorScope=nil then
     RaiseMsg(20170216152151,nInheritedNeedsAncestor,sInheritedNeedsAncestor,[],El.left);
-
   // search call in ancestor
   AncestorClass:=TPasClassType(AncestorScope.Element);
-  InhScope:=PushClassDotScope(AncestorClass);
-  InhScope.InheritedExpr:=true;
+  InhScope:=PushInheritedScope(AncestorClass,true,nil);
+  InhScope.OnlyTypeMembers:=OnlyTypeMembers;
   ResolveExpr(El.right,Access);
   PopScope;
 end;
@@ -7867,6 +10310,27 @@ end;
 
 procedure TPasResolver.ResolveSubIdent(El: TBinaryExpr;
   Access: TResolvedRefAccess);
+
+  procedure ResolveRight; inline;
+  begin
+    ResolveExpr(El.right,Access);
+    PopScope;
+  end;
+
+  function SearchInTypeHelpers(HiType: TPasType; IdentEl: TPasElement): boolean;
+  var
+    DotScope: TPasDotBaseScope;
+  begin
+    if HiType=nil then exit(false);
+    DotScope:=PushHelperDotScope(HiType);
+    if DotScope=nil then exit(false);
+    if IdentEl is TPasType then
+      // e.g. TFlag.HelperProc
+      DotScope.OnlyTypeMembers:=true;
+    ResolveRight;
+    Result:=true;
+  end;
+
 var
   aModule: TPasModule;
   ClassEl: TPasClassType;
@@ -7874,8 +10338,10 @@ var
   LeftResolved: TPasResolverResult;
   Left: TPasExpr;
   RecordEl: TPasRecordType;
-  RecordScope: TPasDotRecordScope;
-  LTypeEl: TPasType;
+  RecordScope: TPasDotClassOrRecordScope;
+  LLoTypeEl, LHiTypeEl: TPasType;
+  DotScope: TPasDotBaseScope;
+  SetType: TPasSetType;
 begin
   if El.CustomData is TResolvedReference then
     exit; // for example, when a.b has a dotted unit name
@@ -7890,8 +10356,7 @@ begin
     // => search in interface and if this is our module in the implementation
     aModule:=NoNil(LeftResolved.IdentEl) as TPasModule;
     PushModuleDotScope(aModule);
-    ResolveExpr(El.right,Access);
-    PopScope;
+    ResolveRight;
     exit;
     end
   else if LeftResolved.LoTypeEl=nil then
@@ -7900,20 +10365,24 @@ begin
     end
   else
     begin
-    LTypeEl:=LeftResolved.LoTypeEl;
-    if (LTypeEl.ClassType=TPasPointerType)
-        and (msAutoDeref in GetElModeSwitches(El))
+    LHiTypeEl:=LeftResolved.HiTypeEl;
+    LLoTypeEl:=LeftResolved.LoTypeEl;
+    if (LLoTypeEl.ClassType=TPasPointerType)
+        and ElHasModeSwitch(El,msAutoDeref)
         and (rrfReadable in LeftResolved.Flags)
         then
       begin
       // a.b  ->  a^.b
-      LTypeEl:=ResolveAliasType(TPasPointerType(LTypeEl).DestType);
+      LHiTypeEl:=TPasPointerType(LLoTypeEl).DestType;
+      LLoTypeEl:=ResolveAliasType(LHiTypeEl);
       Include(LeftResolved.Flags,rrfWritable);
       end;
 
-    if LTypeEl.ClassType=TPasClassType then
+    if LLoTypeEl.ClassType=TPasClassType then
       begin
-      ClassEl:=TPasClassType(LTypeEl);
+      ClassEl:=TPasClassType(LLoTypeEl);
+      if ClassEl.HelperForType<>nil then
+        RaiseHelpersCannotBeUsedAsType(20190123093438,El);
       ClassScope:=PushClassDotScope(ClassEl);
       if LeftResolved.IdentEl is TPasType then
         // e.g. TFPMemoryImage.FindHandlerFromExtension()
@@ -7921,24 +10390,22 @@ begin
       else
         // e.g. Image.Width
         ClassScope.OnlyTypeMembers:=false;
-      ResolveExpr(El.right,Access);
-      PopScope;
+      ResolveRight;
       exit;
       end
-    else if LTypeEl.ClassType=TPasClassOfType then
+    else if LLoTypeEl.ClassType=TPasClassOfType then
       begin
       // e.g. ImageClass.FindHandlerFromExtension()
-      ClassEl:=ResolveAliasType(TPasClassOfType(LTypeEl).DestType) as TPasClassType;
+      ClassEl:=ResolveAliasType(TPasClassOfType(LLoTypeEl).DestType) as TPasClassType;
       ClassScope:=PushClassDotScope(ClassEl);
       ClassScope.OnlyTypeMembers:=true;
       ClassScope.IsClassOf:=true;
-      ResolveExpr(El.right,Access);
-      PopScope;
+      ResolveRight;
       exit;
       end
-    else if LTypeEl.ClassType=TPasRecordType then
+    else if LLoTypeEl.ClassType=TPasRecordType then
       begin
-      RecordEl:=TPasRecordType(LTypeEl);
+      RecordEl:=TPasRecordType(LLoTypeEl);
       RecordScope:=PushRecordDotScope(RecordEl);
       RecordScope.ConstParent:=not (rrfWritable in LeftResolved.Flags);
       if LeftResolved.IdentEl is TPasType then
@@ -7950,24 +10417,48 @@ begin
         AccessExpr(El.left,Access);
         RecordScope.OnlyTypeMembers:=false;
         end;
-      ResolveExpr(El.right,Access);
-      PopScope;
+      ResolveRight;
       exit;
       end
-    else if LTypeEl.ClassType=TPasEnumType then
+    else if LLoTypeEl.ClassType=TPasEnumType then
       begin
-      if LeftResolved.IdentEl is TPasType then
+      if (LeftResolved.IdentEl is TPasType)
+          and (ResolveAliasType(TPasType(LeftResolved.IdentEl)).ClassType=TPasEnumType) then
         begin
         // e.g. TShiftState.ssAlt
-        PushEnumDotScope(TPasEnumType(LTypeEl));
-        ResolveExpr(El.right,Access);
-        PopScope;
+        DotScope:=PushEnumDotScope(LHiTypeEl,TPasEnumType(LLoTypeEl));
+        DotScope.OnlyTypeMembers:=true;
+        ResolveRight;
         exit;
         end;
       end
-    else
-      RaiseMsg(20170216152541,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
-        [GetElementTypeName(LeftResolved.LoTypeEl)],El);
+    else if LLoTypeEl.ClassType=TPasGenericTemplateType then
+      begin
+      DotScope:=PushTemplateDotScope(TPasGenericTemplateType(LLoTypeEl),El);
+      if DotScope<>nil then
+        begin
+        if LeftResolved.IdentEl is TPasType then
+          // e.g. T.Member
+          DotScope.OnlyTypeMembers:=true
+        else
+          // e.g. VarOfTypeT.Member
+          DotScope.OnlyTypeMembers:=false;
+        ResolveRight;
+        exit;
+        end;
+      end;
+    // default: search for type helpers
+    if (LeftResolved.BaseType in btAllStandardTypes)
+        or (LeftResolved.BaseType=btContext)
+        or (LeftResolved.BaseType=btCustom) then
+      begin
+      if SearchInTypeHelpers(LeftResolved.HiTypeEl,LeftResolved.IdentEl) then exit;
+      end
+    else if LeftResolved.BaseType=btSet then
+      begin
+      SetType:=GetSetType(LeftResolved);
+      if SearchInTypeHelpers(SetType,LeftResolved.IdentEl) then exit;
+      end;
     end;
 
   {$IFDEF VerbosePasResolver}
@@ -7979,9 +10470,6 @@ end;
 
 procedure TPasResolver.ResolveParamsExpr(Params: TParamsExpr;
   Access: TResolvedRefAccess);
-var
-  i, ScopeDepth: Integer;
-  ParamAccess: TResolvedRefAccess;
 begin
   if (Params.Kind=pekSet) and not (Access in [rraRead,rraParamToUnknownProc]) then
     begin
@@ -7992,14 +10480,7 @@ begin
     end;
 
   // first resolve params
-  ResetSubScopes(ScopeDepth);
-  if Params.Kind in [pekFuncParams,pekArrayParams] then
-    ParamAccess:=rraParamToUnknownProc
-  else
-    ParamAccess:=rraRead;
-  for i:=0 to length(Params.Params)-1 do
-    ResolveExpr(Params.Params[i],ParamAccess);
-  RestoreSubScopes(ScopeDepth);
+  ResolveParamsExprParams(Params);
 
   // then resolve the call, typecast, array, set
   if (Params.Kind=pekFuncParams) then
@@ -8012,32 +10493,127 @@ begin
     RaiseNotYetImplemented(20160922163501,Params);
 end;
 
+procedure TPasResolver.ResolveParamsExprParams(Params: TParamsExpr);
+var
+  ScopeDepth, i: integer;
+  ParamAccess: TResolvedRefAccess;
+  Pars: TPasExprArray;
+begin
+  ScopeDepth:=StashSubExprScopes;
+  if Params.Kind in [pekFuncParams,pekArrayParams] then
+    ParamAccess:=rraParamToUnknownProc
+  else
+    ParamAccess:=rraRead;
+  Pars:=Params.Params;
+  for i:=0 to length(Pars)-1 do
+    ResolveExpr(Pars[i],ParamAccess);
+  RestoreStashedScopes(ScopeDepth);
+end;
+
 procedure TPasResolver.ResolveFuncParamsExpr(Params: TParamsExpr;
   Access: TResolvedRefAccess);
+var
+  Value: TPasExpr;
+  SubParams: TParamsExpr;
+  ResolvedEl: TPasResolverResult;
+begin
+  Value:=Params.Value;
+  if Value is TBinaryExpr then
+    begin
+    // Note: a.b() is the same as (a.b)()
+    // Note: a.b().c  is stored as
+    //             TBinaryExpr eopSubIdent
+    //           /                         \
+    //         left = TParamsExpr           right = TPrimitiveExpr 'c'
+    //         Value = TBinaryExpr
+    //         /                 \
+    // left = TPrimitiveExpr 'a'  right = TPrimitiveExpr 'b'
+    if (Value is TBinaryExpr) and (TBinaryExpr(Value).OpCode=eopSubIdent) then
+      Value:=TBinaryExpr(Value).right;
+    if IsNameExpr(Value) then
+      begin
+      ResolveBinaryExpr(TBinaryExpr(Params.Value),Access);
+      if not (Value.CustomData is TResolvedReference) then
+        RaiseNotYetImplemented(20190115140557,Params);
+      // already resolved
+      exit;
+      end
+    else if Value.ClassType=TInlineSpecializeExpr then
+      begin
+      ResolveBinaryExpr(TBinaryExpr(Params.Value),Access);
+      // already resolved
+      exit;
+      end;
+    // ToDo: (a+b)()
+    //ResolveBinaryExpr(TBinaryExpr(Params.Value),rraRead);
+    RaiseNotYetImplemented(20190115140809,Params);
+    end
+  else if IsNameExpr(Value) then
+    ResolveFuncParamsExprName(Value,nil,Params,Access)
+  else if Value.ClassType=TInlineSpecializeExpr then
+    begin
+    // e.g. Name<>()
+    ResolveInlineSpecializeExpr(TInlineSpecializeExpr(Value),rraRead);
+    end
+  else if Value.ClassType=TParamsExpr then
+    begin
+    SubParams:=TParamsExpr(Value);
+    if (SubParams.Kind in [pekArrayParams,pekFuncParams]) then
+      begin
+      // e.g. Name()() or Name[]()
+      ResolveParamsExpr(SubParams,rraRead);
+      ComputeElement(SubParams,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
+      if IsProcedureType(ResolvedEl,true) then
+        begin
+        CreateReference(TPasProcedureType(ResolvedEl.LoTypeEl),Value,Access);
+        FinishProcParamAccess(TPasProcedureType(ResolvedEl.LoTypeEl),Params);
+        exit;
+        end
+      end;
+    RaiseMsg(20170216152202,nIllegalQualifierAfter,sIllegalQualifierAfter,
+      ['(',SubParams.ElementTypeName],Params);
+    end
+  else
+    RaiseNotYetImplemented(20161014085118,Params.Value);
+end;
 
-  procedure FinishProcParams(ProcType: TPasProcedureType);
+procedure TPasResolver.ResolveFuncParamsExprName(NameExpr: TPasExpr;
+  TemplParams: TFPList; Params: TParamsExpr; Access: TResolvedRefAccess;
+  CallName: string);
+
+  procedure RaiseMultiFit;
   var
-    ParamAccess: TResolvedRefAccess;
+    FindCallData: TFindCallElData;
+    Msg: String;
     i: Integer;
+    El: TPasElement;
+    Abort: boolean;
   begin
-    if not (Access in [rraRead,rraParamToUnknownProc]) then
-      begin
-      {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.ResolveFuncParamsExpr.FinishProcParams Params=',GetObjName(Params),' Value=',GetObjName(Params.Value),' Access=',Access);
-      {$ENDIF}
-      RaiseMsg(20170306104440,nVariableIdentifierExpected,sVariableIdentifierExpected,[],Params);
-      end;
-    for i:=0 to length(Params.Params)-1 do
-      begin
-      ParamAccess:=rraRead;
-      if i<ProcType.Args.Count then
-        case TPasArgument(ProcType.Args[i]).Access of
-        argVar: ParamAccess:=rraVarParam;
-        argOut: ParamAccess:=rraOutParam;
+    FindCallData:=Default(TFindCallElData);
+    FindCallData.Params:=Params;
+    FindCallData.List:=TFPList.Create;
+    try
+      Abort:=false;
+      IterateElements(CallName,@OnFindCallElements,@FindCallData,Abort);
+      Msg:='';
+      for i:=0 to FindCallData.List.Count-1 do
+        begin
+        El:=TPasElement(FindCallData.List[i]);
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.ResolveFuncParamsExpr Overload Candidate: ',GetElementSourcePosStr(El),' ',GetTreeDbg(El));
+        {$ENDIF}
+        // emit a hint for each candidate
+        if El is TPasProcedure then
+          LogMsg(20170417180320,mtHint,nFoundCallCandidateX,sFoundCallCandidateX,
+            [GetProcTypeDescription(TPasProcedure(El).ProcType,
+              [prptdUseName,prptdAddPaths,prptdResolveSimpleAlias])],El);
+        Msg:=Msg+', '+GetElementSourcePosStr(El);
         end;
-      AccessExpr(Params.Params[i],ParamAccess);
-      end;
-    CheckCallProcCompatibility(ProcType,Params,false,true);
+    finally
+      FindCallData.List.Free;
+    end;
+    RaiseMsg(20170216152200,nCantDetermineWhichOverloadedFunctionToCall,
+      sCantDetermineWhichOverloadedFunctionToCall+Msg,[CallName],NameExpr);
   end;
 
   procedure FinishUntypedParams(ParamAccess: TResolvedRefAccess);
@@ -8049,293 +10625,330 @@ procedure TPasResolver.ResolveFuncParamsExpr(Params: TParamsExpr;
       FinishCallArgAccess(Params.Params[i],ParamAccess);
   end;
 
+  procedure CheckTemplParams(GenTemplates, TemplParams: TFPList);
+  var
+    i: Integer;
+    Param, PosEl: TPasElement;
+    ResolvedEl: TPasResolverResult;
+  begin
+    for i:=0 to TemplParams.Count-1 do
+      begin
+      Param:=TPasElement(TemplParams[i]);
+      ComputeElement(Param,ResolvedEl,[rcType]);
+      if Param is TPasExpr then
+        PosEl:=Param
+      else
+        PosEl:=Params;
+      if CheckTemplateFitsParamRes(TPasGenericTemplateType(GenTemplates[i]),
+          ResolvedEl,prtcoAssignToTempl,PosEl)=cIncompatible then
+        // should have raise error
+        RaiseNotYetImplemented(20190919095604,PosEl,GetResolverResultDbg(ResolvedEl));
+      end;
+  end;
+
 var
-  i: Integer;
-  ElName, Msg: String;
   FindCallData: TFindCallElData;
   Abort: boolean;
-  El, FoundEl: TPasElement;
+  FoundEl: TPasElement;
   Ref: TResolvedReference;
   FindData: TPRFindData;
   BuiltInProc: TResElDataBuiltInProc;
-  SubParams: TParamsExpr;
   ResolvedEl: TPasResolverResult;
-  Value: TPasExpr;
   TypeEl: TPasType;
   C: TClass;
+  TemplParamsCnt: Integer;
+  GenTemplates, InferenceParams: TFPList;
 begin
-  Value:=Params.Value;
-  if IsNameExpr(Value) then
+  // e.g. Name() -> find compatible
+  {$IFDEF VerbosePasResolver}
+  //writeln('TPasResolver.ResolveFuncParamsExprName NameExpr=',GetObjName(NameExpr),' TemplParams=',TemplParams<>nil,' CallName="',CallName,'"');
+  {$ENDIF}
+  if CallName<>'' then
+  else if NameExpr.ClassType=TPrimitiveExpr then
+    CallName:=TPrimitiveExpr(NameExpr).Value
+  else
+    RaiseNotYetImplemented(20190115143539,NameExpr);
+  FindCallData:=Default(TFindCallElData);
+  FindCallData.Params:=Params;
+  if TemplParams<>nil then
     begin
-    // e.g. Name() -> find compatible
-    if Value.ClassType=TPrimitiveExpr then
-      ElName:=TPrimitiveExpr(Value).Value
-    else
-      ElName:='Self';
-    FindCallData:=Default(TFindCallElData);
-    FindCallData.Params:=Params;
-    Abort:=false;
-    IterateElements(ElName,@OnFindCallElements,@FindCallData,Abort);
-    if FindCallData.Found=nil then
-      RaiseIdentifierNotFound(20170216152544,ElName,Value);
-    if FindCallData.Distance=cIncompatible then
-      begin
-      // FoundEl one element, but it was incompatible => raise error
-      {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.ResolveFuncParamsExpr found one element, but it was incompatible => check again to raise error. Found=',GetObjName(FindCallData.Found));
-      WriteScopes;
-      {$ENDIF}
-      if FindCallData.Found is TPasProcedure then
-        CheckCallProcCompatibility(TPasProcedure(FindCallData.Found).ProcType,Params,true)
-      else if FindCallData.Found is TPasProcedureType then
-        CheckTypeCast(TPasProcedureType(FindCallData.Found),Params,true)
-      else if FindCallData.Found.ClassType=TPasUnresolvedSymbolRef then
-        begin
-        if FindCallData.Found.CustomData is TResElDataBuiltInProc then
-          begin
-          BuiltInProc:=TResElDataBuiltInProc(FindCallData.Found.CustomData);
-          BuiltInProc.GetCallCompatibility(BuiltInProc,Params,true);
-          end
-        else if FindCallData.Found.CustomData is TResElDataBaseType then
-          CheckTypeCast(TPasUnresolvedSymbolRef(FindCallData.Found),Params,true)
-        else
-          RaiseNotYetImplemented(20161006132825,FindCallData.Found);
-        end
-      else if FindCallData.Found is TPasType then
-        // Note: check TPasType after TPasUnresolvedSymbolRef
-        CheckTypeCast(TPasType(FindCallData.Found),Params,true)
-      else if FindCallData.Found is TPasVariable then
-        begin
-        TypeEl:=ResolveAliasType(TPasVariable(FindCallData.Found).VarType);
-        if TypeEl is TPasProcedureType then
-          CheckCallProcCompatibility(TPasProcedureType(TypeEl),Params,true)
-        else
-          RaiseMsg(20170405003522,nIllegalQualifierAfter,sIllegalQualifierAfter,['(',TypeEl.ElementTypeName],Params);
-        end
-      else if FindCallData.Found is TPasArgument then
-        begin
-        TypeEl:=ResolveAliasType(TPasArgument(FindCallData.Found).ArgType);
-        if TypeEl is TPasProcedureType then
-          CheckCallProcCompatibility(TPasProcedureType(TypeEl),Params,true)
-        else
-          RaiseMsg(20180228145412,nIllegalQualifierAfter,sIllegalQualifierAfter,['(',TypeEl.ElementTypeName],Params);
-        end
-      else
-        RaiseNotYetImplemented(20161003134755,FindCallData.Found);
-      // missing raise exception
-      RaiseNotYetImplemented(20180621002400,Params,'missing exception, Found='+GetObjName(FindCallData.Found));
-      end;
-    if FindCallData.Count>1 then
-      begin
-      // multiple overloads fit => search again and list the candidates
-      FindCallData:=Default(TFindCallElData);
-      FindCallData.Params:=Params;
-      FindCallData.List:=TFPList.Create;
-      try
-        IterateElements(ElName,@OnFindCallElements,@FindCallData,Abort);
-        Msg:='';
-        for i:=0 to FindCallData.List.Count-1 do
-          begin
-          El:=TPasElement(FindCallData.List[i]);
-          {$IFDEF VerbosePasResolver}
-          writeln('TPasResolver.ResolveFuncParamsExpr Overload Candidate: ',GetElementSourcePosStr(El),' ',GetTreeDbg(El));
-          {$ENDIF}
-          // emit a hint for each candidate
-          if El is TPasProcedure then
-            LogMsg(20170417180320,mtHint,nFoundCallCandidateX,sFoundCallCandidateX,
-              [GetProcTypeDescription(TPasProcedure(El).ProcType,
-                [prptdUseName,prptdAddPaths,prptdResolveSimpleAlias])],El);
-          Msg:=Msg+', '+GetElementSourcePosStr(El);
-          end;
-        RaiseMsg(20170216152200,nCantDetermineWhichOverloadedFunctionToCall,
-          sCantDetermineWhichOverloadedFunctionToCall+Msg,[ElName],Value);
-      finally
-        FindCallData.List.Free;
-      end;
-      end;
-
-    // FoundEl compatible element -> create reference
-    FoundEl:=FindCallData.Found;
-    Ref:=CreateReference(FoundEl,Value,rraRead);
-    if FindCallData.StartScope.ClassType=ScopeClass_WithExpr then
-      Ref.WithExprScope:=TPasWithExprScope(FindCallData.StartScope);
-    FindData:=Default(TPRFindData);
-    FindData.ErrorPosEl:=Value;
-    FindData.StartScope:=FindCallData.StartScope;
-    FindData.ElScope:=FindCallData.ElScope;
-    FindData.Found:=FoundEl;
-    CheckFoundElement(FindData,Ref);
-
-    // set param expression Access flags
+    TemplParamsCnt:=TemplParams.Count;
+    FindCallData.TemplCnt:=TemplParamsCnt;
+    end
+  else
+    TemplParamsCnt:=0;
+  Abort:=false;
+  IterateElements(CallName,@OnFindCallElements,@FindCallData,Abort);
+  FoundEl:=FindCallData.Found;
+  if FoundEl=nil then
+    RaiseIdentifierNotFound(20170216152544,CallName,NameExpr);
+  if FindCallData.Distance=cIncompatible then
+    begin
+    // FoundEl one element, but it was incompatible => raise error
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.ResolveFuncParamsExpr found one element, but it was incompatible => check again to raise error. Found=',GetObjName(FindCallData.Found));
+    WriteScopes;
+    {$ENDIF}
     if FoundEl is TPasProcedure then
-      // now it is known which overloaded proc to call
-      FinishProcParams(TPasProcedure(FoundEl).ProcType)
-    else if FoundEl is TPasType then
+      CheckCallProcCompatibility(TPasProcedure(FoundEl).ProcType,Params,true)
+    else if FoundEl is TPasProcedureType then
+      CheckTypeCast(TPasProcedureType(FoundEl),Params,true)
+    else if FoundEl.ClassType=TPasUnresolvedSymbolRef then
       begin
-      TypeEl:=ResolveAliasType(TPasType(FoundEl));
-      C:=TypeEl.ClassType;
-      if (C=TPasClassType)
-          or (C=TPasClassOfType)
-          or (C=TPasRecordType)
-          or (C=TPasEnumType)
-          or (C=TPasSetType)
-          or (C=TPasPointerType)
-          or (C=TPasArrayType)
-          or (C=TPasRangeType) then
+      if FoundEl.CustomData is TResElDataBuiltInProc then
         begin
-        // type cast
-        FinishUntypedParams(Access);
+        BuiltInProc:=TResElDataBuiltInProc(FoundEl.CustomData);
+        BuiltInProc.GetCallCompatibility(BuiltInProc,Params,true);
         end
-      else if (C=TPasProcedureType)
-          or (C=TPasFunctionType) then
+      else if FoundEl.CustomData is TResElDataBaseType then
+        CheckTypeCast(TPasUnresolvedSymbolRef(FoundEl),Params,true)
+      else
+        RaiseNotYetImplemented(20161006132825,FoundEl);
+      end
+    else if FoundEl is TPasType then
+      // Note: check TPasType after TPasUnresolvedSymbolRef
+      CheckTypeCast(TPasType(FoundEl),Params,true)
+    else if FoundEl is TPasVariable then
+      begin
+      TypeEl:=ResolveAliasType(TPasVariable(FoundEl).VarType);
+      if TypeEl is TPasProcedureType then
+        CheckCallProcCompatibility(TPasProcedureType(TypeEl),Params,true)
+      else
+        RaiseMsg(20170405003522,nIllegalQualifierAfter,sIllegalQualifierAfter,
+                 ['(',TypeEl.ElementTypeName],Params);
+      end
+    else if FoundEl is TPasArgument then
+      begin
+      TypeEl:=ResolveAliasType(TPasArgument(FoundEl).ArgType);
+      if TypeEl is TPasProcedureType then
+        CheckCallProcCompatibility(TPasProcedureType(TypeEl),Params,true)
+      else
+        RaiseMsg(20180228145412,nIllegalQualifierAfter,sIllegalQualifierAfter,
+                 ['(',TypeEl.ElementTypeName],Params);
+      end
+    else
+      RaiseNotYetImplemented(20161003134755,FoundEl);
+    // missing raise exception
+    RaiseNotYetImplemented(20180621002400,Params,'missing exception, Found='+GetObjName(FoundEl));
+    end;
+
+  if FindCallData.Count>1 then
+    begin
+    // multiple overloads fit
+    if (FoundEl is TPasProcedure)
+        and (IndexOfGenericParam(Params.Params)>=0) then
+      // generic params -> ignore ambiguity
+    else
+      // => search again and list the candidates
+      RaiseMultiFit;
+    end;
+
+  // check template params
+  if FoundEl is TPasProcedure then
+    GenTemplates:=GetProcTemplateTypes(TPasProcedure(FoundEl))
+  else if FoundEl is TPasGenericType then
+    GenTemplates:=TPasGenericType(FoundEl).GenericTemplateTypes
+  else
+    GenTemplates:=nil;
+
+  if TemplParamsCnt>0 then
+    begin
+    // check template types
+    if GenTemplates=nil then
+      RaiseMsg(20190919100922,nTypeParamsNotAllowedOnX,sTypeParamsNotAllowedOnX,
+        [FoundEl.Name],NameExpr);
+    if TemplParamsCnt<>GenTemplates.Count then
+      RaiseMsg(20190919101051,nWrongNumberOfParametersForGenericX,sWrongNumberOfParametersForGenericX,
+        [GetElementTypeName(FoundEl)+' '+FoundEl.Name],NameExpr);
+    CheckTemplParams(GenTemplates,TemplParams);
+    FoundEl:=GetSpecializedEl(NameExpr,FoundEl,TemplParams);
+    end
+  else if (GenTemplates<>nil) and (GenTemplates.Count>0) then
+    begin
+    if (FoundEl is TPasProcedure)
+        and (msImplicitFunctionSpec in CurrentParser.CurrentModeswitches) then
+      begin
+      // GenericProc()  -> create template types by inference
+      InferenceParams:=CreateInferenceTypesForCall(Params,TPasProcedure(FoundEl));
+      try
+        CheckTemplParams(GenTemplates,InferenceParams);
+        FoundEl:=GetSpecializedEl(NameExpr,FoundEl,InferenceParams);
+      finally
+        ReleaseElementList(InferenceParams{$IFDEF CheckPasTreeRefCount},RefIdInferenceParamsExpr{$ENDIF});
+        FreeAndNil(InferenceParams);
+      end;
+      // check if params fit the implicit specialized function
+      CheckCallProcCompatibility(TPasProcedure(FoundEl).ProcType,Params,true);
+      end
+    else
+      // GenericType()  -> missing type params
+      RaiseMsg(20190919120728,nWrongNumberOfParametersForGenericX,sWrongNumberOfParametersForGenericX,
+        [GetElementTypeName(FoundEl)+' '+FoundEl.Name],NameExpr);
+    end;
+
+  // FoundEl compatible element -> create reference
+  Ref:=CreateReference(FoundEl,NameExpr,rraRead);
+  if FindCallData.StartScope.ClassType=ScopeClass_WithExpr then
+    Ref.WithExprScope:=TPasWithExprScope(FindCallData.StartScope);
+  FindData:=Default(TPRFindData);
+  FindData.ErrorPosEl:=NameExpr;
+  FindData.StartScope:=FindCallData.StartScope;
+  FindData.ElScope:=FindCallData.ElScope;
+  FindData.Found:=FoundEl;
+  CheckFoundElement(FindData,Ref);
+
+  // set param expression Access flags
+  if FoundEl is TPasProcedure then
+    begin
+    // now it is known which overloaded proc to call
+    if not (Access in [rraRead,rraParamToUnknownProc]) then
+      begin
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.ResolveFuncParamsExprName Params=',GetObjName(Params),' NameExpr=',GetObjName(NameExpr),' Access=',Access);
+      {$ENDIF}
+      RaiseMsg(20170306104440,nVariableIdentifierExpected,sVariableIdentifierExpected,[],Params);
+      end;
+    FinishProcParamAccess(TPasProcedure(FoundEl).ProcType,Params);
+    end
+  else if FoundEl is TPasType then
+    begin
+    TypeEl:=ResolveAliasType(TPasType(FoundEl));
+    C:=TypeEl.ClassType;
+    if (C=TPasClassType)
+        or (C=TPasClassOfType)
+        or (C=TPasRecordType)
+        or (C=TPasEnumType)
+        or (C=TPasSetType)
+        or (C=TPasPointerType)
+        or (C=TPasArrayType)
+        or (C=TPasRangeType)
+        or (C=TPasGenericTemplateType) then
+      begin
+      // type cast
+      FinishUntypedParams(Access);
+      end
+    else if (C=TPasProcedureType)
+        or (C=TPasFunctionType) then
+      begin
+      // type cast to proc type
+      AccessExpr(Params.Params[0],Access);
+      end
+    else if C=TPasUnresolvedSymbolRef then
+      begin
+      if TypeEl.CustomData is TResElDataBuiltInProc then
         begin
-        // type cast to proc type
-        AccessExpr(Params.Params[0],Access);
-        end
-      else if C=TPasUnresolvedSymbolRef then
-        begin
-        if TypeEl.CustomData is TResElDataBuiltInProc then
-          begin
-          // call built-in proc
-          BuiltInProc:=TResElDataBuiltInProc(TypeEl.CustomData);
-          if Assigned(BuiltInProc.FinishParamsExpression) then
-            BuiltInProc.FinishParamsExpression(BuiltInProc,Params)
-          else
-            FinishUntypedParams(rraRead);
-          end
-        else if TypeEl.CustomData is TResElDataBaseType then
-          begin
-          // type cast to base type
-          FinishUntypedParams(Access);
-          end
+        // call built-in proc
+        BuiltInProc:=TResElDataBuiltInProc(TypeEl.CustomData);
+        if Assigned(BuiltInProc.FinishParamsExpression) then
+          BuiltInProc.FinishParamsExpression(BuiltInProc,Params)
         else
-          begin
-          {$IFDEF VerbosePasResolver}
-          writeln('TPasResolver.ResolveFuncParamsExpr FoundEl=',GetObjName(FoundEl),' CustomData=',GetObjName(FoundEl.CustomData));
-          {$ENDIF}
-          RaiseNotYetImplemented(20170325145720,Params);
-          end;
+          FinishUntypedParams(rraRead);
+        end
+      else if TypeEl.CustomData is TResElDataBaseType then
+        begin
+        // type cast to base type
+        FinishUntypedParams(Access);
         end
       else
         begin
         {$IFDEF VerbosePasResolver}
         writeln('TPasResolver.ResolveFuncParamsExpr FoundEl=',GetObjName(FoundEl),' CustomData=',GetObjName(FoundEl.CustomData));
         {$ENDIF}
-        RaiseMsg(20170306121908,nIllegalQualifierAfter,sIllegalQualifierAfter,
-          ['(',TypeEl.ElementTypeName],Params);
+        RaiseNotYetImplemented(20170325145720,Params);
         end;
       end
     else
       begin
-      // FoundEl is not a type, maybe a var
-      ComputeElement(FoundEl,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
-      TypeEl:=ResolvedEl.LoTypeEl;
-      if TypeEl is TPasProcedureType then
-        begin
-        FinishProcParams(TPasProcedureType(TypeEl));
-        exit;
-        end;
       {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.ResolveFuncParamsExpr FoundEl=',GetObjName(FoundEl),' CustomData=',GetObjName(FoundEl.CustomData),' Resolvedel=',GetResolverResultDbg(ResolvedEl));
+      writeln('TPasResolver.ResolveFuncParamsExpr FoundEl=',GetObjName(FoundEl),' CustomData=',GetObjName(FoundEl.CustomData));
       {$ENDIF}
-      RaiseMsg(20170306104301,nIllegalQualifierAfter,sIllegalQualifierAfter,
+      RaiseMsg(20170306121908,nIllegalQualifierAfter,sIllegalQualifierAfter,
         ['(',TypeEl.ElementTypeName],Params);
       end;
     end
-  else if Value.ClassType=TParamsExpr then
-    begin
-    SubParams:=TParamsExpr(Value);
-    if (SubParams.Kind in [pekArrayParams,pekFuncParams]) then
-      begin
-      // e.g. Name()() or Name[]()
-      ResolveExpr(SubParams,rraRead);
-      ComputeElement(SubParams,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
-      if IsProcedureType(ResolvedEl,true) then
-        begin
-        CheckCallProcCompatibility(TPasProcedureType(ResolvedEl.LoTypeEl),Params,true);
-        CreateReference(TPasProcedureType(ResolvedEl.LoTypeEl),Value,Access);
-        exit;
-        end
-      end;
-    RaiseMsg(20170216152202,nIllegalQualifierAfter,sIllegalQualifierAfter,
-      ['(',SubParams.ElementTypeName],Params);
-    end
   else
-    RaiseNotYetImplemented(20161014085118,Params.Value);
+    begin
+    // FoundEl is not a type, maybe a var
+    ComputeElement(FoundEl,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
+    TypeEl:=ResolvedEl.LoTypeEl;
+    if TypeEl is TPasProcedureType then
+      begin
+      if not (Access in [rraRead,rraParamToUnknownProc]) then
+        begin
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.ResolveFuncParamsExprName Params=',GetObjName(Params),' NameExpr=',GetObjName(NameExpr),' Access=',Access);
+        {$ENDIF}
+        RaiseMsg(20190215195439,nVariableIdentifierExpected,sVariableIdentifierExpected,[],Params);
+        end;
+      FinishProcParamAccess(TPasProcedureType(TypeEl),Params);
+      exit;
+      end;
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.ResolveFuncParamsExpr FoundEl=',GetObjName(FoundEl),' CustomData=',GetObjName(FoundEl.CustomData),' Resolvedel=',GetResolverResultDbg(ResolvedEl));
+    {$ENDIF}
+    RaiseMsg(20170306104301,nIllegalQualifierAfter,sIllegalQualifierAfter,
+      ['(',TypeEl.ElementTypeName],Params);
+    end;
 end;
 
 procedure TPasResolver.ResolveArrayParamsExpr(Params: TParamsExpr;
   Access: TResolvedRefAccess);
 var
   ResolvedEl: TPasResolverResult;
-
-  procedure ResolveValueName(Value: TPasElement; ArrayName: string);
-  var
-    FindData: TPRFindData;
-    Ref: TResolvedReference;
-    DeclEl: TPasElement;
-    Proc, ImplProc: TPasProcedure;
-    ProcScope: TPasProcedureScope;
-  begin
-    // e.g. Name[]
-    DeclEl:=FindElementWithoutParams(ArrayName,FindData,Value,true);
-    Ref:=CreateReference(DeclEl,Value,Access,@FindData);
-    CheckFoundElement(FindData,Ref);
-    if DeclEl is TPasProcedure then
-      begin
-      Proc:=TPasProcedure(DeclEl);
-      if (Access=rraAssign) and (Proc is TPasFunction)
-          and (Value.ClassType=TPrimitiveExpr)
-          and (Params.Parent.ClassType=TPasImplAssign)
-          and (TPasImplAssign(Params.Parent).left=Params) then
-        begin
-        // e.g. funcname[]:=
-        ProcScope:=Proc.CustomData as TPasProcedureScope;
-        ImplProc:=ProcScope.ImplProc;
-        if ImplProc=nil then
-          ImplProc:=Proc;
-        if Params.HasParent(ImplProc) then
-          begin
-          // "FuncA[]:=" within FuncA -> redirect to ResultEl
-          Ref.Declaration:=(Proc as TPasFunction).FuncType.ResultEl;
-          end;
-        end;
-      end;
-    ComputeElement(Value,ResolvedEl,[rcSetReferenceFlags]);
-  end;
-
-var
   Value: TPasExpr;
   SubParams: TParamsExpr;
 begin
   Value:=Params.Value;
   if Value=nil then
     RaiseInternalError(20180423093120,GetObjName(Params));
-  if (Value.ClassType=TPrimitiveExpr)
-      and (TPrimitiveExpr(Value).Kind=pekIdent) then
+
+  if IsNameExpr(Value) then
+    begin
     // e.g. Name[]
-    ResolveValueName(Value,TPrimitiveExpr(Value).Value)
-  else if (Value.ClassType=TSelfExpr) then
-    // e.g. Self[]
-    ResolveValueName(Value,'Self')
+    ResolveArrayParamsExprName(Value,Params,Access);
+    exit;
+    end
   else if Value.ClassType=TParamsExpr then
     begin
     SubParams:=TParamsExpr(Value);
-    if (SubParams.Kind in [pekArrayParams,pekFuncParams]) then
-      begin
-      // e.g. Name()[] or Name[][]
-      ResolveExpr(SubParams,rraRead);
-      ComputeElement(SubParams,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
-      if Value.CustomData=nil then
-        CreateReference(ResolvedEl.LoTypeEl,Value,Access);
-      end
-    else
-      RaiseNotYetImplemented(20161010194925,Value);
+    // e.g. Name()[] or Name[][] or [][]
+    ResolveExpr(SubParams,rraRead);
+    ComputeElement(SubParams,ResolvedEl,[rcNoImplicitProc,rcSetReferenceFlags]);
+    if Value.CustomData=nil then
+      CreateReference(ResolvedEl.LoTypeEl,Value,Access);
+    ResolvedEl.IdentEl:=nil;
     end
   else if Value.InheritsFrom(TUnaryExpr) then
     begin
     ResolveExpr(TUnaryExpr(Value).Operand,Access);
     ComputeElement(Value,ResolvedEl,[rcSetReferenceFlags]);
+    end
+  else if Value is TBinaryExpr then
+    begin
+    // Note: a.b[] is the same as (a.b)[]
+    // Note: a.b[].c  is stored as
+    //             TBinaryExpr eopSubIdent
+    //           /                         \
+    //         left = TParamsExpr           right = TPrimitiveExpr 'c'
+    //         Value = TBinaryExpr
+    //         /                 \
+    // left = TPrimitiveExpr 'a'  right = TPrimitiveExpr 'b'
+    while (Value is TBinaryExpr) and (TBinaryExpr(Value).OpCode=eopSubIdent) do
+      Value:=TBinaryExpr(Value).right;
+    if IsNameExpr(Value) then
+      begin
+      ResolveBinaryExpr(TBinaryExpr(Params.Value),Access);
+      if not (Value.CustomData is TResolvedReference) then
+        RaiseNotYetImplemented(20190115144534,Params);
+      // already resolved
+      exit;
+      end
+    else
+      begin
+      // ToDo: (a+b)[]
+      //ResolveBinaryExpr(TBinaryExpr(Params.Value),rraRead);
+      RaiseNotYetImplemented(20190115144539,Params);
+      end;
     end
   else
     RaiseNotYetImplemented(20160927212610,Value);
@@ -8346,18 +10959,93 @@ begin
   ResolveArrayParamsArgs(Params,ResolvedEl,Access);
 end;
 
+procedure TPasResolver.ResolveArrayParamsExprName(NameExpr: TPasExpr;
+  Params: TParamsExpr; Access: TResolvedRefAccess);
+// e.g. a.NameExpr[]
+var
+  ArrayName: String;
+  FindData: TPRFindData;
+  Ref: TResolvedReference;
+  DeclEl: TPasElement;
+  Proc, ImplProc: TPasProcedure;
+  ProcScope: TPasProcedureScope;
+  ResolvedEl: TPasResolverResult;
+begin
+  if (NameExpr.ClassType=TPrimitiveExpr)
+      and (TPrimitiveExpr(NameExpr).Kind=pekIdent) then
+    // e.g. Name[]
+    ArrayName:=TPrimitiveExpr(NameExpr).Value
+  else if NameExpr.ClassType=TInlineSpecializeExpr then
+    RaiseMsg(20190912190518,nIllegalQualifierAfter,sIllegalQualifierAfter,
+      ['[','inline specialize'],Params)
+  else
+    RaiseNotYetImplemented(20190131154557,NameExpr);
+
+  DeclEl:=FindElementWithoutParams(ArrayName,FindData,NameExpr,true,true);
+  Ref:=CreateReference(DeclEl,NameExpr,Access,@FindData);
+  CheckFoundElement(FindData,Ref);
+  if DeclEl is TPasProcedure then
+    begin
+    Proc:=TPasProcedure(DeclEl);
+    if (Access=rraAssign)
+        and (Proc.ProcType is TPasFunctionType)
+        and (Params.Parent.ClassType=TPasImplAssign)
+        and (TPasImplAssign(Params.Parent).left=Params) then
+      begin
+      // e.g. funcname[]:=
+      ProcScope:=Proc.CustomData as TPasProcedureScope;
+      ImplProc:=ProcScope.ImplProc;
+      if ImplProc=nil then
+        ImplProc:=Proc;
+      if Params.HasParent(ImplProc) then
+        begin
+        // "FuncA[]:=" within FuncA -> redirect to ResultEl
+        Ref.Declaration:=TPasFunctionType(Proc.ProcType).ResultEl;
+        end;
+      end;
+    end;
+
+  ComputeElement(NameExpr,ResolvedEl,[rcSetReferenceFlags]);
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.ResolveArrayParamsExprName NameExp=',GetObjName(NameExpr),' ',GetResolverResultDbg(ResolvedEl));
+  {$ENDIF}
+  ResolveArrayParamsArgs(Params,ResolvedEl,Access);
+end;
+
 procedure TPasResolver.ResolveArrayParamsArgs(Params: TParamsExpr;
   const ResolvedValue: TPasResolverResult; Access: TResolvedRefAccess);
+
+  procedure ReadAccessParamValue;
+  var
+    Left: TPasExpr;
+    Ref: TResolvedReference;
+  begin
+    if Access=rraAssign then
+      begin
+      // ArrayStringPointer[]:=
+      // -> writing the element needs reading the value
+      Left:=Params.Value;
+      if (Left is TBinaryExpr) and (TBinaryExpr(Left).OpCode=eopSubIdent) then
+        Left:=TBinaryExpr(Left).right;
+      if Left.CustomData is TResolvedReference then
+        begin
+        Ref:=TResolvedReference(Left.CustomData);
+        if Ref.Access=rraAssign then
+          Ref.Access:=rraReadAndAssign;
+        end;
+      end;
+  end;
 
   function CheckStringOrPointerIndex(IsStringIndex: boolean): boolean;
   var
     ArgExp: TPasExpr;
     ResolvedArg: TPasResolverResult;
   begin
+    ReadAccessParamValue;
     if not IsStringIndex then
       begin
       // pointer
-      if not (bsPointerMath in GetElBoolSwitches(Params)) then
+      if not ElHasBoolSwitch(Params,bsPointerMath) then
         exit(false);
       end;
     Result:=true;
@@ -8383,9 +11071,9 @@ procedure TPasResolver.ResolveArrayParamsArgs(Params: TParamsExpr;
 
 var
   PropEl: TPasProperty;
-  ClassScope: TPasClassScope;
   i: Integer;
   TypeEl: TPasType;
+  C: TClass;
 begin
   if ResolvedValue.BaseType in btAllStrings then
     begin
@@ -8409,23 +11097,26 @@ begin
   else if ResolvedValue.BaseType=btContext then
     begin
     TypeEl:=ResolvedValue.LoTypeEl;
-    if TypeEl.ClassType=TPasClassType then
+    C:=TypeEl.ClassType;
+    if (C=TPasClassType)
+        or (C=TPasRecordType)
+        or (C=TPasClassOfType) then
       begin
-      ClassScope:=NoNil(TypeEl.CustomData) as TPasClassScope;
-      if ResolveBracketOperatorClass(Params,ResolvedValue,ClassScope,Access) then
+      if ResolveBracketOperatorClassOrRec(Params,ResolvedValue,Access) then
         exit;
       end
-    else if TypeEl.ClassType=TPasArrayType then
+    else if C=TPasArrayType then
       begin
       if ResolvedValue.IdentEl is TPasType then
         RaiseMsg(20170216152215,nIllegalQualifierAfter,sIllegalQualifierAfter,
           ['[',ResolvedValue.IdentEl.ElementTypeName],Params);
+      ReadAccessParamValue;
       CheckCallArrayCompatibility(TPasArrayType(TypeEl),Params,true,true);
       for i:=0 to length(Params.Params)-1 do
         AccessExpr(Params.Params[i],rraRead);
       exit;
       end
-    else if TypeEl.ClassType=TPasPointerType then
+    else if C=TPasPointerType then
       begin
       if CheckStringOrPointerIndex(false) then exit;
       end;
@@ -8434,29 +11125,51 @@ begin
     ['[',GetResolverResultDescription(ResolvedValue,true)],Params);
 end;
 
-function TPasResolver.ResolveBracketOperatorClass(Params: TParamsExpr;
-  const ResolvedValue: TPasResolverResult; ClassScope: TPasClassScope;
-  Access: TResolvedRefAccess): boolean;
+function TPasResolver.ResolveBracketOperatorClassOrRec(Params: TParamsExpr;
+  const ResolvedValue: TPasResolverResult; Access: TResolvedRefAccess): boolean;
 var
   PropEl: TPasProperty;
   Value: TPasExpr;
+  Group: TPasGroupScope;
+  i: Integer;
+  Scope: TPasIdentifierScope;
+  HiType, LoType: TPasType;
+  IsClassOf: Boolean;
 begin
-  PropEl:=ClassScope.DefaultProperty;
-  if PropEl<>nil then
+  HiType:=ResolvedValue.HiTypeEl;
+  LoType:=ResolvedValue.LoTypeEl;
+  IsClassOf:=LoType.ClassType=TPasClassOfType;
+  if IsClassOf then
     begin
-    // class has default property
-    if (ResolvedValue.IdentEl is TPasType) and (not PropEl.IsClass) then
-      RaiseMsg(20170216152213,nIllegalQualifierAfter,sIllegalQualifierAfter,
-        ['[',GetResolverResultDescription(ResolvedValue,true)],Params);
-    Value:=Params.Value;
-    if Value.CustomData is TResolvedReference then
-      SetResolvedRefAccess(Value,TResolvedReference(Value.CustomData),rraRead);
-    CreateReference(PropEl,Params,Access);
-    CheckCallPropertyCompatibility(PropEl,Params,true);
-    FinishPropertyParamAccess(Params,PropEl);
-    exit(true);
+    HiType:=TPasClassOfType(LoType).DestType;
+    LoType:=ResolveAliasType(LoType);
     end;
-  Result:=false;
+
+  Group:=CreateGroupScope(HiType);
+  PropEl:=nil;
+  for i:=0 to Group.Count-1 do
+    begin
+    Scope:=Group.Scopes[i];
+    if Scope is TPasClassOrRecordScope then
+      begin
+      PropEl:=TPasClassOrRecordScope(Scope).DefaultProperty;
+      if PropEl<>nil then break;
+      end;
+    end;
+  Group.Free;
+  if PropEl=nil then exit(false);
+
+  // class/record/interface has default property
+  if (IsClassOf or (ResolvedValue.IdentEl is TPasType)) and (not PropEl.IsClass) then
+    RaiseMsg(20170216152213,nIllegalQualifierAfter,sIllegalQualifierAfter,
+      ['[',GetResolverResultDescription(ResolvedValue,true)],Params);
+  Value:=Params.Value;
+  if Value.CustomData is TResolvedReference then
+    SetResolvedRefAccess(Value,TResolvedReference(Value.CustomData),rraRead);
+  CreateReference(PropEl,Params,Access);
+  CheckCallPropertyCompatibility(PropEl,Params,true);
+  FinishPropertyParamAccess(Params,PropEl);
+  Result:=true;
 end;
 
 procedure TPasResolver.ResolveSetParamsExpr(Params: TParamsExpr);
@@ -8498,7 +11211,7 @@ procedure TPasResolver.ResolveRecordValues(El: TRecordValues);
       if SameText(Result.Name,aName) then
         exit;
       end;
-    if (RecType.VariantEl is TPasVariable) then
+    if RecType.VariantEl is TPasVariable then
       begin
       Result:=TPasVariable(RecType.VariantEl);
       if SameText(Result.Name,aName) then
@@ -8541,9 +11254,12 @@ begin
     Member:=GetMember(RecType,Field^.Name);
     if Member=nil then
       RaiseIdentifierNotFound(20180429104703,Field^.Name,Field^.NameExp);
-    if not (Member is TPasVariable) then
-      RaiseMsg(20180429121933,nVariableIdentifierExpected,sVariableIdentifierExpected,
+    if Member.ClassType<>TPasVariable then
+      RaiseMsg(20180429121933,nIdentifierXIsNotAnInstanceField,sIdentifierXIsNotAnInstanceField,
         [],Field^.ValueExp);
+    if TPasVariable(Member).VarModifiers*[vmClass,vmStatic]<>[] then
+      RaiseMsg(20190105221450,nIdentifierXIsNotAnInstanceField,sIdentifierXIsNotAnInstanceField,
+        ['record assignment'],Field^.ValueExp);
     CreateReference(Member,Field^.NameExp,rraAssign);
     // check duplicates
     for j:=0 to i-1 do
@@ -8560,7 +11276,9 @@ begin
   for i:=0 to RecType.Members.Count-1 do
     begin
     Member:=TPasElement(RecType.Members[i]);
-    if not (Member is TPasVariable) then continue;
+    if Member.ClassType<>TPasVariable then continue;
+    if TPasVariable(Member).VarModifiers*[vmClass,vmStatic]<>[] then
+      continue;
     j:=length(El.Fields)-1;
     while (j>=0) and not SameText(Member.Name,El.Fields[j].Name) do
       dec(j);
@@ -8581,35 +11299,66 @@ begin
     LogMsg(20180429121127,mtHint,nMissingFieldsX,sMissingFieldsX,[s],El);
 end;
 
+procedure TPasResolver.ResolveInlineSpecializeExpr(El: TInlineSpecializeExpr;
+  Access: TResolvedRefAccess);
+begin
+  // params are TPasTypes and already resolved
+  if El.Params.Count=0 then
+    RaiseMsg(20190916155014,nMissingParameterX,sMissingParameterX,['type'],El);
+
+  // resolve name
+  // Note: ResolveNameExpr considers the params
+  ResolveExpr(El.NameExpr,Access);
+end;
+
 function TPasResolver.ResolveAccessor(Expr: TPasExpr): TPasElement;
+
+  function SubResolvePrimitive(Prim: TPrimitiveExpr): TPasElement;
+  var
+    FindData: TPRFindData;
+    Ref: TResolvedReference;
+    Scope: TPasScope;
+    Abort: boolean;
+  begin
+    if Prim.Kind<>pekIdent then
+      RaiseXExpectedButYFound(20170216151746,'class',Prim.Value,Prim);
+    // search in class and ancestors, not in unit interface
+    Scope:=TopScope;
+    FindData:=Default(TPRFindData);
+    FindData.ErrorPosEl:=Expr;
+    Abort:=false;
+    Scope.IterateElements(Prim.Value,Scope,@OnFindFirst,@FindData,Abort);
+    Result:=FindData.Found;
+    if Result=nil then
+      RaiseIdentifierNotFound(20170216151749,Prim.Value,Prim);
+    Ref:=CreateReference(Result,Prim,rraRead);
+    CheckFoundElementVisibility(FindData,Ref);
+  end;
+
 var
   Prim: TPrimitiveExpr;
   DeclEl: TPasElement;
-  Identifier: TPasIdentifier;
-  Scope: TPasIdentifierScope;
 begin
   if Expr.ClassType=TBinaryExpr then
     begin
+    DeclEl:=nil;
     if (TBinaryExpr(Expr).left is TPrimitiveExpr) then
       begin
       Prim:=TPrimitiveExpr(TBinaryExpr(Expr).left);
-      if Prim.Kind<>pekIdent then
-        RaiseXExpectedButYFound(20170216151746,'class',Prim.Value,Prim);
-      Scope:=TopScope as TPasIdentifierScope;
-      // search in class and ancestors, not in unit interface
-      Identifier:=Scope.FindIdentifier(Prim.Value);
-      if Identifier=nil then
-        RaiseIdentifierNotFound(20170216151749,Prim.Value,Prim);
-      DeclEl:=Identifier.Element;
-      if DeclEl.ClassType<>TPasClassType then
+      DeclEl:=SubResolvePrimitive(Prim);
+      if not (DeclEl is TPasMembersType) then
         RaiseXExpectedButYFound(20170216151752,'class',GetElementTypeName(DeclEl),Prim);
-      CreateReference(DeclEl,Prim,rraRead);
       end
     else
       RaiseMsg(20170216151754,nIllegalQualifier,sIllegalQualifier,[OpcodeStrings[TBinaryExpr(Expr).OpCode]],Expr);
     if TBinaryExpr(Expr).OpCode<>eopSubIdent then
       RaiseMsg(20170216151757,nIllegalQualifier,sIllegalQualifier,[OpcodeStrings[TBinaryExpr(Expr).OpCode]],Expr);
-    PushClassDotScope(TPasClassType(DeclEl));
+    if DeclEl.ClassType=TPasClassType  then
+      PushClassDotScope(TPasClassType(DeclEl))
+    else if DeclEl.ClassType=TPasRecordType  then
+      PushRecordDotScope(TPasRecordType(DeclEl))
+    else
+      RaiseMsg(20190123145559,nIllegalQualifier,sIllegalQualifier,[OpcodeStrings[TBinaryExpr(Expr).OpCode]],Expr);
     Expr:=TBinaryExpr(Expr).right;
     Result:=ResolveAccessor(Expr);
     PopScope;
@@ -8617,16 +11366,7 @@ begin
   else if Expr.ClassType=TPrimitiveExpr then
     begin
     Prim:=TPrimitiveExpr(Expr);
-    if Prim.Kind<>pekIdent then
-      RaiseXExpectedButYFound(20170216151800,'identifier',Prim.Value,Prim);
-    Scope:=TopScope as TPasIdentifierScope;
-    // search in class and ancestors, not in unit interface
-    Identifier:=Scope.FindIdentifier(Prim.Value);
-    if Identifier=nil then
-      RaiseIdentifierNotFound(20170216151803,Prim.Value,Prim);
-    DeclEl:=Identifier.Element;
-    CreateReference(DeclEl,Prim,rraRead);
-    Result:=DeclEl;
+    Result:=SubResolvePrimitive(Prim);
     end
   else
     RaiseNotYetImplemented(20160922163436,Expr);
@@ -8696,9 +11436,10 @@ begin
     pekArrayParams:
       begin
       ComputeElement(Params.Value,ValueResolved,[]);
-      if IsDynArray(ValueResolved.LoTypeEl,false) then
-        // an element of a dynamic array is independent of the array variable
-        // an element of an open array depends on the argument
+      if IsDynArray(ValueResolved.LoTypeEl,false)
+          or (ValueResolved.BaseType=btPointer) then
+        // when accessing an element of a dynamic array the array is read
+        AccessExpr(Params.Value,rraRead)
       else
         AccessExpr(Params.Value,Access);
       // Note: an element of an open or static array or a string is connected to the variable
@@ -8710,12 +11451,14 @@ begin
       RaiseNotYetImplemented(20170403173831,Params);
     end;
     end
-  else if (C=TSelfExpr) or ((C=TPrimitiveExpr) and (TPrimitiveExpr(Expr).Kind=pekIdent)) then
+  else if (C=TPrimitiveExpr) and (TPrimitiveExpr(Expr).Kind=pekIdent) then
     // ok
   else if (Access in [rraRead,rraParamToUnknownProc])
       and ((C=TPrimitiveExpr)
         or (C=TNilExpr)
-        or (C=TBoolConstExpr)) then
+        or (C=TBoolConstExpr)
+        or (C=TProcedureExpr))
+        or (C=TInlineSpecializeExpr) then
     // ok
   else if C=TUnaryExpr then
     AccessExpr(TUnaryExpr(Expr).Operand,Access)
@@ -8788,6 +11531,8 @@ procedure TPasResolver.MarkArrayExprRecursive(Expr: TPasExpr;
         inc(RgIndex);
         if RgIndex>length(ArrayType.Ranges) then
           begin
+          if ArrayType.ElType=nil then
+            exit; // elements are not arrays
           ComputeElement(ArrayType.ElType,ResolvedElType,[rcType]);
           if (ResolvedElType.BaseType=btContext)
               and (ResolvedElType.LoTypeEl is TPasArrayType) then
@@ -8834,7 +11579,8 @@ var
   i: Integer;
   DeclEl: TPasElement;
   Proc: TPasProcedure;
-  aClassType: TPasClassType;
+  aClassOrRec: TPasMembersType;
+  ClassOrRecScope: TPasClassOrRecordScope;
 begin
   if IsElementSkipped(El) then exit;
   if El is TPasDeclarations then
@@ -8852,22 +11598,44 @@ begin
         end;
       end;
     end
-  else if El.ClassType=TPasClassType then
+  else if El is TPasMembersType then
     begin
-    aClassType:=TPasClassType(El);
-    if aClassType.ObjKind in [okInterface,okDispInterface] then exit;
-    for i:=0 to aClassType.Members.Count-1 do
+    aClassOrRec:=TPasMembersType(El);
+    if (aClassOrRec is TPasClassType) then
       begin
-      DeclEl:=TPasElement(aClassType.Members[i]);
+      if (TPasClassType(aClassOrRec).ObjKind in [okInterface,okDispInterface]) then
+        exit;
+      if TPasClassType(aClassOrRec).IsForward then
+        exit;
+      if TPasClassType(aClassOrRec).IsExternal then
+        exit;
+      end;
+    ClassOrRecScope:=aClassOrRec.CustomData as TPasClassOrRecordScope;
+    if ClassOrRecScope.SpecializedFromItem<>nil then
+      exit;
+    // finish implementation of (generic) class/record
+    if ClassOrRecScope.GenericStep<>psgsInterfaceParsed then
+      RaiseNotYetImplemented(20190804115324,El);
+    for i:=0 to aClassOrRec.Members.Count-1 do
+      begin
+      DeclEl:=TPasElement(aClassOrRec.Members[i]);
       if DeclEl is TPasProcedure then
         begin
         Proc:=TPasProcedure(DeclEl);
         if Proc.IsAbstract or Proc.IsExternal then continue;
         if TPasProcedureScope(Proc.CustomData).ImplProc=nil then
+          begin
+          {$IFDEF VerbosePasResolver}
+          writeln('TPasResolver.CheckPendingForwardProcs Proc.ParentPath=',Proc.PathName);
+          {$ENDIF}
           RaiseMsg(20170216152221,nForwardProcNotResolved,sForwardProcNotResolved,
             [GetElementTypeName(Proc),Proc.Name],Proc);
+          end;
         end;
       end;
+    ClassOrRecScope.GenericStep:=psgsImplementationParsed;
+    if ClassOrRecScope.SpecializedItems<>nil then
+      FinishSpecializations(ClassOrRecScope);
     end;
 end;
 
@@ -8889,6 +11657,26 @@ begin
     if Dest=El then
       RaiseMsg(20180422165758,nTypeCycleFound,sTypeCycleFound,[],El);
     CurEl:=Dest;
+    end;
+end;
+
+procedure TPasResolver.CheckGenericTemplateTypes(El: TPasGenericType);
+var
+  GenTemplates: TFPList;
+  i: Integer;
+  TemplType: TPasGenericTemplateType;
+begin
+  GenTemplates:=El.GenericTemplateTypes;
+  if (GenTemplates=nil) or (GenTemplates.Count=0) then
+    RaiseNotYetImplemented(20190726184902,El,'emty generic template list');
+
+  // template names must differ from generic type name
+  for i:=0 to GenTemplates.Count-1 do
+    begin
+    TemplType:=TPasGenericTemplateType(GenTemplates[i]);
+    if SameText(TemplType.Name,El.Name) then
+      RaiseMsg(20190801101444,nDuplicateIdentifier,sDuplicateIdentifier,[
+        TemplType.Name,GetElementSourcePosStr(El)],TemplType);
     end;
 end;
 
@@ -8928,6 +11716,10 @@ begin
     FinishSection(TPasSectionScope(TopScope).Element as TPasSection);
   if TopScope is TPasModuleScope then
     TPasModuleScope(TopScope).BoolSwitches:=CurrentParser.Scanner.CurrentBoolSwitches;
+  {$IFDEF VerbosePasResolver}
+  if FPendingForwardProcs.IndexOf(El)=0 then
+    RaiseNotYetImplemented(20190804114718,El);
+  {$ENDIF}
   FPendingForwardProcs.Add(El); // check forward declarations at the end
   Scope:=TPasSectionScope(PushScope(El,ScopeClass_Section));
   Scope.BoolSwitches:=CurrentParser.Scanner.CurrentBoolSwitches;
@@ -8950,37 +11742,129 @@ begin
   AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
 end;
 
-procedure TPasResolver.AddRecordType(El: TPasRecordType);
+procedure TPasResolver.AddArrayType(El: TPasArrayType; TypeParams: TFPList);
+var
+  Scope: TPasArrayScope;
+begin
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.AddArrayType ',GetObjName(El),' Parent=',GetObjName(El.Parent));
+  {$ENDIF}
+  if TypeParams<>nil then
+    begin
+    El.SetGenericTemplates(TypeParams);
+    TypeParams:=El.GenericTemplateTypes;
+    CheckGenericTemplateTypes(El);
+    end;
+  PopGenericParamScope(El);
+
+  if El.Name<>'' then begin
+    if not (TopScope is TPasIdentifierScope) then
+      RaiseInvalidScopeForElement(20190812215622,El);
+
+    AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
+
+    if TypeParams<>nil then
+      begin
+      Scope:=TPasArrayScope(PushScope(El,TPasArrayScope));
+      AddGenericTemplateIdentifiers(TypeParams,Scope);
+      end;
+  end else if TypeParams<>nil then
+    RaiseNotYetImplemented(20190812215851,El);
+end;
+
+procedure TPasResolver.AddRecordType(El: TPasRecordType; TypeParams: TFPList);
+var
+  Scope: TPasRecordScope;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddRecordType ',GetObjName(El),' Parent=',GetObjName(El.Parent));
   {$ENDIF}
+  if TypeParams<>nil then
+    begin
+    El.SetGenericTemplates(TypeParams);
+    TypeParams:=El.GenericTemplateTypes;
+    CheckGenericTemplateTypes(El);
+    end;
+  PopGenericParamScope(El);
+
   if not (TopScope is TPasIdentifierScope) then
     RaiseInvalidScopeForElement(20160922163508,El);
+
   if El.Name<>'' then begin
     AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
+    {$IFDEF VerbosePasResolver}
+    if FPendingForwardProcs.IndexOf(El)=0 then
+      RaiseNotYetImplemented(20190804114737,El);
+    {$ENDIF}
     FPendingForwardProcs.Add(El); // check forward declarations at the end
   end;
 
   if El.Parent.ClassType<>TPasVariant then
-    PushScope(El,TPasRecordScope);
+    begin
+    Scope:=TPasRecordScope(PushScope(El,TPasRecordScope));
+    Scope.VisibilityContext:=El;
+    if TypeParams<>nil then
+      begin
+      // generic array
+      if El.Name='' then
+        RaiseNotYetImplemented(20190812220821,El);
+      AddGenericTemplateIdentifiers(TypeParams,Scope);
+      end;
+    end;
 end;
 
-procedure TPasResolver.AddClassType(El: TPasClassType);
+procedure TPasResolver.AddClassType(El: TPasClassType; TypeParams: TFPList);
 // Note: IsForward is not yet set!
 var
   Duplicate: TPasIdentifier;
   ForwardDecl: TPasClassType;
-  CurScope: TPasIdentifierScope;
+  CurScope, LocalScope: TPasIdentifierScope;
+  GenTemplCnt, i, j: Integer;
+  ClassScope: TPasClassScope;
+  ForwGenTempl, ActGenTempl: TPasGenericTemplateType;
+  ForwConstraints, ActConstraints: TPasElementArray;
+  DuplEl, ForwConstraint, ActConstraint: TPasElement;
+  ForwToken, ActToken: TToken;
+  ForwConstraintResolved, ActConstraintResolved: TPasResolverResult;
 begin
+  // Beware: El.ObjKind is not yet set!
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.AddClassType ',GetObjName(El),' Parent=',GetObjName(El.Parent),' ',GetElementSourcePosStr(El));
+  //writeln('TPasResolver.AddClassType ',GetObjName(El),' Parent=',GetObjName(El.Parent),' ',GetElementSourcePosStr(El));
   {$ENDIF}
   if not (TopScope is TPasIdentifierScope) then
     RaiseInvalidScopeForElement(20160922163510,El);
+  if TypeParams=nil then
+    begin
+    GenTemplCnt:=0;
+    if TopScope is TPasGenericParamsScope then
+      RaiseNotYetImplemented(20190831205006,El,GetObjName(TopScope));
+    CurScope:=TPasIdentifierScope(TopScope);
+    end
+  else
+    begin
+    if not (TopScope is TPasGenericParamsScope) then
+      RaiseInvalidScopeForElement(20190831205038,El,GetObjName(TopScope));
+    CurScope:=TPasIdentifierScope(Scopes[ScopeCount-2]);
+    GenTemplCnt:=TypeParams.Count;
+    El.SetGenericTemplates(TypeParams);
+    TypeParams:=El.GenericTemplateTypes;
+    CheckGenericTemplateTypes(El);
+    end;
 
-  CurScope:=TPasIdentifierScope(TopScope);
-  Duplicate:=CurScope.FindLocalIdentifier(El.Name);
+  if CurScope is TPasGroupScope then
+    LocalScope:=TPasGroupScope(CurScope).Scopes[0]
+  else
+    LocalScope:=CurScope;
+  Duplicate:=LocalScope.FindLocalIdentifier(El.Name);
+  while Duplicate<>nil do
+    begin
+    DuplEl:=Duplicate.Element;
+    if (DuplEl is TPasGenericType)
+        and (GetTypeParameterCount(TPasGenericType(DuplEl))=GenTemplCnt) then
+      break;
+    Duplicate:=Duplicate.NextSameIdentifier;
+    end;
+
   //if Duplicate<>nil then
     //writeln('  Duplicate=',GetObjName(Duplicate.Element),' ',ord(Duplicate.Kind));
 
@@ -8995,8 +11879,56 @@ begin
     {$IFDEF VerbosePasResolver}
     writeln('  Resolving Forward=',GetObjName(ForwardDecl),' ',GetElementSourcePosStr(ForwardDecl));
     {$ENDIF}
+    if GenTemplCnt>0 then
+      begin
+      // check generic constraints match exactly
+      for i:=0 to GenTemplCnt-1 do
+        begin
+        ForwGenTempl:=TPasGenericTemplateType(ForwardDecl.GenericTemplateTypes[i]);
+        ActGenTempl:=TPasGenericTemplateType(TypeParams[i]);
+        if not SameText(ForwGenTempl.Name,ActGenTempl.Name) then
+          RaiseMsg(20190814114811,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+            [GetTypeDescription(ActGenTempl),GetElementSourcePosStr(ForwGenTempl)],ActGenTempl);
+        ForwConstraints:=ForwGenTempl.Constraints;
+        ActConstraints:=ActGenTempl.Constraints;
+        if length(ForwConstraints)<>length(ActConstraints) then
+          RaiseMsg(20190814121031,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+            [GetTypeDescription(ActGenTempl),GetElementSourcePosStr(ForwGenTempl)],ActGenTempl);
+        for j:=0 to length(ForwConstraints)-1 do
+          begin
+          ForwConstraint:=ForwConstraints[j];
+          ActConstraint:=ActConstraints[j];
+          ForwToken:=GetGenericConstraintKeyword(ForwConstraint);
+          ActToken:=GetGenericConstraintKeyword(ActConstraint);
+          if ForwToken<>ActToken then
+            RaiseMsg(20190814121139,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+              [GetTypeDescription(ActGenTempl),GetElementSourcePosStr(ForwConstraint)],
+              GetGenericConstraintErrorEl(ActConstraint,ActGenTempl));
+          if ForwToken=tkEOF then
+            begin
+            ComputeElement(ForwConstraint,ForwConstraintResolved,[rcType]);
+            ComputeElement(ActConstraint,ActConstraintResolved,[rcType]);
+            if CheckElTypeCompatibility(ForwConstraintResolved.LoTypeEl,
+                ActConstraintResolved.LoTypeEl,prraNone)<>cExact then
+              RaiseMsg(20190814121509,nDeclOfXDiffersFromPrevAtY,sDeclOfXDiffersFromPrevAtY,
+                [GetTypeDescription(ActGenTempl),
+                GetElementSourcePosStr(GetGenericConstraintErrorEl(ForwConstraint,ForwGenTempl))],
+                GetGenericConstraintErrorEl(ActConstraint,ActGenTempl));
+            end;
+          end;
+        end;
+      end;
+
     if ForwardDecl.CustomData<>nil then
-      RaiseInternalError(20160922163513,'forward class has already customdata');
+      begin
+      // move the classscope to the real declaration
+      ClassScope:=ForwardDecl.CustomData as TPasClassScope;
+      if El.CustomData<>nil then
+        RaiseInternalError(20190803202959,'real class has already customdata');
+      ForwardDecl.CustomData:=nil;
+      El.CustomData:=ClassScope;
+      ClassScope.Element:=El;
+      end;
     // create a ref from the forward to the real declaration
     CreateReference(El,ForwardDecl,rraRead);
     // change the cache item
@@ -9005,6 +11937,16 @@ begin
   else
     AddIdentifier(CurScope,El.Name,El,pikSimple);
 
+  if TypeParams<>nil then
+    begin
+    // Parsing the ancestor+interface list requires the type params.
+    // AddGenericTemplateIdentifiers not needed, already in TPasGenericParamsScope
+    end;
+
+  {$IFDEF VerbosePasResolver}
+  if FPendingForwardProcs.IndexOf(El)>=0 then
+    RaiseNotYetImplemented(20190804114746,El);
+  {$ENDIF}
   FPendingForwardProcs.Add(El); // check forward declarations at the end
 end;
 
@@ -9037,6 +11979,7 @@ end;
 procedure TPasResolver.AddEnumType(El: TPasEnumType);
 var
   CanonicalSet: TPasSetType;
+  EnumScope: TPasEnumTypeScope;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddEnumType ',GetObjName(El));
@@ -9044,7 +11987,7 @@ begin
   if not (TopScope is TPasIdentifierScope) then
     RaiseInvalidScopeForElement(20160929205732,El);
   AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
-  PushScope(El,TPasEnumTypeScope);
+  EnumScope:=TPasEnumTypeScope(PushScope(El,TPasEnumTypeScope));
   // add canonical set
   if El.Parent is TPasSetType then
     begin
@@ -9059,7 +12002,7 @@ begin
     CanonicalSet.EnumType:=El;
     El.AddRef{$IFDEF CheckPasTreeRefCount}('TPasSetType.EnumType'){$ENDIF};
     end;
-  TPasEnumTypeScope(TopScope).CanonicalSet:=CanonicalSet;
+  EnumScope.CanonicalSet:=CanonicalSet;
 end;
 
 procedure TPasResolver.AddEnumValue(El: TPasEnumValue);
@@ -9067,6 +12010,7 @@ var
   i: Integer;
   Scope: TPasScope;
   Old: TPasIdentifier;
+  ClassOrRec: TPasMembersType;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddEnumValue ',GetObjName(El));
@@ -9084,12 +12028,17 @@ begin
   for i:=ScopeCount-2 downto 0 do
     begin
     Scope:=Scopes[i];
-    if (Scope is TPasClassScope) or (Scope is TPasRecordScope) then
+    if Scope is TPasGroupScope then
+      Scope:=TPasGroupScope(Scope).Scopes[0];
+    if Scope is TPasClassOrRecordScope then
       begin
       // class or record: add if not duplicate
       Old:=TPasIdentifierScope(Scope).FindIdentifier(El.Name);
       if Old=nil then
         TPasIdentifierScope(Scope).AddIdentifier(El.Name,El,pikSimple);
+      ClassOrRec:=Scope.Element as TPasMembersType;
+      if GetTypeParameterCount(ClassOrRec)>0 then
+        break; // enums in generics do not propagate
       end
     else if (Scope is TPasProcedureScope) or (Scope is TPasSectionScope) then
       begin
@@ -9113,98 +12062,411 @@ begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddProperty ',GetObjName(El));
   {$ENDIF}
-  if not (TopScope is TPasClassScope) then
+  if not (GetLocalScope is TPasClassOrRecordScope) then
     RaiseInvalidScopeForElement(20160922163520,El);
   AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
   PushScope(El,TPasPropertyScope);
 end;
 
-procedure TPasResolver.AddProcedure(El: TPasProcedure);
+procedure TPasResolver.AddProcedureType(El: TPasProcedureType;
+  TypeParams: TFPList);
+var
+  Scope: TPasProcTypeScope;
+begin
+  if El.Name<>'' then begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.AddProcedureType ',GetObjName(El),' Parent=',GetObjName(El.Parent));
+    {$ENDIF}
+    if El.Parent is TPasProcedure then
+      RaiseNotYetImplemented(20190911102852,El,GetObjPath(El.Parent));
+    if TypeParams<>nil then
+      begin
+      El.SetGenericTemplates(TypeParams);
+      TypeParams:=El.GenericTemplateTypes;
+      CheckGenericTemplateTypes(El);
+      end;
+    PopGenericParamScope(El);
+
+    if not (TopScope is TPasIdentifierScope) then
+      RaiseInvalidScopeForElement(20190813193703,El);
+
+    AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
+
+    if TypeParams<>nil then
+      begin
+      Scope:=TPasProcTypeScope(PushScope(El,TPasProcTypeScope));
+      AddGenericTemplateIdentifiers(TypeParams,Scope);
+      end;
+  end else if TypeParams<>nil then
+    RaiseNotYetImplemented(20190813193745,El);
+end;
+
+procedure TPasResolver.AddProcedure(El: TPasProcedure; TypeParams: TFPList);
+
+  procedure AddClassConDestructor(ClassOrRecordScope: TPasClassOrRecordScope;
+    var Field: TPasProcedure);
+  begin
+    if Field<>nil then
+      RaiseMsg(20181231144353,nMultipleXinTypeYNameZCAandB,
+        sMultipleXinTypeYNameZCAandB,[GetElementTypeName(El),
+          GetElementTypeName(ClassOrRecordScope.Element),
+          ClassOrRecordScope.Element.Name,Field.Name,El.Name],El);
+    Field:=El;
+  end;
+
+  function FindBestMembersType(const ClassOrRecName: string;
+    TypeParamCnt: integer; Scope: TPasIdentifierScope;
+    var Best: TPasMembersType; ErrorPos: TPasElement): integer;
+  // returns number of candidates
+  var
+    Identifier: TPasIdentifier;
+    CurEl: TPasElement;
+  begin
+    Result:=0;
+    Identifier:=Scope.FindLocalIdentifier(ClassOrRecName);
+    while Identifier<>nil do
+      begin
+      CurEl:=Identifier.Element;
+      if not (CurEl is TPasMembersType) then
+        RaiseXExpectedButYFound(20170216152557,
+          'class',CurEl.Name+':'+GetElementTypeName(CurEl),ErrorPos);
+      inc(Result);
+      if Best=nil then
+        Best:=TPasMembersType(CurEl);
+      if GetTypeParameterCount(TPasGenericType(CurEl))=TypeParamCnt then
+        begin
+        // fits
+        Best:=TPasMembersType(CurEl);
+        exit;
+        end;
+      Identifier:=Identifier.NextSameIdentifier;
+      end;
+  end;
+
+  function FindMembersType(Scope: TPasIdentifierScope;
+    const ClassOrRecName: string; TypeParamCnt: integer; IsDelphi: boolean;
+    ErrorPos: TPasElement): TPasMembersType;
+  var
+    Found: integer;
+  begin
+    Result:=nil;
+    if Scope<>nil then
+      Found:=FindBestMembersType(ClassOrRecName,TypeParamCnt,Scope,Result,ErrorPos)
+    else if TopScope is TPasIdentifierScope then
+      begin
+      Found:=FindBestMembersType(ClassOrRecName,TypeParamCnt,
+          TPasIdentifierScope(TopScope),Result,ErrorPos);
+      if (Result=nil) or (TypeParamCnt<>GetTypeParameterCount(Result)) then
+        begin
+        if (TopScope is TPasSectionScope)
+            and (ScopeCount>1) and (Scopes[ScopeCount-2] is TPasSectionScope) then
+          // search in unit interface too
+          Found:=Found+FindBestMembersType(ClassOrRecName,TypeParamCnt,
+                TPasIdentifierScope(Scopes[ScopeCount-2]),Result,ErrorPos);
+        end;
+      end;
+    if Result=nil then
+      RaiseMsg(20190818112356,nClassXNotFoundInThisModule,sClassXNotFoundInThisModule,
+               [ClassOrRecName+GetGenericParamCommas(TypeParamCnt)],ErrorPos);
+    if TypeParamCnt=GetTypeParameterCount(Result) then
+      exit; // fits perfectly
+    if (not IsDelphi) and (TypeParamCnt=0) and (Found=1) then
+      exit; // in objfpc type params can be omitted if there is only one type
+    // found one or more, but type param count do not fit
+    RaiseMsg(20190818112856,nXExpectedButYFound,sXExpectedButYFound,
+      [Result.Name+GetGenericParamCommas(GetTypeParameterCount(Result)),
+       ClassOrRecName+GetGenericParamCommas(TypeParamCnt)],ErrorPos);
+  end;
+
+  procedure CheckTemplateNames;
+  var
+    i, j: Integer;
+    NamePart: TProcedureNamePart;
+    TemplTypes: TFPList;
+    TemplType: TPasGenericTemplateType;
+  begin
+    for i:=0 to TypeParams.Count-1 do
+      begin
+      NamePart:=TProcedureNamePart(TypeParams[i]);
+      TemplTypes:=NamePart.Templates;
+      if TemplTypes=nil then continue;
+      for j:=0 to TemplTypes.Count-1 do
+        begin
+        TemplType:=TPasGenericTemplateType(TemplTypes[j]);
+        if SameText(TemplType.Name,El.Name) then
+          RaiseMsg(20190912174817,nDuplicateIdentifier,sDuplicateIdentifier,
+            [],TemplType);
+        end;
+      end;
+  end;
+
 var
   ProcName, aClassName: String;
   p: SizeInt;
-  CurClassType: TPasClassType;
+  ClassOrRecType: TPasMembersType;
   ProcScope: TPasProcedureScope;
-  HasDot: Boolean;
-  CurEl: TPasElement;
-  Identifier: TPasIdentifier;
-  CurClassScope: TPasClassScope;
+  HasDot, IsClassConDestructor, IsDelphi: Boolean;
+  ClassOrRecScope: TPasClassOrRecordScope;
+  C: TClass;
+  CurScope: TPasScope;
+  LocalScope: TPasScope;
+  Level, TypeParamCount, i: Integer;
+  NamePart: TProcedureNamePart;
+  TemplType, FoundTemplType: TPasGenericTemplateType;
+  NestedMembersScope: TPasGroupScope;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddProcedure ',GetObjName(El));
   {$ENDIF}
-  if not (TopScope is TPasIdentifierScope) then
-    RaiseInvalidScopeForElement(20160922163522,El);
-  // Note: El.ProcType is nil !
+
+  if TypeParams<>nil then
+    begin
+    // move type param elements to El
+    El.SetNameParts(TypeParams);
+    TypeParams:=El.NameParts;
+    if TopScope is TPasGenericParamsScope then
+      PopScope;
+    CheckTemplateNames;
+    end;
+
+  CurScope:=TopScope;
+  if CurScope.ClassType=TPasGroupScope then
+    LocalScope:=TPasGroupScope(CurScope).Scopes[0]
+  else
+    LocalScope:=CurScope;
+
   ProcName:=El.Name;
+  if El.Name<>'' then
+    begin
+    // named proc
+    if not (LocalScope is TPasIdentifierScope) then
+      RaiseInvalidScopeForElement(20160922163522,El);
+    end
+  else
+    begin
+    // anonymous proc
+    if TypeParams<>nil then
+      RaiseNotYetImplemented(20190818101856,El);
+    C:=LocalScope.ClassType;
+    if (C=ScopeClass_InitialFinalization)
+        or C.InheritsFrom(TPasProcedureScope)
+        or (C=TPasWithScope)
+        or (C=ScopeClass_WithExpr)
+        or (C=TPasExceptOnScope)
+        or (C=TPasForLoopScope) then
+      // ok
+    else
+      RaiseInvalidScopeForElement(20181210173134,El);
+    end;
+
+  // Note: El.ProcType is nil !  It is parsed later.
+
   HasDot:=Pos('.',ProcName)>1;
-  if not HasDot then
-    AddIdentifier(TPasIdentifierScope(TopScope),ProcName,El,pikProc);
-  ProcScope:=TPasProcedureScope(PushScope(El,FScopeClass_Proc));
-  ProcScope.ModeSwitches:=CurrentParser.CurrentModeswitches;
+  if (TypeParams<>nil) then
+    if HasDot<>(TypeParams.Count>1) then
+      RaiseNotYetImplemented(20190818093923,El);
+  IsClassConDestructor:=(El.ClassType=TPasClassConstructor)
+      or (El.ClassType=TPasClassDestructor);
+
+  ClassOrRecType:=nil;
+  if El.CustomData is TPasProcedureScope then
+    begin
+    // adding a specialized implementation proc
+    ProcScope:=TPasProcedureScope(El.CustomData);
+    if ProcScope.DeclarationProc<>nil then
+      TypeParams:=ProcScope.DeclarationProc.NameParts;
+    ClassOrRecScope:=ProcScope.ClassRecScope;
+    if ClassOrRecScope<>nil then
+      begin
+      ClassOrRecType:=TPasMembersType(ClassOrRecScope.Element);
+      if GetTypeParameterCount(ClassOrRecType)>0 then
+        RaiseNotYetImplemented(20190804175518,El);
+      if ProcScope.GroupScope<>nil then
+        RaiseNotYetImplemented(20190804175451,El);
+      if (not HasDot) and IsClassConDestructor then
+        begin
+        if El.ClassType=TPasClassConstructor then
+          AddClassConDestructor(ClassOrRecScope,TPasProcedure(ClassOrRecScope.ClassConstructor))
+        else
+          AddClassConDestructor(ClassOrRecScope,TPasProcedure(ClassOrRecScope.ClassDestructor));
+        end;
+      end;
+
+    PushScope(ProcScope);
+    end
+  else
+    begin
+    IsDelphi:=msDelphi in CurrentParser.CurrentModeswitches;
+
+    if (not HasDot) and IsClassConDestructor then
+      begin
+      if ProcName='' then
+        RaiseNotYetImplemented(20181231145302,El);
+      if not (LocalScope is TPasClassOrRecordScope) then
+        RaiseInvalidScopeForElement(20181231143831,El);
+      ClassOrRecScope:=TPasClassOrRecordScope(LocalScope);
+      if El.ClassType=TPasClassConstructor then
+        AddClassConDestructor(ClassOrRecScope,TPasProcedure(ClassOrRecScope.ClassConstructor))
+      else
+        AddClassConDestructor(ClassOrRecScope,TPasProcedure(ClassOrRecScope.ClassDestructor));
+      if TypeParams<>nil then
+        RaiseMsg(20190818094753,nTypeParamsNotAllowedOnX,sTypeParamsNotAllowedOnX,
+          [El.ElementTypeName],El);
+      end;
+
+    if (not HasDot) and (ProcName<>'')
+        and not IsClassConDestructor // the name of a class con/destructor is irrelevant and cannot be referenced
+    then
+      begin
+      // add proc name to scope
+      AddIdentifier(TPasIdentifierScope(CurScope),ProcName,El,pikProc);
+      end;
+
+    ProcScope:=TPasProcedureScope(CreateScope(El,FScopeClass_Proc));
+    ProcScope.ModeSwitches:=CurrentParser.CurrentModeswitches;
+    if HasDot then
+      begin
+      // method implementation -> search class
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.AddProcedure searching class of "',ProcName,'" ...');
+      {$ENDIF}
+      ClassOrRecType:=nil;
+      Level:=0;
+      repeat
+        inc(Level);
+        p:=Pos('.',ProcName);
+        if p<1 then
+          begin
+          if ClassOrRecType=nil then
+            RaiseInternalError(20161013170829);
+          break;
+          end;
+        aClassName:=LeftStr(ProcName,p-1);
+        Delete(ProcName,1,p);
+        TypeParamCount:=0;
+        if TypeParams<>nil then
+          begin
+          // e.g. aclassname<T>.
+          if Level>TypeParams.Count then
+            RaiseNotYetImplemented(20190818122217,El);
+          NamePart:=TProcedureNamePart(TypeParams[Level-1]);
+          if NamePart.Name<>aClassName then
+            RaiseNotYetImplemented(20190818102541,El,IntToStr(Level)+': '+NamePart.Name+'<>'+aClassName);
+          if NamePart.Templates<>nil then
+            begin
+            TypeParamCount:=NamePart.Templates.Count;
+            for i:=0 to TypeParamCount-1 do
+              begin
+              TemplType:=TPasGenericTemplateType(NamePart.Templates[i]);
+              if length(TemplType.Constraints)>0 then
+                RaiseMsg(20190818102850,nIllegalQualifierAfter,sIllegalQualifierAfter,
+                  [':',TemplType.name],TemplType);
+              end;
+            end;
+          end
+        else
+          NamePart:=nil;
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.AddProcedure searching class "',aClassName,GetGenericParamCommas(TypeParamCount),'" ProcName="',ProcName,'" ...');
+        {$ENDIF}
+        if not IsValidIdent(aClassName) then
+          RaiseNotYetImplemented(20161013170844,El);
+
+        if ClassOrRecType<>nil then
+          begin
+          ClassOrRecScope:=TPasClassOrRecordScope(ClassOrRecType.CustomData);
+          ClassOrRecType:=FindMembersType(ClassOrRecScope,aClassName,
+                                          TypeParamCount,IsDelphi,El);
+          end
+        else
+          ClassOrRecType:=FindMembersType(nil,aClassName,
+                                          TypeParamCount,IsDelphi,El);
+
+        if ClassOrRecType is TPasClassType then
+          begin
+          if not (TPasClassType(ClassOrRecType).ObjKind in
+              ([okClass]+okAllHelpers)) then
+            begin
+            aClassName:=LeftStr(El.Name,length(El.Name)-length(ProcName)-1);
+            RaiseXExpectedButYFound(20180321161722,'class',
+              aClassname+GetGenericParamCommas(GetTypeParameterCount(ClassOrRecType))+':'+GetElementTypeName(ClassOrRecType),El);
+            end
+          end;
+        if ClassOrRecType.GetModule<>El.GetModule then
+          RaiseNotYetImplemented(20190818120051,El);
+        if NamePart<>nil then
+          begin
+          // check that all type param names match
+          for i:=0 to TypeParamCount-1 do
+            begin
+            TemplType:=TPasGenericTemplateType(NamePart.Templates[i]);
+            FoundTemplType:=TPasGenericTemplateType(ClassOrRecType.GenericTemplateTypes[i]);
+            if not SameText(TemplType.Name,FoundTemplType.Name) then
+              RaiseMsg(20190822014652,nXExpectedButYFound,
+                sXExpectedButYFound,[FoundTemplType.Name,TemplType.Name],TemplType);
+            end;
+          end;
+
+      until false;
+
+      if not IsValidIdent(ProcName) then
+        RaiseNotYetImplemented(20161013170956,El);
+
+      ProcScope.VisibilityContext:=ClassOrRecType;
+      ProcScope.ClassRecScope:=NoNil(ClassOrRecType.CustomData) as TPasClassOrRecordScope;
+
+      if TypeParams<>nil then
+        begin
+        if Level<>TypeParams.Count then
+          RaiseNotYetImplemented(20190818122315,El);
+        NamePart:=TProcedureNamePart(TypeParams[Level-1]);
+        if NamePart.Name<>ProcName then
+          RaiseNotYetImplemented(20190818122551,El,IntToStr(Level)+': '+NamePart.Name+'<>'+ProcName);
+        end;
+
+      end
+    else
+      begin
+      // HasDot=false
+      end;
+    PushScope(ProcScope);
+    end;// end source proc, not specialized
+
   if HasDot then
     begin
-    // method implementation -> search class
-    {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.AddProcedure searching class of "',ProcName,'" ...');
-    {$ENDIF}
-    CurClassType:=nil;
-    repeat
-      p:=Pos('.',ProcName);
-      if p<1 then
-        begin
-        if CurClassType=nil then
-          RaiseInternalError(20161013170829);
-        break;
-        end;
-      aClassName:=LeftStr(ProcName,p-1);
-      Delete(ProcName,1,p);
-      {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.AddProcedure searching class "',aClassName,'" ProcName="',ProcName,'" ...');
-      {$ENDIF}
-      if not IsValidIdent(aClassName) then
-        RaiseNotYetImplemented(20161013170844,El);
+    // create GroupScope
+    if TopScope<>ProcScope then
+      RaiseNotYetImplemented(20191014235935,El,GetObjName(TopScope));
+    ProcScope.GroupScope:=CreateGroupScope(ClassOrRecType);
+    if ClassOrRecType.Parent is TPasMembersType then
+      begin
+      // nested class
+      ClassOrRecType:=TPasMembersType(ClassOrRecType.Parent);
+      NestedMembersScope:=CreateGroupScope(ClassOrRecType);
+      ProcScope.NestedMembersScope:=NestedMembersScope;
+      NestedMembersScope.OnlyTypeMembers:=true;
+      // Delphi searches the parent class scopes *after* the section scopes
+      // and before the module scope - sigh
+      // -> Move scope between module scope and section scope
+      i:=0;
+      while (i<ScopeCount) and not (FScopes[i] is TPasModuleScope) do
+        inc(i);
+      InsertScope(NestedMembersScope,i+1);
 
-      if CurClassType<>nil then
+      while ClassOrRecType.Parent is TPasMembersType do
         begin
-        CurClassScope:=TPasClassScope(CurClassType.CustomData);
-        Identifier:=CurClassScope.FindLocalIdentifier(aClassName);
-        if Identifier=nil then
-          RaiseIdentifierNotFound(20180430130635,aClassName,El);
-        CurEl:=Identifier.Element;
-        end
-      else
-        CurEl:=FindElementWithoutParams(aClassName,El,false);
-
-      if not (CurEl is TPasClassType) then
-        begin
-        aClassName:=LeftStr(El.Name,length(El.Name)-length(ProcName)-1);
-        {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.AddProcedure searching class "',aClassName,'" ProcName="',ProcName,'" found: '+GetObjName(CurEl));
-        {$ENDIF}
-        RaiseXExpectedButYFound(20170216152557,
-          'class',aClassname+':'+GetElementTypeName(CurEl),El);
+        ClassOrRecType:=TPasMembersType(ClassOrRecType.Parent);
+        GroupScope_AddTypeAndAncestors(NestedMembersScope,ClassOrRecType);
         end;
-      CurClassType:=TPasClassType(CurEl);
-      if CurClassType.ObjKind<>okClass then
-        begin
-        aClassName:=LeftStr(El.Name,length(El.Name)-length(ProcName)-1);
-        RaiseXExpectedButYFound(20180321161722,
-          'class',aClassname+':'+GetElementTypeName(CurEl),El);
-        end;
-      if CurClassType.GetModule<>El.GetModule then
-        begin
-        aClassName:=LeftStr(El.Name,length(El.Name)-length(ProcName)-1);
-        RaiseMsg(20180211230432,nMethodClassXInOtherUnitY,sMethodClassXInOtherUnitY,
-          [aClassName,CurClassType.GetModule.Name],El);
-        end;
-    until false;
+      end;
+    end;
 
-    if not IsValidIdent(ProcName) then
-      RaiseNotYetImplemented(20161013170956,El);
-
-    ProcScope.VisibilityContext:=CurClassType;
-    ProcScope.ClassScope:=NoNil(CurClassType.CustomData) as TPasClassScope;
+  // add generic params to scope
+  if TypeParams<>nil then
+    begin
+    NamePart:=TProcedureNamePart(TypeParams[TypeParams.Count-1]);
+    if NamePart<>nil then
+      AddGenericTemplateIdentifiers(NamePart.Templates,ProcScope);
     end;
 end;
 
@@ -9213,28 +12475,30 @@ var
   ProcType: TPasProcedureType;
   i: Integer;
   Arg: TPasArgument;
+  CurScope: TPasScope;
 begin
   if (El.Name='') then
     RaiseInternalError(20160922163526,GetObjName(El));
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddArgument ',GetObjName(El));
   {$ENDIF}
-  if (TopScope=nil) then
+  CurScope:=TopScope;
+  if (CurScope=nil) then
     RaiseInvalidScopeForElement(20160922163529,El);
   if El.Parent.ClassType=TPasProperty then
     begin
-    if TopScope.ClassType<>TPasPropertyScope then
+    if CurScope.ClassType<>TPasPropertyScope then
       RaiseInvalidScopeForElement(20161014124530,El);
-    AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
+    AddIdentifier(TPasIdentifierScope(CurScope),El.Name,El,pikSimple);
     end
   else if El.Parent is TPasProcedureType then
     begin
     ProcType:=TPasProcedureType(El.Parent);
     if ProcType.Parent is TPasProcedure then
       begin
-      if TopScope.ClassType<>FScopeClass_Proc then
+      if CurScope.ClassType<>FScopeClass_Proc then
         RaiseInvalidScopeForElement(20160922163529,El,GetObjName(TopScope));
-      AddIdentifier(TPasIdentifierScope(TopScope),El.Name,El,pikSimple);
+      AddIdentifier(TPasIdentifierScope(CurScope),El.Name,El,pikSimple);
       end
     else
       begin
@@ -9251,8 +12515,11 @@ begin
 end;
 
 procedure TPasResolver.AddFunctionResult(El: TPasResultElement);
+var
+  CurScope: TPasScope;
 begin
-  if TopScope.ClassType<>FScopeClass_Proc then exit;
+  CurScope:=TopScope;
+  if CurScope.ClassType<>FScopeClass_Proc then exit;
   if El.Parent is TPasProcedureType then
     begin
     if not (El.Parent.Parent is TPasProcedure) then
@@ -9260,12 +12527,45 @@ begin
     end
   else if not (El.Parent is TPasProcedure) then
     exit;
-  AddIdentifier(TPasProcedureScope(TopScope),ResolverResultVar,El,pikSimple);
+  AddIdentifier(TPasProcedureScope(CurScope),ResolverResultVar,El,pikSimple);
+end;
+
+procedure TPasResolver.AddGenericTemplateType(El: TPasGenericTemplateType);
+var
+  ParamScope: TPasGenericParamsScope;
+  OldIdentifier: TPasIdentifier;
+begin
+  if TopScope is TPasGenericParamsScope then
+    begin
+    ParamScope:=TPasGenericParamsScope(TopScope);
+    if ParamScope.Element.Parent<>El.Parent then
+      RaiseNotYetImplemented(20190831203132,El,GetObjName(ParamScope.Element));
+    end
+  else
+    begin
+    if El.CustomData<>nil then
+      RaiseNotYetImplemented(20190831202627,El,GetObjName(El.CustomData));
+    ParamScope:=TPasGenericParamsScope.Create;
+    AddResolveData(El,ParamScope,lkModule);
+    PushScope(ParamScope);
+    end;
+  OldIdentifier:=ParamScope.FindIdentifier(El.Name);
+  if OldIdentifier<>nil then
+    RaiseMsg(20190831202920,nDuplicateIdentifier,sDuplicateIdentifier,
+      [OldIdentifier.Identifier,GetElementSourcePosStr(OldIdentifier.Element)],El);
+  ParamScope.AddIdentifier(El.Name,El,pikSimple);
 end;
 
 procedure TPasResolver.AddExceptOn(El: TPasImplExceptOn);
 begin
   PushScope(El,TPasExceptOnScope);
+end;
+
+procedure TPasResolver.AddWithDo(El: TPasImplWithDo);
+begin
+  if TPasWithScope.FreeOnPop then
+    RaiseInternalError(20181210162344);
+  PushScope(El,TPasWithScope);
 end;
 
 procedure TPasResolver.AddProcedureBody(El: TProcedureBody);
@@ -9354,6 +12654,28 @@ begin
 
   //writeln('TPasResolver.ComputeBinaryExpr ',OpcodeStrings[Bin.OpCode],' Left=',GetResolverResultDbg(LeftResolved),' Right=',GetResolverResultDbg(RightResolved));
 
+  if IsGenericTemplType(LeftResolved) or IsGenericTemplType(RightResolved) then
+    begin
+    // cannot yet be decided
+    case Bin.OpCode of
+    eopEqual, eopNotEqual,
+    eopLessThan,eopGreaterThan, eopLessthanEqual,eopGreaterThanEqual,
+    eopIn,eopIs:
+      begin
+      SetBaseType(btBoolean);
+      exit;
+      end;
+    eopAs:
+      begin
+      SetRightValueExpr([rrfReadable]);
+      exit;
+      end;
+    end;
+    ResolvedEl:=LeftResolved;
+    ResolvedEl.Flags:=ResolvedEl.Flags-[rrfWritable];
+    exit;
+    end;
+
   if LeftResolved.BaseType in btAllInteger then
     begin
     if (rrfReadable in LeftResolved.Flags)
@@ -9414,7 +12736,7 @@ begin
         else if RightResolved.BaseType=btPointer then
           begin
           if (Bin.OpCode in [eopAdd,eopSubtract])
-              and (bsPointerMath in GetElBoolSwitches(Bin)) then
+              and ElHasBoolSwitch(Bin,bsPointerMath) then
             begin
             // integer+CanonicalPointer
             SetResolverValueExpr(ResolvedEl,btPointer,
@@ -9428,7 +12750,7 @@ begin
           if RightTypeEl.ClassType=TPasPointerType then
             begin
             if (Bin.OpCode in [eopAdd,eopSubtract])
-                and (bsPointerMath in GetElBoolSwitches(Bin)) then
+                and ElHasBoolSwitch(Bin,bsPointerMath) then
               begin
               // integer+TypedPointer
               RightTypeEl:=TPasPointerType(RightTypeEl).DestType;
@@ -9482,84 +12804,9 @@ begin
             exit;
             end;
         eopAdd:
-          case LeftResolved.BaseType of
-          btChar:
-            begin
-            case RightResolved.BaseType of
-            btChar: SetBaseType(btString);
-            btAnsiChar:
-              if BaseTypeChar=btAnsiChar then
-                SetBaseType(btString)
-              else
-                SetBaseType(btUnicodeString);
-            btWideChar:
-              if BaseTypeChar=btWideChar then
-                SetBaseType(btString)
-              else
-                SetBaseType(btUnicodeString);
-            else
-              // use right type for result
-              SetRightValueExpr([rrfReadable]);
-            end;
-            exit;
-            end;
-          btAnsiChar:
-            begin
-            case RightResolved.BaseType of
-            btChar:
-              if BaseTypeChar=btAnsiChar then
-                SetBaseType(btString)
-              else
-                SetBaseType(btUnicodeString);
-            btAnsiChar:
-              if BaseTypeChar=btAnsiChar then
-                SetBaseType(btString)
-              else
-                SetBaseType(btAnsiString);
-            btWideChar:
-              if BaseTypeChar=btWideChar then
-                SetBaseType(btString)
-              else
-                SetBaseType(btUnicodeString);
-            else
-              // use right type for result
-              SetRightValueExpr([rrfReadable]);
-            end;
-            exit;
-            end;
-          btWideChar:
-            begin
-              case RightResolved.BaseType of
-              btChar,btAnsiChar,btWideChar:
-                if BaseTypeChar=btWideChar then
-                  SetBaseType(btString)
-                else
-                  SetBaseType(btUnicodeString);
-              else
-                // use right type for result
-                SetRightValueExpr([rrfReadable]);
-              end;
+          if RightResolved.BaseType in btAllStringAndChars then
+            if ComputeAddStringRes(LeftResolved,RightResolved,Bin,ResolvedEl) then
               exit;
-            end;
-          btShortString:
-            begin
-              case RightResolved.BaseType of
-              btChar,btAnsiChar,btShortString,btWideChar:
-                // use left type for result
-                SetLeftValueExpr([rrfReadable]);
-              else
-                // shortstring + string => string
-                SetRightValueExpr([rrfReadable]);
-              end;
-              exit;
-            end;
-          btString,btAnsiString,btUnicodeString:
-            begin
-              // string + x => string
-              SetLeftValueExpr([rrfReadable]);
-              exit;
-            end;
-          end;
         eopLessThan,
         eopGreaterThan,
         eopLessthanEqual,
@@ -9621,7 +12868,7 @@ begin
       if (RightResolved.BaseType in btAllInteger) then
         case Bin.OpCode of
         eopAdd,eopSubtract:
-          if bsPointerMath in GetElBoolSwitches(Bin) then
+          if ElHasBoolSwitch(Bin,bsPointerMath) then
             begin
             // pointer+integer -> pointer
             SetResolverValueExpr(ResolvedEl,btPointer,
@@ -9724,14 +12971,14 @@ begin
           begin
           if TPasClassType(LeftTypeEl).ObjKind=TPasClassType(RightTypeEl).ObjKind then
             begin
-            if CheckSrcIsADstType(RightResolved,LeftResolved,Bin)<>cIncompatible then
+            if CheckSrcIsADstType(RightResolved,LeftResolved)<>cIncompatible then
               begin
               // e.g. if obj is TFPMemoryImage then ;
               // Note: at compile time the check is reversed: right must inherit from left
               SetBaseType(btBoolean);
               exit;
               end
-            else if CheckSrcIsADstType(LeftResolved,RightResolved,Bin)<>cIncompatible then
+            else if CheckSrcIsADstType(LeftResolved,RightResolved)<>cIncompatible then
               begin
               // e.g. if Image is TObject then ;
               // This is useful after some unchecked typecast -> allow
@@ -9769,7 +13016,7 @@ begin
           begin
           // e.g. if Image is ImageClass then ;
           if (CheckClassesAreRelated(LeftResolved.LoTypeEl,
-              TPasClassOfType(RightTypeEl).DestType,Bin)<>cIncompatible) then
+              TPasClassOfType(RightTypeEl).DestType)<>cIncompatible) then
             begin
             SetBaseType(btBoolean);
             exit;
@@ -9791,7 +13038,7 @@ begin
           begin
           // e.g. if ImageClass is TFPMemoryImage then ;
           // Note: at compile time the check is reversed: right must inherit from left
-          if CheckClassIsClass(RightResolved.LoTypeEl,LeftTypeEl,Bin)<>cIncompatible then
+          if CheckClassIsClass(RightResolved.LoTypeEl,LeftTypeEl)<>cIncompatible then
             begin
             SetBaseType(btBoolean);
             exit;
@@ -9802,7 +13049,7 @@ begin
           // e.g. if ImageClassA is ImageClassB then ;
           // or   if ImageClassA is TFPImageClass then ;
           RightTypeEl:=ResolveAliasType(TPasClassOfType(RightTypeEl).DestType);
-          if (CheckClassesAreRelated(LeftTypeEl,RightTypeEl,Bin)<>cIncompatible) then
+          if (CheckClassesAreRelated(LeftTypeEl,RightTypeEl)<>cIncompatible) then
             begin
             SetBaseType(btBoolean);
             exit;
@@ -9812,15 +13059,21 @@ begin
           RaiseXExpectedButYFound(20170322105252,'class type',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
         end
       else if LeftResolved.LoTypeEl=nil then
+        begin
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.ComputeBinaryExprRes is-operator: left=',GetResolverResultDbg(LeftResolved),' right=',GetResolverResultDbg(RightResolved));
+        {$ENDIF}
         RaiseMsg(20170216152232,nLeftSideOfIsOperatorExpectsAClassButGot,sLeftSideOfIsOperatorExpectsAClassButGot,
-                 [BaseTypeNames[LeftResolved.BaseType]],Bin.left)
+                 [BaseTypeNames[LeftResolved.BaseType]],Bin.left);
+        end
       else
+        begin
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.ComputeBinaryExprRes is-operator: left=',GetResolverResultDbg(LeftResolved),' right=',GetResolverResultDbg(RightResolved));
+        {$ENDIF}
         RaiseMsg(20170216152234,nLeftSideOfIsOperatorExpectsAClassButGot,sLeftSideOfIsOperatorExpectsAClassButGot,
                  [GetElementTypeName(LeftResolved.LoTypeEl)],Bin.left);
-      {$IFDEF VerbosePasResolver}
-      writeln('TPasResolver.ComputeBinaryExprRes is-operator: left=',GetResolverResultDbg(LeftResolved),' right=',GetResolverResultDbg(RightResolved));
-      {$ENDIF}
-      RaiseIncompatibleTypeRes(20170216152236,nTypesAreNotRelatedXY,[],LeftResolved,RightResolved,Bin);
+        end;
       end;
     eopAs:
       begin
@@ -9842,7 +13095,7 @@ begin
           if TPasClassType(LeftTypeEl).ObjKind=TPasClassType(RightTypeEl).ObjKind then
             begin
             // e.g. classinst as classtype
-            if (CheckSrcIsADstType(RightResolved,LeftResolved,Bin)<>cIncompatible) then
+            if (CheckSrcIsADstType(RightResolved,LeftResolved)<>cIncompatible) then
               begin
               SetRightValueExpr([rrfReadable]);
               exit;
@@ -9870,6 +13123,28 @@ begin
             end;
           end;
         RaiseIncompatibleTypeRes(20180324190713,nTypesAreNotRelatedXY,[],LeftResolved,RightResolved,Bin);
+        end
+      else if LeftTypeEl.ClassType=TPasGenericTemplateType then
+        begin
+        // genericvar as ...
+        if (LeftResolved.IdentEl is TPasType)
+            or (not (rrfReadable in LeftResolved.Flags)) then
+          RaiseIncompatibleTypeRes(20190908191127,nOperatorIsNotOverloadedAOpB,
+            [OpcodeStrings[Bin.OpCode]],LeftResolved,RightResolved,Bin);
+        if RightResolved.IdentEl=nil then
+          RaiseXExpectedButYFound(20190908191202,'class',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
+        if not (RightResolved.IdentEl is TPasType) then
+          RaiseXExpectedButYFound(20190908191204,'class',RightResolved.IdentEl.Name,Bin.right);
+        if not (RightResolved.BaseType=btContext) then
+          RaiseXExpectedButYFound(20190908191206,'class',RightResolved.IdentEl.Name,Bin.right);
+        RightTypeEl:=RightResolved.LoTypeEl;
+        if RightTypeEl is TPasClassType then
+          begin
+          // e.g. genericvar as classtype
+          SetRightValueExpr([rrfReadable]);
+          exit;
+          end;
+        RaiseIncompatibleTypeRes(20190908192345,nTypesAreNotRelatedXY,[],LeftResolved,RightResolved,Bin);
         end;
       end;
     eopLessThan,eopGreaterThan, eopLessthanEqual,eopGreaterThanEqual:
@@ -9902,7 +13177,7 @@ begin
           begin
           if IsDynArray(LeftTypeEl)
               and (Bin.OpCode=eopAdd)
-              and (msArrayOperators in GetElModeSwitches(Bin))
+              and ElHasModeSwitch(Bin,msArrayOperators)
               and ((RightResolved.BaseType in [btArrayOrSet,btArrayLit])
                 or IsDynArray(RightResolved.LoTypeEl)) then
             begin
@@ -9915,7 +13190,7 @@ begin
         else if LeftTypeEl.ClassType=TPasPointerType then
           begin
           if (RightResolved.BaseType in btAllInteger)
-              and (bsPointerMath in GetElBoolSwitches(Bin)) then
+              and ElHasBoolSwitch(Bin,bsPointerMath) then
             begin
             // TypedPointer+Integer
             SetLeftValueExpr([rrfReadable]);
@@ -10010,7 +13285,7 @@ begin
     if (rrfReadable in LeftResolved.Flags)
         and (rrfReadable in RightResolved.Flags)
         and (Bin.OpCode=eopAdd)
-        and (msArrayOperators in GetElModeSwitches(Bin)) then
+        and ElHasModeSwitch(Bin,msArrayOperators) then
       begin
       if RightResolved.BaseType=btArrayLit then
         begin
@@ -10048,6 +13323,155 @@ begin
   if Flags=[] then ;
 end;
 
+function TPasResolver.ComputeAddStringRes(const LeftResolved,
+  RightResolved: TPasResolverResult; ExprEl: TPasExpr; out
+  ResolvedEl: TPasResolverResult): boolean;
+
+  procedure SetBaseType(BaseType: TResolverBaseType);
+  begin
+    SetResolverValueExpr(ResolvedEl,BaseType,FBaseTypes[BaseType],FBaseTypes[BaseType],
+                         ExprEl,[rrfReadable]);
+  end;
+
+  procedure SetLeftValueExpr(Flags: TPasResolverResultFlags);
+  begin
+    SetResolverValueExpr(ResolvedEl,LeftResolved.BaseType,
+      LeftResolved.LoTypeEl,LeftResolved.HiTypeEl,ExprEl,Flags);
+  end;
+
+  procedure SetRightValueExpr(Flags: TPasResolverResultFlags);
+  begin
+    SetResolverValueExpr(ResolvedEl,RightResolved.BaseType,
+      RightResolved.LoTypeEl,RightResolved.HiTypeEl,ExprEl,Flags);
+  end;
+
+begin
+  Result:=true;
+  case LeftResolved.BaseType of
+  btChar:
+    begin
+    case RightResolved.BaseType of
+    btChar: SetBaseType(btString);
+    {$ifdef FPC_HAS_CPSTRING}
+    btAnsiChar:
+      if BaseTypeChar=btAnsiChar then
+        SetBaseType(btString)
+      else
+        SetBaseType(btUnicodeString);
+    {$endif}
+    btWideChar:
+      if BaseTypeChar=btWideChar then
+        SetBaseType(btString)
+      else
+        SetBaseType(btUnicodeString);
+    else
+      // use right type for result
+      SetRightValueExpr([rrfReadable]);
+    end;
+    exit;
+    end;
+  {$ifdef FPC_HAS_CPSTRING}
+  btAnsiChar:
+    begin
+    case RightResolved.BaseType of
+    btChar:
+      if BaseTypeChar=btAnsiChar then
+        SetBaseType(btString)
+      else
+        SetBaseType(btUnicodeString);
+    btAnsiChar:
+      if BaseTypeChar=btAnsiChar then
+        SetBaseType(btString)
+      else
+        SetBaseType(btAnsiString);
+    btWideChar:
+      if BaseTypeChar=btWideChar then
+        SetBaseType(btString)
+      else
+        SetBaseType(btUnicodeString);
+    else
+      // use right type for result
+      SetRightValueExpr([rrfReadable]);
+    end;
+    exit;
+    end;
+  {$endif}
+  btWideChar:
+    begin
+      case RightResolved.BaseType of
+      btChar,{$ifdef FPC_HAS_CPSTRING}btAnsiChar,{$endif}btWideChar:
+        if BaseTypeChar=btWideChar then
+          SetBaseType(btString)
+        else
+          SetBaseType(btUnicodeString);
+      else
+        // use right type for result
+        SetRightValueExpr([rrfReadable]);
+      end;
+      exit;
+    end;
+  {$ifdef FPC_HAS_CPSTRING}
+  btShortString:
+    begin
+      case RightResolved.BaseType of
+      btChar,btAnsiChar,btShortString,btWideChar:
+        // use left type for result
+        SetLeftValueExpr([rrfReadable]);
+      else
+        // shortstring + string => string
+        SetRightValueExpr([rrfReadable]);
+      end;
+      exit;
+    end;
+  {$endif}
+  btString,{$ifdef FPC_HAS_CPSTRING}btAnsiString,{$endif}btUnicodeString:
+    begin
+      // string + x => string
+      SetLeftValueExpr([rrfReadable]);
+      exit;
+    end;
+  end;
+  Result:=false;
+end;
+
+procedure TPasResolver.ComputeArgumentAndExpr(Arg: TPasArgument; out
+  ArgResolved: TPasResolverResult; Expr: TPasExpr; out
+  ExprResolved: TPasResolverResult; SetReferenceFlags: boolean);
+begin
+  ComputeElement(Arg,ArgResolved,[]);
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.ComputeArgumentAndExpr Arg=',GetTreeDbg(Arg,2),' ArgResolved=',GetResolverResultDbg(ArgResolved));
+  {$ENDIF}
+  if (ArgResolved.LoTypeEl=nil) and (Arg.ArgType<>nil) then
+    RaiseInternalError(20160922163628,'TypeEl=nil for '+GetTreeDbg(Arg));
+
+  ComputeArgumentExpr(ArgResolved,Arg.Access,Expr,ExprResolved,SetReferenceFlags);
+end;
+
+procedure TPasResolver.ComputeArgumentExpr(
+  const ArgResolved: TPasResolverResult; Access: TArgumentAccess;
+  Expr: TPasExpr; out ExprResolved: TPasResolverResult;
+  SetReferenceFlags: boolean);
+var
+  NeedVar: Boolean;
+  RHSFlags: TPasResolverComputeFlags;
+begin
+  RHSFlags:=[];
+  NeedVar:=Access in [argVar, argOut];
+  if NeedVar then
+    Include(RHSFlags,rcNoImplicitProc)
+  else if IsProcedureType(ArgResolved,true)
+      or (ArgResolved.BaseType=btPointer)
+      or ((ArgResolved.LoTypeEl=nil) and (ArgResolved.IdentEl is TPasArgument)) then
+    Include(RHSFlags,rcNoImplicitProcType);
+  if SetReferenceFlags then
+    Include(RHSFlags,rcSetReferenceFlags);
+  ComputeElement(Expr,ExprResolved,RHSFlags);
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.ComputeArgumentExpr Expr=',GetTreeDbg(Expr,2),' ExprResolved=',GetResolverResultDbg(ExprResolved),' RHSFlags=',dbgs(RHSFlags));
+  {$ENDIF}
+end;
+
 procedure TPasResolver.ComputeArrayParams(Params: TParamsExpr; out
   ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
   StartEl: TPasElement);
@@ -10076,38 +13500,15 @@ procedure TPasResolver.ComputeArrayParams(Params: TParamsExpr; out
   end;
 
 var
-  TypeEl: TPasType;
-  ClassScope: TPasClassScope;
+  TypeEl, ElType: TPasType;
   ArrayEl: TPasArrayType;
   ArgNo: Integer;
   OrigResolved: TPasResolverResult;
-  SubParams: TParamsExpr;
+  ClassOrRecordScope: TPasClassOrRecordScope;
+  Ref: TResolvedReference;
 begin
-  if Params.Value.CustomData is TResolvedReference then
-    begin
-    // e.g. Name[]
-    ComputeElement(Params.Value,ResolvedEl,
-      Flags-[rcNoImplicitProc,rcNoImplicitProcType],StartEl);
-    end
-  else if Params.Value.ClassType=TParamsExpr then
-    begin
-    SubParams:=TParamsExpr(Params.Value);
-    if SubParams.Kind in [pekArrayParams,pekFuncParams] then
-      begin
-      // e.g. Name()[] or Name[][]
-      ComputeElement(SubParams,ResolvedEl,
-        Flags-[rcNoImplicitProc,rcNoImplicitProcType],StartEl);
-      end
-    else
-      RaiseNotYetImplemented(20161010195646,SubParams);
-    end
-  else if Params.Value.ClassType=TUnaryExpr then
-    begin
-    ComputeElement(Params.Value,ResolvedEl,
-      Flags-[rcNoImplicitProc,rcNoImplicitProcType],StartEl);
-    end
-  else
-    RaiseNotYetImplemented(20160928174144,Params);
+  ComputeElement(Params.Value,ResolvedEl,
+    Flags-[rcNoImplicitProc,rcNoImplicitProcType],StartEl);
 
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ComputeArrayParams ResolvedEl=',GetResolverResultDbg(ResolvedEl));
@@ -10116,16 +13517,18 @@ begin
     begin
     // stringvar[] => char
     case GetActualBaseType(ResolvedEl.BaseType) of
-    btWideString,btUnicodeString:
-      if BaseTypeChar=btWideChar then
-        ResolvedEl.BaseType:=btChar
-      else
-        ResolvedEl.BaseType:=btWideChar;
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiString,btRawByteString,btShortString:
       if BaseTypeChar=btAnsiChar then
         ResolvedEl.BaseType:=btChar
       else
         ResolvedEl.BaseType:=btAnsiChar;
+    {$endif}
+    btWideString,btUnicodeString:
+      if BaseTypeChar=btWideChar then
+        ResolvedEl.BaseType:=btChar
+      else
+        ResolvedEl.BaseType:=btWideChar;
     else
       RaiseNotYetImplemented(20170417202354,Params);
     end;
@@ -10145,21 +13548,22 @@ begin
   else if ResolvedEl.BaseType=btContext then
     begin
     TypeEl:=ResolvedEl.LoTypeEl;
-    if TypeEl.ClassType=TPasClassType then
+    if (TypeEl.ClassType=TPasClassType)
+        or (TypeEl.ClassType=TPasRecordType)
+        or (TypeEl.ClassType=TPasClassOfType) then
       begin
-      ClassScope:=NoNil(TypeEl.CustomData) as TPasClassScope;
-      if ClassScope.DefaultProperty<>nil then
-        ComputeIndexProperty(ClassScope.DefaultProperty)
+      if not (Params.CustomData is TResolvedReference) then
+        RaiseNotYetImplemented(20190125143203,Params,GetObjName(Params.CustomData));
+      Ref:=TResolvedReference(Params.CustomData);
+      if Ref.Declaration is TPasProperty then
+        ComputeIndexProperty(TPasProperty(Ref.Declaration))
+      else if TypeEl is TPasMembersType then
+        begin
+        ClassOrRecordScope:=NoNil(TypeEl.CustomData) as TPasClassOrRecordScope;
+        ComputeArrayParams_Class(Params,ResolvedEl,ClassOrRecordScope,Flags,StartEl);
+        end
       else
-        ComputeArrayParams_Class(Params,ResolvedEl,ClassScope,Flags,StartEl);
-      end
-    else if TypeEl.ClassType=TPasClassOfType then
-      begin
-      ClassScope:=ResolveAliasType(TPasClassOfType(TypeEl).DestType).CustomData as TPasClassScope;
-      if ClassScope.DefaultProperty<>nil then
-        ComputeIndexProperty(ClassScope.DefaultProperty)
-      else
-        RaiseInternalError(20161010174916);
+        RaiseNotYetImplemented(20161010174916,Params);
       end
     else if TypeEl.ClassType=TPasArrayType then
       begin
@@ -10185,7 +13589,8 @@ begin
         ArrayEl:=NoNil(ResolveAliasType(ArrayEl.ElType)) as TPasArrayType;
       until false;
       OrigResolved:=ResolvedEl;
-      ComputeElement(ArrayEl.ElType,ResolvedEl,Flags,StartEl);
+      ElType:=GetArrayElType(ArrayEl);
+      ComputeElement(ElType,ResolvedEl,Flags,StartEl);
       // identifier and value is the array itself
       ResolvedEl.IdentEl:=OrigResolved.IdentEl;
       ResolvedEl.ExprEl:=OrigResolved.ExprEl;
@@ -10204,12 +13609,12 @@ begin
 end;
 
 procedure TPasResolver.ComputeArrayParams_Class(Params: TParamsExpr;
-  var ResolvedEl: TPasResolverResult; ClassScope: TPasClassScope;
+  var ResolvedEl: TPasResolverResult; ClassOrRecScope: TPasClassOrRecordScope;
   Flags: TPasResolverComputeFlags; StartEl: TPasElement);
 begin
-  RaiseInternalError(20161010174916);
+  RaiseNotYetImplemented(20190125142240,Params);
   if Params=nil then ;
-  if ClassScope=nil then ;
+  if ClassOrRecScope=nil then ;
   if Flags=[] then ;
   if StartEl=nil then ;
   SetResolverIdentifier(ResolvedEl,btNone,nil,nil,nil,[]);
@@ -10222,130 +13627,124 @@ var
   DeclEl: TPasElement;
   BuiltInProc: TResElDataBuiltInProc;
   Proc: TPasProcedure;
-  aClass: TPasClassType;
   ParamResolved: TPasResolverResult;
   Ref: TResolvedReference;
   DeclType: TPasType;
   Param0: TPasExpr;
 begin
-  if Params.Value.CustomData is TResolvedReference then
+  Ref:=GetParamsValueRef(Params);
+  if Ref=nil then
+    RaiseNotYetImplemented(20160928174124,Params);
+  DeclEl:=Ref.Declaration;
+  if DeclEl.ClassType=TPasUnresolvedSymbolRef then
     begin
-    Ref:=TResolvedReference(Params.Value.CustomData);
-    DeclEl:=Ref.Declaration;
-    if DeclEl.ClassType=TPasUnresolvedSymbolRef then
+    if DeclEl.CustomData.ClassType=TResElDataBuiltInProc then
       begin
-      if DeclEl.CustomData.ClassType=TResElDataBuiltInProc then
+      BuiltInProc:=TResElDataBuiltInProc(DeclEl.CustomData);
+      if Assigned(BuiltInProc.GetCallResult) then
+        // built-in function
+        BuiltInProc.GetCallResult(BuiltInProc,Params,ResolvedEl)
+      else
+        // built-in procedure
+        SetResolverIdentifier(ResolvedEl,btProc,BuiltInProc.Proc,
+          BuiltInProc.Proc,BuiltInProc.Proc,[]);
+      if bipfCanBeStatement in BuiltInProc.Flags then
+        Include(ResolvedEl.Flags,rrfCanBeStatement);
+      end
+    else if DeclEl.CustomData is TResElDataBaseType then
+      begin
+      // type cast to base type
+      DeclType:=TPasUnresolvedSymbolRef(DeclEl);
+      if length(Params.Params)<>1 then
         begin
-        BuiltInProc:=TResElDataBuiltInProc(DeclEl.CustomData);
-        if Assigned(BuiltInProc.GetCallResult) then
-          // built-in function
-          BuiltInProc.GetCallResult(BuiltInProc,Params,ResolvedEl)
-        else
-          // built-in procedure
-          SetResolverIdentifier(ResolvedEl,btProc,BuiltInProc.Proc,
-            BuiltInProc.Proc,BuiltInProc.Proc,[]);
-        if bipfCanBeStatement in BuiltInProc.Flags then
-          Include(ResolvedEl.Flags,rrfCanBeStatement);
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.ComputeFuncParams DeclEl=',GetObjName(DeclEl));
+        {$ENDIF}
+        RaiseMsg(20180503105409,nWrongNumberOfParametersForTypeCast,
+          sWrongNumberOfParametersForTypeCast,[DeclType.Name],Params);
+        end;
+      Param0:=Params.Params[0];
+      ComputeElement(Param0,ParamResolved,[]);
+      ComputeTypeCast(DeclType,DeclType,Param0,ParamResolved,ResolvedEl,Flags);
+      end
+    else
+      RaiseNotYetImplemented(20161006133040,Params,GetResolverResultDbg(ResolvedEl));
+    end
+  else
+    begin
+    // normal identifier (not built-in)
+    ComputeElement(DeclEl,ResolvedEl,Flags+[rcNoImplicitProc],StartEl);
+    if ResolvedEl.BaseType=btProc then
+      begin
+      if not (ResolvedEl.IdentEl is TPasProcedure) then
+        RaiseNotYetImplemented(20160928180201,Params,GetResolverResultDbg(ResolvedEl));
+      Proc:=TPasProcedure(ResolvedEl.IdentEl);
+      if rcConstant in Flags then
+        RaiseConstantExprExp(20170216152637,Params);
+      if Proc.ProcType is TPasFunctionType then
+        // function call => return result
+        ComputeElement(TPasFunctionType(Proc.ProcType).ResultEl,ResolvedEl,
+          Flags+[rcNoImplicitProc],StartEl)
+      else if (Proc.ClassType=TPasConstructor) then
+        begin
+        // constructor -> return value of type class
+        ResolvedEl:=GetReference_ConstructorType(Ref,Params.Value);
         end
-      else if DeclEl.CustomData is TResElDataBaseType then
+      else
+        // procedure call, result is neither readable nor writable
+        SetResolverIdentifier(ResolvedEl,btProc,Proc,Proc.ProcType,Proc.ProcType,[]);
+      Include(ResolvedEl.Flags,rrfCanBeStatement);
+      end
+    else if ResolvedEl.LoTypeEl is TPasProcedureType then
+      begin
+      if Params.Value is TParamsExpr then
         begin
-        // type cast to base type
-        DeclType:=TPasUnresolvedSymbolRef(DeclEl);
+        // e.g. Name()() or Name[]()
+        Include(ResolvedEl.Flags,rrfReadable);
+        end;
+      if rrfReadable in ResolvedEl.Flags then
+        begin
+        // call procvar
+        if rcConstant in Flags then
+          RaiseConstantExprExp(20170216152639,Params);
+        if ResolvedEl.LoTypeEl is TPasFunctionType then
+          // function call => return result
+          ComputeElement(TPasFunctionType(ResolvedEl.LoTypeEl).ResultEl,
+            ResolvedEl,Flags+[rcNoImplicitProc],StartEl)
+        else
+          // procedure call, result is neither readable nor writable
+          SetResolverTypeExpr(ResolvedEl,btProc,
+            ResolvedEl.LoTypeEl,ResolvedEl.HiTypeEl,[]);
+        Include(ResolvedEl.Flags,rrfCanBeStatement);
+        end
+      else
+        begin
+        // typecast to proctype
         if length(Params.Params)<>1 then
           begin
           {$IFDEF VerbosePasResolver}
-          writeln('TPasResolver.ComputeFuncParams DeclEl=',GetObjName(DeclEl));
+          writeln('TPasResolver.ComputeFuncParams DeclEl=',GetObjName(DeclEl),' ',GetResolverResultDbg(ResolvedEl));
           {$ENDIF}
-          RaiseMsg(20180503105409,nWrongNumberOfParametersForTypeCast,
-            sWrongNumberOfParametersForTypeCast,[DeclType.Name],Params);
+          RaiseMsg(20170416185211,nWrongNumberOfParametersForTypeCast,
+            sWrongNumberOfParametersForTypeCast,[ResolvedEl.LoTypeEl.Name],Params);
           end;
-        Param0:=Params.Params[0];
-        ComputeElement(Param0,ParamResolved,[]);
-        ComputeTypeCast(DeclType,DeclType,Param0,ParamResolved,ResolvedEl,Flags);
-        end
-      else
-        RaiseNotYetImplemented(20161006133040,Params,GetResolverResultDbg(ResolvedEl));
-      end
-    else
-      begin
-      // normal identifier (not built-in)
-      ComputeElement(DeclEl,ResolvedEl,Flags+[rcNoImplicitProc],StartEl);
-      if ResolvedEl.BaseType=btProc then
-        begin
-        if not (ResolvedEl.IdentEl is TPasProcedure) then
-          RaiseNotYetImplemented(20160928180201,Params,GetResolverResultDbg(ResolvedEl));
-        Proc:=TPasProcedure(ResolvedEl.IdentEl);
-        if rcConstant in Flags then
-          RaiseConstantExprExp(20170216152637,Params);
-        if Proc is TPasFunction then
-          // function call => return result
-          ComputeElement(TPasFunction(Proc).FuncType.ResultEl,ResolvedEl,
-            Flags+[rcNoImplicitProc],StartEl)
-        else if (Proc.ClassType=TPasConstructor)
-            and (rrfNewInstance in Ref.Flags) then
-          begin
-          // new instance call -> return value of type class
-          aClass:=GetReference_NewInstanceClass(Ref);
-          SetResolverValueExpr(ResolvedEl,btContext,aClass,aClass,Params.Value,[rrfReadable]);
-          end
-        else
-          // procedure call, result is neither readable nor writable
-          SetResolverIdentifier(ResolvedEl,btProc,Proc,Proc.ProcType,Proc.ProcType,[]);
-        Include(ResolvedEl.Flags,rrfCanBeStatement);
-        end
-      else if ResolvedEl.LoTypeEl is TPasProcedureType then
-        begin
-        if Params.Value is TParamsExpr then
-          begin
-          // e.g. Name()() or Name[]()
-          Include(ResolvedEl.Flags,rrfReadable);
-          end;
-        if rrfReadable in ResolvedEl.Flags then
-          begin
-          // call procvar
-          if rcConstant in Flags then
-            RaiseConstantExprExp(20170216152639,Params);
-          if ResolvedEl.LoTypeEl is TPasFunctionType then
-            // function call => return result
-            ComputeElement(TPasFunctionType(ResolvedEl.LoTypeEl).ResultEl,
-              ResolvedEl,Flags+[rcNoImplicitProc],StartEl)
-          else
-            // procedure call, result is neither readable nor writable
-            SetResolverTypeExpr(ResolvedEl,btProc,
-              ResolvedEl.LoTypeEl,ResolvedEl.HiTypeEl,[]);
-          Include(ResolvedEl.Flags,rrfCanBeStatement);
-          end
-        else
-          begin
-          // typecast to proctype
-          if length(Params.Params)<>1 then
-            begin
-            {$IFDEF VerbosePasResolver}
-            writeln('TPasResolver.ComputeFuncParams DeclEl=',GetObjName(DeclEl),' ',GetResolverResultDbg(ResolvedEl));
-            {$ENDIF}
-            RaiseMsg(20170416185211,nWrongNumberOfParametersForTypeCast,
-              sWrongNumberOfParametersForTypeCast,[ResolvedEl.LoTypeEl.Name],Params);
-            end;
-          Param0:=Params.Params[0];
-          ComputeElement(Param0,ParamResolved,[]);
-          ComputeTypeCast(ResolvedEl.LoTypeEl,ResolvedEl.HiTypeEl,Param0,
-                          ParamResolved,ResolvedEl,Flags);
-          end;
-        end
-      else if (DeclEl is TPasType) then
-        begin
-        // type cast
         Param0:=Params.Params[0];
         ComputeElement(Param0,ParamResolved,[]);
         ComputeTypeCast(ResolvedEl.LoTypeEl,ResolvedEl.HiTypeEl,Param0,
                         ParamResolved,ResolvedEl,Flags);
-        end
-      else
-        RaiseNotYetImplemented(20160928180048,Params,GetResolverResultDbg(ResolvedEl));
-      end;
-    end
-  else
-    RaiseNotYetImplemented(20160928174124,Params);
+        end;
+      end
+    else if (DeclEl is TPasType) then
+      begin
+      // type cast
+      Param0:=Params.Params[0];
+      ComputeElement(Param0,ParamResolved,[]);
+      ComputeTypeCast(ResolvedEl.LoTypeEl,ResolvedEl.HiTypeEl,Param0,
+                      ParamResolved,ResolvedEl,Flags);
+      end
+    else
+      RaiseNotYetImplemented(20160928180048,Params,GetResolverResultDbg(ResolvedEl));
+    end;
 end;
 
 procedure TPasResolver.ComputeTypeCast(ToLoType, ToHiType: TPasType;
@@ -10465,6 +13864,12 @@ begin
         else if (ToLoType.ClassType=TPasRecordType)
             and (ParamResolved.LoTypeEl.ClassType=TPasRecordType) then
           // typecast record
+          KeepWriteFlags:=true
+        else if (ToLoType.ClassType=TPasArrayType)
+            and (ParamResolved.LoTypeEl.ClassType=TPasArrayType)
+            and IsDynArray(ToLoType)
+            and IsDynArray(ParamResolved.LoTypeEl) then
+          // typecast dyn array to dyn array
           KeepWriteFlags:=true;
         end
       else
@@ -10948,12 +14353,12 @@ begin
         if RHS.LoTypeEl.ClassType<>TPasClassType then
           RaiseIncompatibleTypeRes(20170420135637,nIncompatibleTypesGotExpected,
             [],RHS,LHS,Right);
-        if CheckClassIsClass(LHS.LoTypeEl,RHS.LoTypeEl,Right)<cIncompatible then
+        if CheckClassIsClass(LHS.LoTypeEl,RHS.LoTypeEl)<cIncompatible then
           begin
           // right class type is a left class type -> ok
           exit;
           end
-        else if CheckClassIsClass(RHS.LoTypeEl,LHS.LoTypeEl,Right)<cIncompatible then
+        else if CheckClassIsClass(RHS.LoTypeEl,LHS.LoTypeEl)<cIncompatible then
           begin
           // left class type is a right class type -> right is the new base class type
           LHS:=RHS;
@@ -10976,12 +14381,12 @@ begin
         if RHS.LoTypeEl.ClassType<>TPasClassType then
           RaiseIncompatibleTypeRes(20170420091839,nIncompatibleTypesGotExpected,
             [],RHS,LHS,Right);
-        if CheckClassIsClass(LHS.LoTypeEl,RHS.LoTypeEl,Right)<cIncompatible then
+        if CheckClassIsClass(LHS.LoTypeEl,RHS.LoTypeEl)<cIncompatible then
           begin
           // right class type is a left class type -> ok
           exit;
           end
-        else if CheckClassIsClass(RHS.LoTypeEl,LHS.LoTypeEl,Right)<cIncompatible then
+        else if CheckClassIsClass(RHS.LoTypeEl,LHS.LoTypeEl)<cIncompatible then
           begin
           // left class type is a right class type -> right is the new base class type
           LHS:=RHS;
@@ -11029,43 +14434,58 @@ function TPasResolver.IsCharLiteral(const Value: string; ErrorPos: TPasElement
 // btAnsiChar: #65, #$50, ^G, 'a'
 // btWideChar: #10000, 'ä'
 var
-  p: PChar;
   i: SizeInt;
-  base: Integer;
+  p, base, l: Integer;
 begin
   Result:=btNone;
   //writeln('TPasResolver.IsCharLiteral ',BaseTypeChar,' "',Value,'" l=',length(Value));
-  p:=PChar(Value);
-  case p^ of
+  l:=length(Value);
+  if l=0 then exit;
+  p:=1;
+  case Value[1] of
   '''':
     begin
     inc(p);
-    case p^ of
+    if p>l then exit;
+    {$ifdef FPC_HAS_CPSTRING}
+    case Value[2] of
     '''':
-      if (p[1]='''') and (p[2]='''') and (p[3]=#0) then
-        Result:=btAnsiChar;
+      if Value='''''''''' then
+        Result:=btAnsiChar; // ''''
     #32..#38,#40..#191:
-      if (p[1]='''') and (p[2]=#0) then
-        Result:=btAnsiChar;
+      if (l=3) and (Value[3]='''') then
+        Result:=btAnsiChar; // e.g. 'a'
     #192..#255:
       if BaseTypeChar=btWideChar then
         begin
         // default char is widechar: UTF-8 'ä' is a widechar
-        i:=Utf8CodePointLen(p,4,false);
+        i:=Utf8CodePointLen(@Value[2],4,false);
         //writeln('TPasResolver.IsCharLiteral "',Value,'" ',length(Value),' i=',i);
         if i<2 then
           exit;
-        inc(p,i);
-        if (p^='''') and (p[1]=#0) then
+        p:=2+i;
+        if (p=l) and (Value[p]='''') then
           // single UTF-8 codepoint
           Result:=btWideChar;
         end;
     end;
+    {$else}
+    case Value[p] of
+    '''':
+      if (p+2=l) and (Value[p+1]='''') and (Value[p+2]='''') then
+        Result:=btWideChar; // ''''
+    #$DC00..#$DFFF: ;
+    else
+      if (l=3) and (Value[3]='''') then
+        Result:=btWideChar; // e.g. 'a'
+    end;
+    {$endif}
     end;
   '#':
     begin
     inc(p);
-    case p^ of
+    if p>l then exit;
+    case Value[p] of
     '$': begin base:=16; inc(p); end;
     '&': begin base:=8; inc(p); end;
     '%': begin base:=2; inc(p); end;
@@ -11073,36 +14493,40 @@ begin
     else RaiseNotYetImplemented(20170728142709,ErrorPos);
     end;
     i:=0;
-    repeat
-      case p^ of
-      '0'..'9': i:=i*base+ord(p^)-ord('0');
-      'A'..'Z': i:=i*base+ord(p^)-ord('A')+10;
-      'a'..'z': i:=i*base+ord(p^)-ord('a')+10;
-      else
-        break;
+    while p<=l do
+      begin
+      case Value[p] of
+      '0'..'9': i:=i*base+ord(Value[p])-ord('0');
+      'A'..'Z': i:=i*base+ord(Value[p])-ord('A')+10;
+      'a'..'z': i:=i*base+ord(Value[p])-ord('a')+10;
       end;
       inc(p);
-    until false;
-    if p^=#0 then
+      end;
+    if p>l then
+      begin
+      {$ifdef FPC_HAS_CPSTRING}
       if i<256 then
         Result:=btAnsiChar
       else
+      {$endif}
         Result:=btWideChar;
+      end;
     end;
   '^':
     begin
-    inc(p);
-    if (p^ in ['a'..'z','A'..'Z']) and (p[1]=#0) then
-      Result:=btAnsiChar;
+    if (l=2) and (Value[2] in ['a'..'z','A'..'Z']) then
+      Result:={$ifdef FPC_HAS_CPSTRING}btAnsiChar{$else}btWideChar{$endif};
     end;
   end;
-  if Result in [btAnsiChar,btWideChar] then
+  if Result in [{$ifdef FPC_HAS_CPSTRING}btAnsiChar,{$endif}btWideChar] then
     begin
     if FBaseTypes[Result]=nil then
       begin
+      {$ifdef FPC_HAS_CPSTRING}
       if Result=btAnsiChar then
         Result:=btWideChar
       else
+      {$endif}
         Result:=btChar;
       end;
     if Result=BaseTypeChar then
@@ -11119,118 +14543,123 @@ begin
   if InResolved.BaseType=btCustom then ;
 end;
 
-function TPasResolver.CheckForInClass(Loop: TPasImplForLoop; const VarResolved,
+function TPasResolver.CheckForInClassOrRec(Loop: TPasImplForLoop; const VarResolved,
   InResolved: TPasResolverResult): boolean;
 var
-  TypeEl: TPasType;
-  aClass: TPasClassType;
-  ClassScope: TPasDotClassScope;
+  LoTypeEl: TPasType;
+  EnumeratorClass: TPasClassType;
+  EnumeratorScope: TPasDotClassScope;
   Getter, MoveNext, Current: TPasIdentifier;
   GetterFunc, MoveNextFunc: TPasFunction;
   ptm: TProcTypeModifier;
   ResultResolved, MoveNextResolved, CurrentResolved: TPasResolverResult;
   CurrentProp: TPasProperty;
   ForScope: TPasForLoopScope;
+  DotScope: TPasDotBaseScope;
 begin
   Result:=false;
-  TypeEl:=InResolved.LoTypeEl;
-  if TypeEl is TPasClassType then
+  if InResolved.IdentEl is TPasType then
+    RaiseMsg(20190120180525,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
+      [GetBaseDescription(InResolved)],Loop.StartExpr);
+  if not (rrfReadable in InResolved.Flags) then
+    RaiseMsg(20171221195421,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
+      [GetBaseDescription(InResolved)],Loop.StartExpr);
+
+  LoTypeEl:=InResolved.LoTypeEl;
+  if LoTypeEl=nil then exit;
+
+  // check function InVar.GetEnumerator
+  DotScope:=PushDotScope(InResolved.HiTypeEl);
+  if DotScope=nil then
+    exit;
+  // find aRecord.GetEnumerator
+  Getter:=DotScope.FindIdentifier('GetEnumerator');
+  PopScope;
+  if Getter=nil then
     begin
-    if not (rrfReadable in InResolved.Flags) then
-      RaiseMsg(20171221195421,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
-        [GetBaseDescription(InResolved)],Loop.StartExpr);
-
-    // check function GetEnumerator: class
-    aClass:=TPasClassType(TypeEl);
-    // find aClass.GetEnumerator
-    ClassScope:=PushClassDotScope(aClass);
-    Getter:=ClassScope.FindIdentifier('GetEnumerator');
-    PopScope;
-    if Getter=nil then
-      RaiseIdentifierNotFound(20171221191511,'GetEnumerator',Loop.StartExpr);
-    // check is function
-    if Getter.Element.ClassType<>TPasFunction then
-      RaiseContextXExpectedButYFound(20171221191638,'GetEnumerator','function',GetElementTypeName(Getter.Element),Loop.StartExpr);
-    GetterFunc:=TPasFunction(Getter.Element);
-    // check visibility
-    if not (GetterFunc.Visibility in [visPublic,visPublished]) then
-      RaiseContextXExpectedButYFound(20171221191824,'function GetEnumerator','public',VisibilityNames[GetterFunc.Visibility],Loop.StartExpr);
-    // check arguments
-    if GetterFunc.FuncType.Args.Count>0 then
-      RaiseContextXExpectedButYFound(20171221191944,'function GetEnumerator','no arguments',IntToStr(GetterFunc.ProcType.Args.Count),Loop.StartExpr);
-    // check proc type modifiers
-    for ptm in GetterFunc.ProcType.Modifiers do
-      if not (ptm in [ptmOfObject]) then
-        RaiseContextXInvalidY(20171221193455,'function GetEnumerator','modifier '+ProcTypeModifiers[ptm],Loop.StartExpr);
-    // check result type
-    ComputeElement(GetterFunc.FuncType.ResultEl,ResultResolved,[rcType]);
-    if (ResultResolved.BaseType<>btContext) then
-      RaiseContextXExpectedButYFound(20171221193749,'function GetEnumerator','result class',GetTypeDescription(ResultResolved),Loop.StartExpr);
-    TypeEl:=ResultResolved.LoTypeEl;
-    if not (TypeEl is TPasClassType) then
-      RaiseContextXExpectedButYFound(20171221193749,'function GetEnumerator','result class',GetTypeDescription(ResultResolved.LoTypeEl),Loop.StartExpr);
-    if not (rrfReadable in ResultResolved.Flags) then
-      RaiseContextXExpectedButYFound(20171221195506,'function GetEnumerator','result class instance',GetTypeDescription(ResultResolved.LoTypeEl),Loop.StartExpr);
-
-    // check function MoveNext: boolean
-    aClass:=TPasClassType(TypeEl);
-    ClassScope:=PushClassDotScope(aClass);
-    MoveNext:=ClassScope.FindIdentifier('MoveNext');
-    if MoveNext=nil then
-      RaiseIdentifierNotFound(20171221195632,'MoveNext',Loop.StartExpr);
-    // check is function
-    if MoveNext.Element.ClassType<>TPasFunction then
-      RaiseContextXExpectedButYFound(20171221195651,'MoveNext','function',GetElementTypeName(MoveNext.Element),Loop.StartExpr);
-    MoveNextFunc:=TPasFunction(MoveNext.Element);
-    // check visibility
-    if not (MoveNextFunc.Visibility in [visPublic,visPublished]) then
-      RaiseContextXExpectedButYFound(20171221195712,'function MoveNext','public',VisibilityNames[MoveNextFunc.Visibility],Loop.StartExpr);
-    // check arguments
-    if MoveNextFunc.FuncType.Args.Count>0 then
-      RaiseContextXExpectedButYFound(20171221195723,'function MoveNext','no arguments',IntToStr(MoveNextFunc.ProcType.Args.Count),Loop.StartExpr);
-    // check proc type modifiers
-    for ptm in MoveNextFunc.ProcType.Modifiers do
-      if not (ptm in [ptmOfObject]) then
-        RaiseContextXInvalidY(20171221195732,'function MoveNext','modifier '+ProcTypeModifiers[ptm],Loop.StartExpr);
-    // check result type
-    ComputeElement(MoveNextFunc.FuncType.ResultEl,MoveNextResolved,[rcType]);
-    if not (MoveNextResolved.BaseType in btAllBooleans) then
-      RaiseContextXExpectedButYFound(20171221200337,'function MoveNext','result boolean',GetTypeDescription(MoveNextResolved),Loop.StartExpr);
-
-    // check property Current
-    Current:=ClassScope.FindIdentifier('Current');
-    if Current=nil then
-      RaiseIdentifierNotFound(20171221200433,'Current',Loop.StartExpr);
-    // check is property
-    if Current.Element.ClassType<>TPasProperty then
-      RaiseContextXExpectedButYFound(20171221200508,'Current','property',GetElementTypeName(Current.Element),Loop.StartExpr);
-    CurrentProp:=TPasProperty(Current.Element);
-    // check visibility
-    if not (CurrentProp.Visibility in [visPublic,visPublished]) then
-      RaiseContextXExpectedButYFound(20171221200546,'property Current','public',VisibilityNames[CurrentProp.Visibility],Loop.StartExpr);
-    // check arguments
-    if CurrentProp.Args.Count>0 then
-      RaiseContextXExpectedButYFound(20171221200638,'property Current','no arguments',IntToStr(CurrentProp.Args.Count),Loop.StartExpr);
-    // check readable
-    if GetPasPropertyGetter(CurrentProp)=nil then
-      RaiseContextXInvalidY(20171221200823,'property Current','read accessor',Loop.StartExpr);
-    // check result type fits for-loop variable
-    ComputeElement(CurrentProp,CurrentResolved,[rcType]);
-    if CheckAssignResCompatibility(VarResolved,CurrentResolved,Loop.VariableName,false)=cIncompatible then
-      RaiseIncompatibleTypeRes(20171221200018,nIncompatibleTypesGotExpected,[],VarResolved,CurrentResolved,Loop.VariableName);
-
-    PopScope;
-
-    ForScope:=Loop.CustomData as TPasForLoopScope;
-    ForScope.GetEnumerator:=GetterFunc;
-    ForScope.MoveNext:=MoveNextFunc;
-    ForScope.Current:=CurrentProp;
-
-    exit(true);
+    if LoTypeEl is TPasMembersType then
+      RaiseIdentifierNotFound(20171221191511,'GetEnumerator',Loop.StartExpr)
+    else
+      exit;
     end;
+  // check is function
+  if Getter.Element.ClassType<>TPasFunction then
+    RaiseContextXExpectedButYFound(20171221191638,'GetEnumerator','function',GetElementTypeName(Getter.Element),Loop.StartExpr);
+  GetterFunc:=TPasFunction(Getter.Element);
+  // check visibility
+  if not (GetterFunc.Visibility in [visPublic,visPublished]) then
+    RaiseContextXExpectedButYFound(20171221191824,'function GetEnumerator','public',VisibilityNames[GetterFunc.Visibility],Loop.StartExpr);
+  // check arguments
+  if GetterFunc.FuncType.Args.Count>0 then
+    RaiseContextXExpectedButYFound(20171221191944,'function GetEnumerator','no arguments',IntToStr(GetterFunc.ProcType.Args.Count),Loop.StartExpr);
+  // check proc type modifiers
+  for ptm in GetterFunc.ProcType.Modifiers do
+    if not (ptm in [ptmOfObject]) then
+      RaiseContextXInvalidY(20171221193455,'function GetEnumerator','modifier '+ProcTypeModifiers[ptm],Loop.StartExpr);
+  // check result type
+  ComputeElement(GetterFunc.FuncType.ResultEl,ResultResolved,[rcType]);
+  if (ResultResolved.BaseType<>btContext) then
+    RaiseContextXExpectedButYFound(20171221193749,'function GetEnumerator','result class',GetTypeDescription(ResultResolved),Loop.StartExpr);
+  LoTypeEl:=ResultResolved.LoTypeEl;
+  if not (LoTypeEl is TPasClassType) then
+    RaiseContextXExpectedButYFound(20171221193749,'function GetEnumerator','result class',GetTypeDescription(ResultResolved.LoTypeEl),Loop.StartExpr);
+  if not (rrfReadable in ResultResolved.Flags) then
+    RaiseContextXExpectedButYFound(20171221195506,'function GetEnumerator','result class instance',GetTypeDescription(ResultResolved.LoTypeEl),Loop.StartExpr);
 
-  RaiseMsg(20171221192929,nCannotFindEnumeratorForType,sCannotFindEnumeratorForType,
-    [GetBaseDescription(InResolved)],Loop.StartExpr);
+  // find function MoveNext: boolean in Enumerator class
+  EnumeratorClass:=TPasClassType(LoTypeEl);
+  EnumeratorScope:=PushClassDotScope(EnumeratorClass);
+  MoveNext:=EnumeratorScope.FindIdentifier('MoveNext');
+  if MoveNext=nil then
+    RaiseIdentifierNotFound(20171221195632,'MoveNext',Loop.StartExpr);
+  // check is function
+  if MoveNext.Element.ClassType<>TPasFunction then
+    RaiseContextXExpectedButYFound(20171221195651,'MoveNext','function',GetElementTypeName(MoveNext.Element),Loop.StartExpr);
+  MoveNextFunc:=TPasFunction(MoveNext.Element);
+  // check visibility
+  if not (MoveNextFunc.Visibility in [visPublic,visPublished]) then
+    RaiseContextXExpectedButYFound(20171221195712,'function MoveNext','public',VisibilityNames[MoveNextFunc.Visibility],Loop.StartExpr);
+  // check arguments
+  if MoveNextFunc.FuncType.Args.Count>0 then
+    RaiseContextXExpectedButYFound(20171221195723,'function MoveNext','no arguments',IntToStr(MoveNextFunc.ProcType.Args.Count),Loop.StartExpr);
+  // check proc type modifiers
+  for ptm in MoveNextFunc.ProcType.Modifiers do
+    if not (ptm in [ptmOfObject]) then
+      RaiseContextXInvalidY(20171221195732,'function MoveNext','modifier '+ProcTypeModifiers[ptm],Loop.StartExpr);
+  // check result type
+  ComputeElement(MoveNextFunc.FuncType.ResultEl,MoveNextResolved,[rcType]);
+  if not (MoveNextResolved.BaseType in btAllBooleans) then
+    RaiseContextXExpectedButYFound(20171221200337,'function MoveNext','result boolean',GetTypeDescription(MoveNextResolved),Loop.StartExpr);
+
+  // check property Current
+  Current:=EnumeratorScope.FindIdentifier('Current');
+  if Current=nil then
+    RaiseIdentifierNotFound(20171221200433,'Current',Loop.StartExpr);
+  // check is property
+  if Current.Element.ClassType<>TPasProperty then
+    RaiseContextXExpectedButYFound(20171221200508,'Current','property',GetElementTypeName(Current.Element),Loop.StartExpr);
+  CurrentProp:=TPasProperty(Current.Element);
+  // check visibility
+  if not (CurrentProp.Visibility in [visPublic,visPublished]) then
+    RaiseContextXExpectedButYFound(20171221200546,'property Current','public',VisibilityNames[CurrentProp.Visibility],Loop.StartExpr);
+  // check arguments
+  if CurrentProp.Args.Count>0 then
+    RaiseContextXExpectedButYFound(20171221200638,'property Current','no arguments',IntToStr(CurrentProp.Args.Count),Loop.StartExpr);
+  // check readable
+  if GetPasPropertyGetter(CurrentProp)=nil then
+    RaiseContextXInvalidY(20171221200823,'property Current','read accessor',Loop.StartExpr);
+  // check result type fits for-loop variable
+  ComputeElement(CurrentProp,CurrentResolved,[rcType]);
+  if CheckAssignResCompatibility(VarResolved,CurrentResolved,Loop.VariableName,false)=cIncompatible then
+    RaiseIncompatibleTypeRes(20171221200018,nIncompatibleTypesGotExpected,[],VarResolved,CurrentResolved,Loop.VariableName);
+
+  PopScope; // pop EnumeratorScope
+
+  ForScope:=Loop.CustomData as TPasForLoopScope;
+  ForScope.GetEnumerator:=GetterFunc;
+  ForScope.MoveNext:=MoveNextFunc;
+  ForScope.Current:=CurrentProp;
+  Result:=true;
 end;
 
 function TPasResolver.CheckBuiltInMinParamCount(Proc: TResElDataBuiltInProc;
@@ -11260,7 +14689,7 @@ begin
   Result:=cExact;
 end;
 
-function TPasResolver.CheckRaiseTypeArgNo(id: int64; ArgNo: integer;
+function TPasResolver.CheckRaiseTypeArgNo(id: TMaxPrecInt; ArgNo: integer;
   Param: TPasExpr; const ParamResolved: TPasResolverResult; Expected: string;
   RaiseOnError: boolean): integer;
 begin
@@ -11328,7 +14757,7 @@ begin
   CreateReference(aConstructor,Params,rraRead);
 end;
 
-function TPasResolver.FindExceptionConstructor(const aUnitName,
+function TPasResolver.FindClassTypeAndConstructor(const aUnitName,
   aClassName: string; out aClass: TPasClassType; out
   aConstructor: TPasConstructor; ErrorEl: TPasElement): boolean;
 var
@@ -11393,7 +14822,7 @@ begin
   if pmsfAssertSearched in ModScope.Flags then exit;
   Include(ModScope.Flags,pmsfAssertSearched);
 
-  FindExceptionConstructor('sysutils','EAssertionFailed',aClass,aConstructor,ErrorEl);
+  FindClassTypeAndConstructor('sysutils','EAssertionFailed',aClass,aConstructor,ErrorEl);
   if aClass=nil then exit;
   ClassScope:=NoNil(aClass.CustomData) as TPasClassScope;
   ModScope.AssertClass:=aClass;
@@ -11440,14 +14869,97 @@ begin
   if pmsfRangeErrorSearched in ModScope.Flags then exit;
   Include(ModScope.Flags,pmsfRangeErrorSearched);
 
-  FindExceptionConstructor('sysutils','ERangeError',aClass,aConstructor,ErrorEl);
+  FindClassTypeAndConstructor('sysutils','ERangeError',aClass,aConstructor,ErrorEl);
   ModScope.RangeErrorClass:=aClass;
   ModScope.RangeErrorConstructor:=aConstructor;
 end;
 
+function TPasResolver.FindTVarRec(ErrorEl: TPasElement): TPasRecordType;
+var
+  aMod, UtilsMod: TPasModule;
+  SectionScope: TPasSectionScope;
+  Identifier: TPasIdentifier;
+  El: TPasElement;
+  ModScope: TPasModuleScope;
+begin
+  aMod:=RootElement;
+  ModScope:=aMod.CustomData as TPasModuleScope;
+  Result:=ModScope.SystemTVarRec;
+  if Result<>nil then exit;
+
+  // find unit in uses clauses
+  UtilsMod:=FindUsedUnit('system',aMod);
+  if UtilsMod=nil then
+    RaiseIdentifierNotFound(20190215101210,'System.TVarRec',ErrorEl);
+
+  // find class in interface
+  if UtilsMod.InterfaceSection=nil then
+    RaiseIdentifierNotFound(20190215101231,'System.TVarRec',ErrorEl);
+
+  SectionScope:=NoNil(UtilsMod.InterfaceSection.CustomData) as TPasSectionScope;
+  Identifier:=SectionScope.FindLocalIdentifier('TVarRec');
+  if Identifier=nil then
+    RaiseIdentifierNotFound(20190215101253,'System.TVarRec',ErrorEl);
+  El:=Identifier.Element;
+  if not (El is TPasRecordType) then
+    RaiseXExpectedButYFound(20190215101310,'record TVarRec',GetElementTypeName(El),ErrorEl);
+  Result:=TPasRecordType(El);
+  ModScope.SystemTVarRec:=Result;
+end;
+
+function TPasResolver.GetTVarRec(El: TPasArrayType): TPasRecordType;
+var
+  aModule: TPasModule;
+  ModScope: TPasModuleScope;
+begin
+  aModule:=El.GetModule;
+  ModScope:=aModule.CustomData as TPasModuleScope;
+  Result:=ModScope.SystemTVarRec;
+  if Result=nil then
+    RaiseNotYetImplemented(20190215111924,El,'missing System.TVarRec');
+end;
+
+function TPasResolver.FindDefaultConstructor(aClass: TPasClassType
+  ): TPasConstructor;
+var
+  ClassScope: TPasClassScope;
+  Identifier: TPasIdentifier;
+  El: TPasElement;
+  HasOverload: Boolean;
+  Proc: TPasProcedure;
+begin
+  Result:=nil;
+  if (aClass=nil) or aClass.IsExternal or (aClass.ObjKind<>okClass) then exit;
+  ClassScope:=aClass.CustomData as TPasClassScope;
+  repeat
+    Identifier:=ClassScope.FindLocalIdentifier('create');
+    if Identifier<>nil then
+      begin
+      HasOverload:=false;
+      while Identifier<>nil do
+        begin
+        El:=Identifier.Element;
+        if not (El is TPasProcedure) then exit;
+        Proc:=TPasProcedure(El);
+        if Proc.ClassType=TPasConstructor then
+          begin
+          if Proc.ProcType.Args.Count=0 then
+            exit(TPasConstructor(El));
+          end;
+        if Proc.IsOverload then
+          HasOverload:=true;
+        Identifier:=Identifier.NextSameIdentifier;
+        end;
+      if not HasOverload then exit;
+      end;
+    ClassScope:=ClassScope.AncestorScope;
+  until false;
+end;
+
 procedure TPasResolver.OnExprEvalLog(Sender: TResExprEvaluator;
-  const id: int64; MsgType: TMessageType; MsgNumber: integer;
-  const Fmt: String; Args: array of const; PosEl: TPasElement);
+  const id: TMaxPrecInt; MsgType: TMessageType; MsgNumber: integer;
+  const Fmt: String; Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+  PosEl: TPasElement);
 begin
   if MsgType<=mtError then
     RaiseMsg(id,MsgNumber,Fmt,Args,PosEl)
@@ -11465,6 +14977,7 @@ var
   ResolvedType: TPasResolverResult;
   EnumValue: TPasEnumValue;
   EnumType: TPasEnumType;
+  EvalFlags: TResEvalFlags;
 begin
   Result:=nil;
   if not (Expr.CustomData is TResolvedReference) then
@@ -11487,7 +15000,10 @@ begin
         end
       else
         ResolvedType.BaseType:=btNone;
-      Result:=fExprEvaluator.Eval(TPasConst(Decl).Expr,Flags+[refConst]);
+      EvalFlags:=Flags;
+      if not (refConstExt in EvalFlags) then
+        Include(EvalFlags,refConst);
+      Result:=fExprEvaluator.Eval(TPasConst(Decl).Expr,EvalFlags);
       if Result<>nil then
         begin
         if (Result.Element<>nil) and (Result.Element<>TPasConst(Decl).Expr) then
@@ -11507,8 +15023,12 @@ begin
             btLongWord: TResEvalInt(Result).Typed:=reitLongWord;
             btLongint: TResEvalInt(Result).Typed:=reitLongInt;
             btUIntDouble: TResEvalInt(Result).Typed:=reitUIntDouble;
+            {$ifdef HasInt64}
             btIntDouble: TResEvalInt(Result).Typed:=reitIntDouble;
             btInt64: TResEvalInt(Result).Typed:=reitNone; // default
+            {$else}
+            btIntDouble: TResEvalInt(Result).Typed:=reitNone; // default
+            {$endif}
             else
               ReleaseEvalValue(Result);
               RaiseNotYetImplemented(20170624181050,TPasConst(Decl).VarType);
@@ -11516,9 +15036,18 @@ begin
           end;
         exit;
         end;
+      end
+    else if vmExternal in TPasConst(Decl).VarModifiers then
+      begin
+      Result:=TResEvalExternal.Create;
+      Result.IdentEl:=Decl;
+      exit;
       end;
     if refConst in Flags then
+      begin
+      ReleaseEvalValue(Result);
       RaiseConstantExprExp(20170518214928,Expr);
+      end;
     end
   else if C=TPasEnumValue then
     begin
@@ -11530,10 +15059,11 @@ begin
   else if C.InheritsFrom(TPasType) then
     Result:=EvalTypeRange(TPasType(Decl),Flags);
   {$IFDEF VerbosePasResEval}
-  writeln('TPasResolver.OnExprEvalIdentifier END Result=',dbgs(Result),' refConst=',refConst in Flags);
+  writeln('TPasResolver.OnExprEvalIdentifier END Result=',dbgs(Result),' refConst=',refConst in Flags,' refConstExt=',refConstExt in Flags);
   {$ENDIF}
-  if (Result=nil) and (refConst in Flags) then
+  if (Result=nil) and ([refConst,refConstExt]*Flags<>[]) then
     RaiseConstantExprExp(20170518213616,Expr);
+  if Sender=nil then ;
 end;
 
 function TPasResolver.OnExprEvalParams(Sender: TResExprEvaluator;
@@ -11567,24 +15097,20 @@ begin
           {$IFDEF VerbosePasResEval}
           writeln('TPasResolver.OnExprEvalParams Calling BuiltInProc ',Decl.Name,' ',ResolverBuiltInProcNames[BuiltInProc.BuiltIn]);
           {$ENDIF}
-          case BuiltInProc.BuiltIn of
-            bfLength: BI_Length_OnEval(BuiltInProc,Params,Flags,Result);
-            bfAssigned: Result:=nil;
-            bfChr: BI_Chr_OnEval(BuiltInProc,Params,Flags,Result);
-            bfOrd: BI_Ord_OnEval(BuiltInProc,Params,Flags,Result);
-            bfLow,bfHigh: BI_LowHigh_OnEval(BuiltInProc,Params,Flags,Result);
-            bfPred,bfSucc: BI_PredSucc_OnEval(BuiltInProc,Params,Flags,Result);
-            bfStrFunc: BI_StrFunc_OnEval(BuiltInProc,Params,Flags,Result);
-            bfConcatArray: Result:=nil;
-            bfCopyArray: Result:=nil;
-            bfTypeInfo: Result:=nil;
-            bfDefault: BI_Default_OnEval(BuiltInProc,Params,Flags,Result);
+          if BuiltInProc.Eval<>nil then
+            BuiltInProc.Eval(BuiltInProc,Params,Flags,Result)
           else
-            {$IFDEF VerbosePasResEval}
-            writeln('TPasResolver.OnExprEvalParams Unhandled BuiltInProc ',Decl.Name,' ',ResolverBuiltInProcNames[BuiltInProc.BuiltIn]);
-            {$ENDIF}
-            RaiseNotYetImplemented(20170624192324,Params);
-          end;
+            case BuiltInProc.BuiltIn of
+              bfAssigned: Result:=nil;
+              bfConcatArray: Result:=nil;
+              bfCopyArray: Result:=nil;
+              bfTypeInfo: Result:=nil;
+            else
+              {$IFDEF VerbosePasResEval}
+              writeln('TPasResolver.OnExprEvalParams Unhandled BuiltInProc ',Decl.Name,' ',ResolverBuiltInProcNames[BuiltInProc.BuiltIn]);
+              {$ENDIF}
+              RaiseNotYetImplemented(20170624192324,Params);
+            end;
           {$IFDEF VerbosePasResEval}
           {AllowWriteln}
           if Result<>nil then
@@ -11632,6 +15158,7 @@ begin
   pekSet: ;
   end;
   if Flags=[] then ;
+  if Sender=nil then ;
 end;
 
 procedure TPasResolver.OnRangeCheckEl(Sender: TResExprEvaluator;
@@ -11641,16 +15168,17 @@ begin
   if (MsgType=mtWarning)
       and (bsRangeChecks in CurrentParser.Scanner.CurrentBoolSwitches) then
     MsgType:=mtError;
+  if Sender=nil then ;
 end;
 
 function TPasResolver.EvalBaseTypeCast(Params: TParamsExpr;
   bt: TResolverBaseType): TResEvalvalue;
 
-  procedure TCFloatToInt(Value: TResEvalValue; Flo: MaxPrecFloat);
+  procedure TCFloatToInt(Value: TResEvalValue; Flo: TMaxPrecFloat);
   var
-    Int, MinIntVal, MaxIntVal: MaxPrecInt;
+    Int, MinIntVal, MaxIntVal: TMaxPrecInt;
   begin
-    if bt in (btAllInteger-[btQWord]) then
+    if bt in btAllIntegerNoQWord then
       begin
       // float to int
       GetIntegerRange(bt,MinIntVal,MaxIntVal);
@@ -11673,8 +15201,12 @@ function TPasResolver.EvalBaseTypeCast(Params: TParamsExpr;
         btLongWord: Result:=TResEvalInt.CreateValue(Int,reitLongWord);
         btLongint: Result:=TResEvalInt.CreateValue(Int,reitLongInt);
         btUIntDouble: Result:=TResEvalInt.CreateValue(Int,reitUIntDouble);
+        {$ifdef HasInt64}
         btIntDouble: Result:=TResEvalInt.CreateValue(Int,reitIntDouble);
-        btInt64: Result:=TResEvalInt.CreateValue(Int);
+        btInt64: Result:=TResEvalInt.CreateValue(Int); // default
+        {$else}
+        btIntDouble: Result:=TResEvalInt.CreateValue(Int); // default
+        {$endif}
       else
         RaiseNotYetImplemented(20170711001513,Params);
       end;
@@ -11685,7 +15217,7 @@ function TPasResolver.EvalBaseTypeCast(Params: TParamsExpr;
       begin
       // float to single
       try
-        Result:=TResEvalFloat.CreateValue(single(Flo));
+        Result:=TResEvalFloat.CreateValue({$ifdef pas2js}double{$else}single{$endif}(Flo));
       except
         RaiseMsg(20170711002315,nRangeCheckError,sRangeCheckError,[],Params);
       end;
@@ -11719,31 +15251,32 @@ function TPasResolver.EvalBaseTypeCast(Params: TParamsExpr;
 
 var
   Value: TResEvalValue;
-  Int: MaxPrecInt;
-  MinIntVal, MaxIntVal: int64;
-  Flo: MaxPrecFloat;
-  c: Char;
+  Int, MinIntVal, MaxIntVal: TMaxPrecInt;
+  Flo: TMaxPrecFloat;
   w: WideChar;
 begin
   Result:=nil;
   {$IFDEF VerbosePasResEval}
   writeln('TPasResolver.EvalBaseTypeCast bt=',bt);
   {$ENDIF}
-  Value:=Eval(Params.Params[0],[refAutoConst]);
+  Value:=Eval(Params.Params[0],[refAutoConstExt]);
   if Value=nil then exit;
   try
     case Value.Kind of
     revkInt:
       begin
       Int:=TResEvalInt(Value).Int;
+      {$ifdef HasInt64}
       if bt=btQWord then
         begin
         // int to qword
         {$R-}
-        Result:=TResEvalUInt.CreateValue(MaxPrecUInt(Int));
+        Result:=TResEvalUInt.CreateValue(TMaxPrecUInt(Int));
         {$IFDEF RangeCheckOn}{$R+}{$ENDIF}
         end
-      else if bt in (btAllInteger-[btQWord]) then
+      else
+      {$endif}
+      if bt in btAllIntegerNoQWord then
         begin
         // int to int
         GetIntegerRange(bt,MinIntVal,MaxIntVal);
@@ -11757,7 +15290,9 @@ begin
             btSmallInt: Result:=TResEvalInt.CreateValue(smallint(Int),reitSmallInt);
             btLongWord: Result:=TResEvalInt.CreateValue(longword(Int),reitLongWord);
             btLongint: Result:=TResEvalInt.CreateValue(longint(Int),reitLongInt);
+            {$ifdef HasInt64}
             btInt64: Result:=TResEvalInt.CreateValue(Int);
+            {$endif}
             btUIntSingle,
             btIntSingle,
             btUIntDouble,
@@ -11782,8 +15317,12 @@ begin
             btLongWord: Result:=TResEvalInt.CreateValue(Int,reitLongWord);
             btLongint: Result:=TResEvalInt.CreateValue(Int,reitLongInt);
             btUIntDouble: Result:=TResEvalInt.CreateValue(Int,reitUIntDouble);
+            {$ifdef HasInt64}
             btIntDouble: Result:=TResEvalInt.CreateValue(Int,reitIntDouble);
-            btInt64: Result:=TResEvalInt.CreateValue(Int);
+            btInt64: Result:=TResEvalInt.CreateValue(Int); // default
+            {$else}
+            btIntDouble: Result:=TResEvalInt.CreateValue(Int); // default
+            {$endif}
           else
             RaiseNotYetImplemented(20170624200109,Params);
           end;
@@ -11799,13 +15338,14 @@ begin
           fExprEvaluator.EmitRangeCheckConst(20170710203254,
             Value.AsString,0,1,Params,mtError);
         end
+      {$ifdef FPC_HAS_CPSTRING}
       else if (bt=btAnsiChar) or ((bt=btChar) and (BaseTypeChar=btAnsiChar)) then
         try
-          c:=Char(Int);
-          Result:=TResEvalString.CreateValue(c);
+          Result:=TResEvalString.CreateValue(Char(Int));
         except
           RaiseMsg(20180125112510,nRangeCheckError,sRangeCheckError,[],Params);
         end
+      {$endif}
       else if (bt=btWideChar) or ((bt=btChar) and (BaseTypeChar=btWideChar)) then
         try
           w:=WideChar(Int);
@@ -11815,7 +15355,7 @@ begin
         end
       else if bt=btSingle then
         try
-          Result:=TResEvalFloat.CreateValue(Single(Int));
+          Result:=TResEvalFloat.CreateValue({$ifdef pas2js}double{$else}single{$endif}(Int));
         except
           RaiseMsg(20170711002015,nRangeCheckError,sRangeCheckError,[],Params);
         end
@@ -11857,6 +15397,95 @@ begin
         TCFloatToInt(Value,Flo);
         end;
       end;
+    {$ifdef FPC_HAS_CPSTRING}
+    revkString:
+      begin
+      if (bt=btAnsiChar) or ((bt=btChar) and (BaseTypeChar=btWideChar)) then
+        begin
+        // ansichar(ansistring)
+        if fExprEvaluator.StringToOrd(Value,nil)>$ffff then
+          RaiseXExpectedButYFound(20181005141025,'char','string',Params);
+        Result:=Value;
+        Value:=nil;
+        end
+      else if (bt=btWideChar) or ((bt=btChar) and (BaseTypeChar=btWideChar)) then
+        begin
+        // widechar(ansistring)
+        if fExprEvaluator.GetWideChar(TResEvalString(Value).S,w) then
+          begin
+          Result:=Value;
+          Value:=nil;
+          end
+        else
+          RaiseXExpectedButYFound(20181005141058,'char','string',Params);
+        end
+      else if (bt=btAnsiString) or ((bt=btString) and (BaseTypeString=btAnsiString)) then
+        begin
+        // ansistring(ansistring)
+        Result:=Value;
+        Value:=nil;
+        end
+      else if (bt=btUnicodeString) or (bt=btWideString)
+          or ((bt=btString) and (BaseTypeString=btUnicodeString)) then
+        begin
+        // unicodestring(ansistring)
+        Result:=TResEvalUTF16.CreateValue(
+                  fExprEvaluator.GetUnicodeStr(TResEvalString(Value).S,Params));
+        end
+      else if bt=btRawByteString then
+        begin
+        // rawbytestring(ansistring)
+        SetCodePage(TResEvalString(Value).S,CP_NONE,false);
+        end;
+      end;
+    {$endif}
+    revkUnicodeString:
+      if length(TResEvalUTF16(Value).S)=1 then
+        begin
+        w:=TResEvalUTF16(Value).S[1];
+        {$ifdef FPC_HAS_CPSTRING}
+        if (bt=btAnsiChar) or ((bt=btChar) and (BaseTypeChar=btAnsiChar)) then
+          begin
+          // ansichar(unicodestring)
+          if ord(w)<=255 then
+            begin
+            Result:=Value;
+            Value:=nil;
+            end
+          else
+            RaiseMsg(20181005141632,nRangeCheckError,sRangeCheckError,[],Params);
+          end
+        else
+        {$endif}
+        if (bt=btWideChar) or ((bt=btChar) and (BaseTypeChar=btWideChar)) then
+          begin
+          // widechar(unicodestring)
+          Result:=Value;
+          Value:=nil;
+          end;
+        end
+      {$ifdef FPC_HAS_CPSTRING}
+      else if (bt=btAnsiString) or ((bt=btString) and (BaseTypeString=btAnsiString)) then
+        begin
+        // ansistring(unicodestring)
+        Result:=TResEvalString.CreateValue(
+                   fExprEvaluator.GetRawByteString(TResEvalUTF16(Value).S,CP_ACP,Params));
+        end
+      else if bt=btRawByteString then
+        begin
+        // rawbytestring(unicodestring)
+        Result:=TResEvalString.CreateValue(
+             fExprEvaluator.GetRawByteString(TResEvalUTF16(Value).S,CP_NONE,Params));
+        end
+      {$endif}
+      else if (bt=btUnicodeString) or ((bt=btString) and (BaseTypeString=btUnicodeString)) then
+        begin
+        // unicodestring(unicodestring)
+        Result:=Value;
+        Value:=nil;
+        end;
+    revkExternal:
+      exit;
     else
       {$IFDEF VerbosePasResEval}
       writeln('TPasResolver.OnExprEvalParams typecast to ',bt);
@@ -11866,6 +15495,2697 @@ begin
   finally
     ReleaseEvalValue(Value);
   end;
+end;
+
+procedure TPasResolver.AddGenericTemplateIdentifiers(
+  GenericTemplateTypes: TFPList; Scope: TPasIdentifierScope);
+var
+  TemplType: TPasGenericTemplateType;
+  i: Integer;
+begin
+  if GenericTemplateTypes=nil then exit;
+  for i:=0 to GenericTemplateTypes.Count-1 do
+    begin
+    TemplType:=TPasGenericTemplateType(GenericTemplateTypes[i]);
+    Scope.AddIdentifier(TemplType.Name,TemplType,pikSimple);
+    end;
+end;
+
+procedure TPasResolver.AddSpecializedTemplateIdentifiers(
+  GenericTemplateTypes: TFPList; SpecializedItem: TPRSpecializedItem;
+  Scope: TPasIdentifierScope; CheckConstraints: boolean);
+var
+  i: Integer;
+  TemplType: TPasGenericTemplateType;
+  ParamTypes: TPasTypeArray;
+  ParamType: TPasType;
+  ErrorPos: TPasElement;
+begin
+  ParamTypes:=SpecializedItem.Params;
+  ErrorPos:=SpecializedItem.FirstSpecialize;
+  for i:=0 to length(ParamTypes)-1 do
+    begin
+    TemplType:=TPasGenericTemplateType(GenericTemplateTypes[i]);
+    ParamType:=ParamTypes[i];
+
+    if CheckConstraints then
+      begin
+      if ParamType is TPasGenericTemplateType then
+        CheckTemplateFitsTemplate(TPasGenericTemplateType(ParamType),
+                                             TemplType,ErrorPos)
+      else
+        CheckTemplateFitsParam(ParamType,TemplType,SpecializedItem,
+                               prtcoAssignToTempl,ErrorPos);
+      end;
+
+    AddIdentifier(Scope,TemplType.Name,ParamTypes[i],pikSimple);
+    end;
+end;
+
+function TPasResolver.CreateInferenceTypesForCall(Params: TParamsExpr;
+  TargetProc: TPasProcedure): TFPList;
+type
+  TInferredType = record
+    InferType: TPasType;
+    IsVarOut: boolean;
+  end;
+  TInferredTypes = array of TInferredType;
+
+  procedure RaiseInferTypeMismatch(const Id: TMaxPrecInt; ArgType: TPasType;
+    ErrorPos: TPasElement);
+  begin
+    RaiseMsg(Id,nInferredTypeXFromDiffArgsMismatchFromMethodY,
+      sInferredTypeXFromDiffArgsMismatchFromMethodY,
+      [ArgType.Name,TargetProc.Name],ErrorPos);
+  end;
+
+  procedure Infer(ArgParent: TPasElement; ArgType, ParamLoType, ParamHiType: TPasType;
+    NeedVar, IsSubType, IsDelphi: boolean;
+    InferenceParams: TInferredTypes; TemplTypes: TFPList;
+    ErrorPos: TPasElement);
+  var
+    C: TClass;
+    i: Integer;
+    OldInferType, ParamElType: TPasType;
+    ResolveAlias: TPRResolveAlias;
+    Arr: TPasArrayType;
+    Param1Resolved, Param2Resolved: TPasResolverResult;
+    NewBaseType, BaseType1, BaseType2: TResolverBaseType;
+  begin
+    if (ArgType=nil) or (ParamLoType=nil) then exit;
+    C:=ArgType.ClassType;
+    if C=TPasGenericTemplateType then
+      begin
+      i:=TemplTypes.IndexOf(ArgType);
+      if i>=0 then
+        begin
+        // a generic type param corresponds to ParamType
+        OldInferType:=InferenceParams[i].InferType;
+        if OldInferType=nil then
+          begin
+          // template type inferred first time
+          InferenceParams[i].InferType:=ParamHiType;
+          InferenceParams[i].IsVarOut:=NeedVar;
+          ParamHiType.AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+          exit;
+          end;
+
+        // already inferred -> check compatibility
+        ResolveAlias:=prraAlias;
+        if IsDelphi and (NeedVar or InferenceParams[i].IsVarOut) then
+          // Delphi allows passing alias, but not type alias to a var arg
+          ResolveAlias:=prraSimple;
+        if IsSameType(OldInferType,ParamHiType,ResolveAlias) then
+          exit; // same types -> ok
+
+        if IsSubType then
+          begin
+          if CheckElTypeCompatibility(OldInferType,InferenceParams[i].InferType,
+              ResolveAlias)<=cGenericExact then
+            exit;
+          // e.g. "array of TA" and "array of TB"
+          RaiseInferTypeMismatch(20191006215539,ArgType,ErrorPos);
+          end;
+
+        // top level type does not fit exactly
+        if NeedVar then
+          begin
+          // second is var/out
+          if InferenceParams[i].IsVarOut then
+            // two var/out arguments mismatch
+            RaiseInferTypeMismatch(20191006220355,ArgType,ErrorPos);
+          if CheckAssignCompatibility(ParamHiType,OldInferType,
+              false,ErrorPos)=cIncompatible then
+            // second is var/out, and do not match
+            RaiseInferTypeMismatch(20191006220402,ArgType,ErrorPos);
+          // first can be widened to fit
+          InferenceParams[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+          InferenceParams[i].InferType:=ParamHiType;
+          InferenceParams[i].IsVarOut:=NeedVar;
+          ParamHiType.AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+          exit;
+          end
+        else if InferenceParams[i].IsVarOut then
+          begin
+          // first was var/out
+          if CheckAssignCompatibility(OldInferType,ParamHiType,
+              false,ErrorPos)=cIncompatible then
+            // first was var/out, and do not match
+            RaiseInferTypeMismatch(20191006220750,ArgType,ErrorPos);
+          // second can be widened to fit
+          exit;
+          end;
+
+        // None is var/out -> find a type compatible to both
+        // widen type to some common base types to avoid high number of specialization
+        ComputeElement(ParamHiType,Param1Resolved,[],ErrorPos);
+        ComputeElement(InferenceParams[i].InferType,Param2Resolved,[],ErrorPos);
+        NewBaseType:=btNone;
+        BaseType1:=Param1Resolved.BaseType;
+        BaseType2:=Param2Resolved.BaseType;
+        if BaseType1 in btAllBooleans then
+          begin
+          if BaseType2 in btAllBooleans then
+            if BaseTypes[btBoolean]<>nil then
+              NewBaseType:=btBoolean
+            else
+              NewBaseType:=GetCombinedBoolean(BaseType1,BaseType2,ErrorPos);
+          end
+        else if BaseType1 in btAllInteger then
+          begin
+          NewBaseType:=TResolverBaseType(Max(ord(BaseType1),ord(BaseType2)));
+          if (BaseTypes[btLongint]<>nil)
+              and (NewBaseType in [btByte,btShortInt,btWord,btSmallInt,btIntSingle,btUIntSingle,btLongint])
+              and (BaseType1<>btLongWord) and (BaseType2<>btLongWord) then
+            NewBaseType:=btLongint
+          {$ifdef HasInt64}
+          else if (BaseTypes[btInt64]<>nil)
+              and (NewBaseType<=btInt64)
+              and (BaseType1<>btQWord) and (BaseType2<>btQWord) then
+            NewBaseType:=btInt64
+          {$endif}
+          else if (BaseTypes[btIntDouble]<>nil)
+              and (NewBaseType<=btIntDouble) then
+            NewBaseType:=btIntDouble
+          {$ifdef HasInt64}
+          else if (BaseTypes[btQWord]<>nil)
+              and not (NewBaseType in btAllSignedInteger) then
+            NewBaseType:=btQWord
+          {$endif}
+          else
+            NewBaseType:=GetCombinedInt(Param1Resolved,Param2Resolved,ErrorPos);
+          end
+        else if Param1Resolved.BaseType in btAllStringAndChars then
+          begin
+          if Param2Resolved.BaseType in btAllStringAndChars then
+            if BaseTypes[btUnicodeString]<>nil then
+              NewBaseType:=btUnicodeString
+            else
+              NewBaseType:=GetCombinedString(Param1Resolved,Param2Resolved,ErrorPos);
+          end
+        else if Param1Resolved.BaseType in btAllFloats then
+          begin
+          if BaseTypes[btDouble]<>nil then
+            NewBaseType:=btDouble;
+          end;
+        if NewBaseType<>btNone then
+          begin
+          InferenceParams[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+          InferenceParams[i].InferType:=BaseTypes[NewBaseType];
+          InferenceParams[i].IsVarOut:=NeedVar;
+          BaseTypes[NewBaseType].AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+          exit;
+          end;
+
+        // ToDo
+        RaiseInferTypeMismatch(20191006220406,ArgType,ErrorPos);
+        end;
+      end
+    else if ArgParent<>ArgType.Parent then
+      // ArgType is a reference
+    else if C=TPasArrayType then
+      begin
+      // e.g. Proc(a: array...)
+      Arr:=TPasArrayType(ArgType);
+      if ParamLoType.ClassType<>TPasArrayType then
+        exit;
+      ParamElType:=TPasArrayType(ParamLoType).ElType;
+      Infer(Arr,Arr.ElType,ParamElType,ResolveAliasType(ParamElType),
+            NeedVar,true,IsDelphi,InferenceParams,TemplTypes,ErrorPos);
+      end
+    else
+      begin
+      {$IFDEF VerbosePasResolver}
+      //writeln('Infer ArgType=',GetObjName(ArgType),' ParamLoType=',GetObjName(ParamLoType));
+      {$ENDIF}
+      end;
+  end;
+
+  procedure InferParam(i: integer; NeedVar: boolean; ParamsExprs: TPasExprArray;
+    ProcArgs: TFPList;
+    InferenceParams: TInferredTypes; TemplTypes: TFPList; IsDelphi: boolean);
+  var
+    Arg: TPasArgument;
+    ArgType: TPasType;
+    ArgResolved, ExprResolved: TPasResolverResult;
+    Expr: TPasExpr;
+  begin
+    //writeln('InferParam i=',i,' NeedVar=',NeedVar,' IsDelphi=',IsDelphi,' ProcArgs.Count=',ProcArgs.Count);
+    Arg:=TPasArgument(ProcArgs[i]);
+    ArgType:=Arg.ArgType;
+    if ArgType=nil then
+      exit; // untyped arg
+    if (ArgType.Parent<>Arg) and (ArgType.ClassType<>TPasGenericTemplateType) then
+      exit; // a reference -> no need to search for a template reference
+    if NeedVar<>(Arg.Access in [argVar, argOut]) then
+      exit;
+
+    if i<length(ParamsExprs) then
+      Expr:=ParamsExprs[i]
+    else
+      begin
+      Expr:=Arg.ValueExpr;
+      if Expr=nil then exit;
+      end;
+    ComputeArgumentAndExpr(Arg,ArgResolved,Expr,ExprResolved,false);
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.CreateInferenceTypesForCall Arg=',GetTreeDbg(Arg,2),' ArgResolved=',GetResolverResultDbg(ArgResolved));
+    {$ENDIF}
+
+    if ExprResolved.BaseType in btAllWithSubType then
+      begin
+      // passing a literal set or array or custom range
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.CreateInferenceTypesForCall.InferParam ToDo: ',GetResolverResultDbg(ExprResolved));
+      {$ENDIF}
+      end
+    else if (ExprResolved.SubType<>btNone) then
+      RaiseNotYetImplemented(20191006203622,Expr)
+    else
+      Infer(Arg,ArgType,ExprResolved.LoTypeEl,ExprResolved.HiTypeEl,
+            NeedVar,false,IsDelphi,
+            InferenceParams,TemplTypes,Expr);
+  end;
+
+var
+  TemplTypes, ProcArgs: TFPList;
+  InferenceTypes: TInferredTypes;
+  ParamsExprs: TPasExprArray;
+  IsDelphi: Boolean;
+  i: Integer;
+begin
+  Result:=nil;
+  TemplTypes:=GetProcTemplateTypes(TargetProc);
+  if (TemplTypes=nil) or (TemplTypes.Count=0) then
+    RaiseNotYetImplemented(20191006174321,Params);
+  ProcArgs:=TargetProc.ProcType.Args;
+  ParamsExprs:=Params.Params;
+  if ProcArgs.Count<length(ParamsExprs) then
+    RaiseNotYetImplemented(20191006183021,Params);
+
+  IsDelphi:=msDelphi in CurrentParser.CurrentModeswitches;
+  try
+    SetLength(InferenceTypes,TemplTypes.Count);
+    for i:=0 to TemplTypes.Count-1 do
+      InferenceTypes[i]:=Default(TInferredType);
+
+    // first infer from var/out args exact types
+    for i:=0 to ProcArgs.Count-1 do
+      InferParam(i,true,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
+
+    // then infer from the other args
+    for i:=0 to ProcArgs.Count-1 do
+      InferParam(i,false,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
+
+    // check that all types are inferred
+    for i:=0 to TemplTypes.Count-1 do
+      if InferenceTypes[i].InferType=nil then
+        RaiseMsg(20191006175104,nCouldNotInferTypeArgXForMethodY,
+          sCouldNotInferTypeArgXForMethodY,
+          [TPasGenericTemplateType(TemplTypes[i]).Name,TargetProc.Name],Params);
+
+    Result:=TFPList.Create;
+    for i:=0 to length(InferenceTypes)-1 do
+      begin
+      Result.Add(InferenceTypes[i].InferType);
+      InferenceTypes[i].InferType:=nil;
+      end;
+  finally
+    if Result=nil then
+      for i:=0 to length(InferenceTypes)-1 do
+        if InferenceTypes[i].InferType<>nil then
+          InferenceTypes[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
+  end;
+end;
+
+function TPasResolver.GetSpecializedEl(El: TPasElement; GenericEl: TPasElement;
+  Params: TFPList): TPasElement;
+var
+  Data: TPasSpecializeTypeData;
+  GenScope: TPasGenericScope;
+  GenericTemplateList: TFPList;
+  i, j: Integer;
+  Param: TPasElement;
+  ParamsResolved: TPasTypeArray;
+  ResolvedEl: TPasResolverResult;
+  SpecializedElList: TObjectList;
+  Item: TPRSpecializedItem;
+  SrcModule: TPasModule;
+  SrcModuleScope: TPasModuleScope;
+  SrcResolver: TPasResolver;
+  IsSelf: Boolean;
+  GenericType: TPasGenericType;
+  GenericProc: TPasProcedure;
+  ProcScope: TPasProcedureScope;
+begin
+  Result:=nil;
+  if El.CustomData<>nil then
+    RaiseNotYetImplemented(20190726142522,El);
+
+  // check if there is already such a specialization
+  GenScope:=nil;
+  GenericType:=nil;
+  GenericProc:=nil;
+  if GenericEl is TPasGenericType then
+    begin
+    GenericType:=TPasGenericType(GenericEl);
+    if not (GenericEl.CustomData is TPasGenericScope) then
+      RaiseMsg(20190726194316,nTypeXIsNotYetCompletelyDefined,sTypeXIsNotYetCompletelyDefined,
+        [GetTypeDescription(GenericType)],El);
+    GenScope:=TPasGenericScope(GenericEl.CustomData);
+
+    if (not (GenericType is TPasClassType))
+        and (GenScope.GenericStep<psgsInterfaceParsed) then
+      RaiseMsg(20190807205038,nTypeXIsNotYetCompletelyDefined,sTypeXIsNotYetCompletelyDefined,
+        [GetTypeDescription(GenericType)],El);
+    GenericTemplateList:=GenericType.GenericTemplateTypes;
+    end
+  else if GenericEl is TPasProcedure then
+    begin
+    GenericProc:=TPasProcedure(GenericEl);
+    if not (GenericProc.CustomData is TPasProcedureScope) then
+      RaiseMsg(20190919132733,nIdentifierNotFound,sIdentifierNotFound,
+        [GenericProc.Name],El);
+    ProcScope:=TPasProcedureScope(GenericProc.CustomData);
+    if ProcScope.DeclarationProc<>nil then
+      RaiseNotYetImplemented(20190920182602,El);
+    GenScope:=ProcScope;
+
+    if GenScope.GenericStep<psgsInterfaceParsed then
+      RaiseMsg(20190920120649,nTypeXIsNotYetCompletelyDefined,sTypeXIsNotYetCompletelyDefined,
+        [GetElementDbgPath(GenericProc)],El);
+    GenericTemplateList:=GetProcTemplateTypes(GenericProc);
+    end
+  else
+    RaiseNotYetImplemented(20190919132603,GenericEl);
+
+  SpecializedElList:=GenScope.SpecializedItems;
+  if GenericTemplateList=nil then
+    RaiseMsg(20190905111703,nXExpectedButYFound,sXExpectedButYFound,
+      ['generic templates',GenericEl.Name],El);
+  if GenericTemplateList.Count<>Params.Count then
+    RaiseMsg(20190905111704,nXExpectedButYFound,sXExpectedButYFound,
+      ['type with '+IntToStr(Params.Count)+' generic template(s)',
+       GenericEl.Name+GetGenericParamCommas(GenericTemplateList.Count)],El);
+
+  SetLength(ParamsResolved,Params.Count);
+  IsSelf:=true;
+  for i:=0 to Params.Count-1 do
+    begin
+    Param:=TPasElement(Params[i]);
+    ComputeElement(Param,ResolvedEl,[rcType]);
+    ParamsResolved[i]:=ResolvedEl.LoTypeEl;
+    if ResolvedEl.LoTypeEl<>TPasType(GenericTemplateList[i]) then
+      IsSelf:=false;
+    end;
+  if IsSelf then
+    exit(GenericEl);
+
+  if SpecializedElList=nil then
+    begin
+    SpecializedElList:=TObjectList.Create(true);
+    if GenScope<>nil then
+      GenScope.SpecializedItems:=SpecializedElList
+    else
+      RaiseNotYetImplemented(20190919133159,El);
+    end;
+  i:=SpecializedElList.Count-1;
+  Item:=nil;
+  while i>=0 do
+    begin
+    Item:=TPRSpecializedItem(SpecializedElList[i]);
+    j:=length(Item.Params)-1;
+    while j>=0 do
+      begin
+      if not IsSameType(Item.Params[j],ParamsResolved[j],prraNone)
+          and (CheckElTypeCompatibility(Item.Params[j],ParamsResolved[j],prraNone)>cExact) then
+        break;
+      dec(j);
+      end;
+    if j<0 then
+      break;
+    Item:=nil;
+    dec(i);
+    end;
+  if Item=nil then
+    begin
+    // new specialization
+    SrcModule:=GenericEl.GetModule;
+    SrcModuleScope:=SrcModule.CustomData as TPasModuleScope;
+    SrcResolver:=SrcModuleScope.Owner as TPasResolver;
+    Item:=SrcResolver.CreateSpecializedItem(El,GenericEl,ParamsResolved)
+    end;
+
+  Result:=Item.SpecializedEl;
+
+  if El.ClassType=TPasSpecializeType then
+    begin
+    Data:=TPasSpecializeTypeData.Create;
+    // add to free list
+    AddResolveData(El,Data,lkModule);
+    Data.SpecializedType:=Result as TPasGenericType;
+    end;
+end;
+
+function TPasResolver.CheckGenericConstraintFitsParam(ParamType: TPasType;
+  SpecializedItem: TPRSpecializedItem; TemplType: TPasGenericTemplateType;
+  ConEl: TPasElement; Operation: TPRTemplateCompOp; ErrorPos: TPasElement
+  ): integer;
+
+  function RaiseXExpButYFound(id: TMaxPrecInt; const X: string; Y: TPasType): integer;
+  begin
+    if ErrorPos<>nil then
+      RaiseXExpectedButTypeYFound(id,X,Y,ErrorPos);
+    Result:=cIncompatible;
+  end;
+
+  procedure RaiseNotValidConstraint(Id: TMaxPrecInt; ConEl: TPasElement);
+  begin
+    RaiseMsg(Id,nXIsNotAValidConstraint,sXIsNotAValidConstraint,
+      [GetElementSourcePosStr(ConEl)],ErrorPos);
+  end;
+
+  function ElementReferencesTemplateTypes(El: TPasElement;
+    GenericTemplateTypes: TFPList): boolean;
+  var
+    C: TClass;
+    Prim: TPrimitiveExpr;
+    Decl: TPasElement;
+    Bin: TBinaryExpr;
+    Spec: TPasSpecializeType;
+    Arr: TPasArrayType;
+    i: Integer;
+    InlineSpec: TInlineSpecializeExpr;
+  begin
+    Result:=false;
+    if El=nil then exit;
+    C:=El.ClassType;
+    if C=TPrimitiveExpr then
+      begin
+      Prim:=TPrimitiveExpr(El);
+      if Prim.Kind=pekIdent then
+        begin
+        if Prim.CustomData is TResolvedReference then
+          begin
+          Decl:=TResolvedReference(Prim.CustomData).Declaration;
+          exit(ElementReferencesTemplateTypes(Decl,GenericTemplateTypes));
+          end;
+        end
+      else
+        exit;
+      end
+    else if C=TBinaryExpr then
+      begin
+      Bin:=TBinaryExpr(El);
+      Result:=ElementReferencesTemplateTypes(Bin.left,GenericTemplateTypes)
+        or ElementReferencesTemplateTypes(Bin.right,GenericTemplateTypes);
+      end
+    else if C=TInlineSpecializeExpr then
+      begin
+      InlineSpec:=TInlineSpecializeExpr(El);
+      if ElementReferencesTemplateTypes(InlineSpec.NameExpr,GenericTemplateTypes) then
+        exit(true);
+      for i:=0 to InlineSpec.Params.Count-1 do
+        begin
+        Decl:=TPasElement(InlineSpec.Params[i]);
+        if Decl.Parent<>InlineSpec then continue;
+        if ElementReferencesTemplateTypes(Decl,GenericTemplateTypes) then
+          exit(true);
+        end;
+      end
+    else if C=TPasGenericTemplateType then
+      Result:=GenericTemplateTypes.IndexOf(El)>=0
+    else if C.InheritsFrom(TPasType) then
+      begin
+      if TPasType(El).Name<>'' then exit;
+      if C=TPasSpecializeType then
+        begin
+        Spec:=TPasSpecializeType(El);
+        if ElementReferencesTemplateTypes(Spec.DestType,GenericTemplateTypes) then
+          exit(true);
+        for i:=0 to Spec.Params.Count-1 do
+          if ElementReferencesTemplateTypes(TPasElement(Spec.Params[i]),GenericTemplateTypes) then
+            exit(true);
+        end
+      else if C=TPasArrayType then
+        begin
+        Arr:=TPasArrayType(El);
+        for i:=0 to length(Arr.Ranges)-1 do
+          if ElementReferencesTemplateTypes(Arr.Ranges[i],GenericTemplateTypes) then exit(true);
+        Result:=ElementReferencesTemplateTypes(Arr.ElType,GenericTemplateTypes);
+        end
+      else if C=TPasPointerType then
+        Result:=ElementReferencesTemplateTypes(TPasPointerType(El).DestType,GenericTemplateTypes)
+      else if C=TPasSetType then
+        Result:=ElementReferencesTemplateTypes(TPasSetType(El).EnumType,GenericTemplateTypes)
+      else if C=TPasEnumType then
+      else
+        RaiseNotYetImplemented(20190905110152,El);
+      end
+    else
+      RaiseNotYetImplemented(20190905105648,El);
+  end;
+
+var
+  ConToken: TToken;
+  aClass, ConstraintClass: TPasClassType;
+  GenTempl: TPasGenericTemplateType;
+  i: Integer;
+  ResolvedEl: TPasResolverResult;
+  ConType: TPasType;
+  GenericTemplateTypes: TFPList;
+  GenericEl: TPasElement;
+begin
+  ConToken:=GetGenericConstraintKeyword(ConEl);
+  case ConToken of
+  tkrecord:
+    begin
+    if ParamType is TPasRecordType then exit(cExact);
+    exit(RaiseXExpButYFound(20190725200015,'record type',ParamType));
+    end;
+  tkclass,tkconstructor:
+    begin
+    if not (ParamType is TPasClassType) then
+      exit(RaiseXExpButYFound(20190726133231,'class type',ParamType));
+    aClass:=TPasClassType(ParamType);
+    if aClass.ObjKind<>okClass then
+      exit(RaiseXExpButYFound(20190726133232,'class type',ParamType));
+    if aClass.IsExternal then
+      exit(RaiseXExpButYFound(20190726133233,'non external class type',ParamType));
+    if ConToken=tkconstructor then
+      begin
+      if FindDefaultConstructor(aClass)=nil then
+        exit(RaiseXExpButYFound(20190831000225,'class type with constructor create()',ParamType));
+      end;
+    exit;
+    end;
+  end;
+
+  if not (ConEl is TPasType) then
+    RaiseNotYetImplemented(20190912214727,ConEl,GetObjPath(ErrorPos));
+
+  // constraint can be a class type, interface type or a template type
+  // Param must be a class
+  if SpecializedItem<>nil then
+    begin
+    GenericEl:=SpecializedItem.GenericEl;
+    if GenericEl is TPasGenericType then
+      GenericTemplateTypes:=TPasGenericType(GenericEl).GenericTemplateTypes
+    else if GenericEl is TPasProcedure then
+      GenericTemplateTypes:=GetProcTemplateTypes(TPasProcedure(GenericEl))
+    else
+      RaiseNotYetImplemented(20190920114755,ConEl);
+    if ElementReferencesTemplateTypes(ConEl,GenericTemplateTypes) then
+      begin
+      // constraint contains templates -> specialize constraint
+      if ConEl is TPasType then
+        begin
+        // type reference
+        ConType:=TPasType(ConEl);
+        i:=length(SpecializedItem.SpecializedConstraints);
+        Setlength(SpecializedItem.SpecializedConstraints,i+1);
+        SpecializedItem.SpecializedConstraints[i]:=nil;
+        SpecializeElType(TemplType,SpecializedItem.SpecializedEl,ConType,
+                         TPasType(SpecializedItem.SpecializedConstraints[i]));
+        ConEl:=SpecializedItem.SpecializedConstraints[i];
+        end
+      else
+        // non type reference
+        RaiseNotValidConstraint(20190915181137,ConEl);
+      end;
+    end;
+  ComputeElement(ConEl,ResolvedEl,[rcType]);
+  if ResolvedEl.BaseType<>btContext then
+    RaiseNotValidConstraint(20190914105836,ConEl);
+
+  if ResolvedEl.HiTypeEl.Name='' then
+    RaiseNotValidConstraint(20190726134037,GetGenericConstraintErrorEl(ConEl,TemplType));
+  if ResolvedEl.LoTypeEl is TPasGenericTemplateType then
+    begin
+    GenTempl:=TPasGenericTemplateType(ResolvedEl.LoTypeEl);
+    if GenTempl=ConEl.Parent then
+      RaiseNotYetImplemented(20190831213359,GenTempl);
+    Result:=CheckTemplateFitsParam(ParamType,GenTempl,nil,Operation,ErrorPos);
+    end
+  else if ResolvedEl.LoTypeEl is TPasClassType then
+    begin
+    // constraint is classtype or interfacetype
+    ConstraintClass:=TPasClassType(ResolvedEl.LoTypeEl);
+    if not (ParamType is TPasClassType) then
+      begin
+      if ErrorPos<>nil then
+        RaiseIncompatibleType(20190726135859,nIncompatibleTypesGotExpected,[''],
+                              ParamType,ConstraintClass,ErrorPos);
+      exit(cIncompatible);
+      end;
+    if TPasClassType(ParamType).ObjKind<>okClass then
+      begin
+      if ErrorPos<>nil then
+        RaiseMsg(20190904175144,nXExpectedButYFound,sXExpectedButYFound,
+                 ['class',GetTypeDescription(ParamType)],ErrorPos);
+      exit(cIncompatible);
+      end;
+    case ConstraintClass.ObjKind of
+    okClass:
+      case Operation of
+      prtcoAssignToTempl:
+        // TemplateClass:=ParamClassType
+        if CheckClassIsClass(ParamType,ConstraintClass)=cIncompatible then
+          begin
+          // ParamType is not ConstraintClass
+          if ErrorPos<>nil then
+            RaiseIncompatibleType(20190726135309,nIncompatibleTypesGotExpected,[''],
+                                    ParamType,ConstraintClass,ErrorPos);
+          exit(cIncompatible);
+          end;
+      prtcoAssignFromTempl:
+        // ParamClassType:=TemplateClass
+        if CheckClassIsClass(ConstraintClass,ParamType)<>cIncompatible then
+          begin
+          // ConstraintClass is not ParamType
+          if ErrorPos<>nil then
+            RaiseIncompatibleType(20190915202812,nIncompatibleTypesGotExpected,[''],
+                                  ConstraintClass,ParamType,ErrorPos);
+          exit(cIncompatible);
+          end;
+      prtcoEqual:
+        // TemplateClass=ParamClassType
+        if (CheckClassIsClass(ParamType,ConstraintClass)=cIncompatible)
+            and (CheckClassIsClass(ConstraintClass,ParamType)<>cIncompatible) then
+          begin
+          // ParamType is not related to ConstraintClass
+          if ErrorPos<>nil then
+            RaiseIncompatibleType(20190915203651,nIncompatibleTypesGotExpected,[''],
+                                    ParamType,ConstraintClass,ErrorPos);
+          exit(cIncompatible);
+          end;
+      else
+        RaiseNotYetImplemented(20190915203439,ConEl);
+      end;
+    okInterface:
+      case Operation of
+      prtcoAssignToTempl:
+        // TemplateClassWithIntf:=ParamClassType
+        if GetClassImplementsIntf(TPasClassType(ParamType),ConstraintClass)=nil then
+          begin
+          // ParamType does not implement ConstraintClass
+          if ErrorPos<>nil then
+            RaiseIncompatibleType(20190726135458,nIncompatibleTypesGotExpected,[''],
+                                  ParamType,ConstraintClass,ErrorPos);
+          exit(cIncompatible);
+          end;
+      prtcoAssignFromTempl:
+        // ParamClassType:=TemplateClassWithIntf
+        begin
+        // check when specialize
+        end;
+      prtcoEqual:
+        // TemplateClassWithIntf=ParamClassType
+        begin
+        // check when specialize
+        end;
+      else
+        RaiseNotYetImplemented(20190915203218,ConEl);
+      end;
+    else
+      if ErrorPos<>nil then
+        RaiseIncompatibleType(20190726135310,nIncompatibleTypesGotExpected,[''],
+                              ParamType,ConstraintClass,ErrorPos);
+      exit(cIncompatible);
+    end;
+    end
+  else
+    begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.CheckSpecializedParamFitsConstraintExpr ',GetObjPath(ResolvedEl.LoTypeEl));
+    {$ENDIF}
+    RaiseMsg(20190726134223,nXIsNotAValidConstraint,sXIsNotAValidConstraint,
+             [GetElementSourcePosStr(GetGenericConstraintErrorEl(ConEl,ConEl.Parent))],
+              ErrorPos);
+    end;
+  Result:=cExact;
+end;
+
+function TPasResolver.CheckTemplateFitsParam(ParamType: TPasType;
+  GenTempl: TPasGenericTemplateType; SpecializedItem: TPRSpecializedItem;
+  Operation: TPRTemplateCompOp; ErrorPos: TPasElement): integer;
+var
+  i: Integer;
+begin
+  // check if the ParamType fits the constraints
+  for i:=0 to length(GenTempl.Constraints)-1 do
+    begin
+    Result:=CheckGenericConstraintFitsParam(ParamType,SpecializedItem,
+                       GenTempl,GenTempl.Constraints[i],Operation,ErrorPos);
+    if Result=cIncompatible then exit;
+    end;
+  Result:=cExact;
+end;
+
+function TPasResolver.CheckTemplateFitsParamRes(
+  GenTempl: TPasGenericTemplateType; const ResolvedEl: TPasResolverResult;
+  Operation: TPRTemplateCompOp; ErrorPos: TPasElement): integer;
+var
+  i: Integer;
+  ConEl: TPasElement;
+  ConToken: TToken;
+  LoTypeEl: TPasType;
+begin
+  if length(GenTempl.Constraints)=0 then
+    exit(cGenericExact);
+  if ResolvedEl.BaseType=btContext then
+    begin
+    LoTypeEl:=ResolvedEl.LoTypeEl;
+    if LoTypeEl is TPasGenericTemplateType then
+      begin
+      if LoTypeEl=GenTempl then
+        exit(cGenericExact);
+      if (Operation=prtcoAssignToTempl) and (ErrorPos<>nil) then
+        CheckTemplateFitsTemplate(TPasGenericTemplateType(LoTypeEl),GenTempl,ErrorPos);
+      Result:=cGenericExact;
+      end
+    else
+      Result:=CheckTemplateFitsParam(LoTypeEl,GenTempl,nil,Operation,ErrorPos);
+    end
+  else if ResolvedEl.BaseType=btNil then
+    begin
+    for i:=0 to length(GenTempl.Constraints)-1 do
+      begin
+      ConEl:=GenTempl.Constraints[i];
+      ConToken:=GetGenericConstraintKeyword(ConEl);
+      if ConToken=tkrecord then
+        begin
+        if ErrorPos<>nil then
+          RaiseXExpectedButYFound(20190915211000,'record type','nil',ErrorPos);
+        exit(cIncompatible);
+        end;
+      end;
+    Result:=cGenericExact;
+    end
+  else
+    begin
+    if ErrorPos<>nil then
+      RaiseNotYetImplemented(20190915205441,ErrorPos);
+    Result:=cIncompatible;
+    end;
+end;
+
+procedure TPasResolver.CheckTemplateFitsTemplate(ParamTemplType,
+  GenTempl: TPasGenericTemplateType; ErrorPos: TPasElement);
+
+  procedure RaiseNotValidConstraint(const Id: TMaxPrecInt; ConEl: TPasElement);
+  begin
+    RaiseMsg(Id,nXIsNotAValidConstraint,sXIsNotAValidConstraint,
+      [GetElementTypeName(ConEl)],GetGenericConstraintErrorEl(ConEl,GenTempl));
+  end;
+
+var
+  ParamConstraints: TPasElementArray;
+  j, k: Integer;
+  ConToken: TToken;
+  ConstraintClass, ParamClassType: TPasClassType;
+  ConEl, ParamConstraintEl: TPasElement;
+  ParamLoType, ParamHiType: TPasType;
+  ResolvedEl: TPasResolverResult;
+begin
+  ParamConstraints:=ParamTemplType.Constraints;
+  for j:=0 to length(GenTempl.Constraints)-1 do
+    begin
+    ConEl:=GenTempl.Constraints[j];
+    ConToken:=GetGenericConstraintKeyword(ConEl);
+    if ConToken<>tkEOF then
+      begin
+      // constraint is keyword
+      // -> check if keyword is in ParamConstraints
+      k:=length(ParamConstraints)-1;
+      while (k>=0) and (GetGenericConstraintKeyword(ParamConstraints[k])<>ConToken) do
+        dec(k);
+      if k<0 then
+        RaiseMsg(20190816230021,nTypeParamXIsMissingConstraintY,
+          sTypeParamXIsMissingConstraintY,
+          [ParamTemplType.Name,TokenInfos[ConToken]],ErrorPos);
+      end
+    else if ConEl is TPasType then
+      begin
+      // constraint is a type
+      ComputeElement(ConEl,ResolvedEl,[rcType]);
+      if ResolvedEl.BaseType<>btContext then
+        RaiseNotValidConstraint(20190816231846,ConEl);
+      if not (ResolvedEl.LoTypeEl is TPasClassType) then
+        RaiseNotValidConstraint(20190816231849,ConEl);
+      ConstraintClass:=TPasClassType(ResolvedEl.LoTypeEl);
+      // constraint is class/interface type
+      // -> check if one of ParamConstraints fits the constraint type
+      // i.e. ParamConstraints must be more strict than target constraints
+      k:=length(ParamConstraints)-1;
+      while k>=0 do
+        begin
+        ParamConstraintEl:=ParamConstraints[k];
+        if ParamConstraintEl is TPasType then
+          begin
+          ParamHiType:=TPasType(ParamConstraintEl);
+          ParamLoType:=ResolveAliasType(ParamHiType);
+          if not (ParamLoType is TPasClassType) then
+            RaiseMsg(20190816232459,nXExpectedButYFound,sXExpectedButYFound,
+              ['type',GetTypeDescription(ParamHiType)],
+              GetGenericConstraintErrorEl(ParamConstraintEl,ParamTemplType));
+          ParamClassType:=TPasClassType(ParamLoType);
+          if (ConstraintClass.ObjKind=okInterface)
+              and (ParamClassType.ObjKind=okClass) then
+            begin
+            if GetClassImplementsIntf(ParamClassType,ConstraintClass)<>nil then
+              break;
+            end
+          else
+            begin
+            if CheckClassIsClass(ParamClassType,ConstraintClass)<cIncompatible then
+              break;
+            end;
+          end;
+        dec(k);
+        end;
+      if k<0 then
+        begin
+        if ConstraintClass.ObjKind=okInterface then
+          RaiseMsg(20190816233102,nTypeParamXMustSupportIntfY,
+            sTypeParamXMustSupportIntfY,
+            [ParamTemplType.Name,GetTypeDescription(ConstraintClass)],ErrorPos)
+        else
+          RaiseMsg(20190816230021,nTypeParamXIsNotCompatibleWithY,
+            sTypeParamXIsNotCompatibleWithY,
+            [ParamTemplType.Name,GetTypeDescription(ConstraintClass)],ErrorPos);
+        end;
+      end
+    else
+      RaiseNotYetImplemented(20190912215702,GetGenericConstraintErrorEl(ConEl,GenTempl));
+    end;
+end;
+
+function TPasResolver.CreateSpecializedItem(El: TPasElement;
+  GenericEl: TPasElement; const ParamsResolved: TPasTypeArray
+  ): TPRSpecializedItem;
+var
+  NewEl: TPasElement;
+  GenScope: TPasGenericScope;
+  SpecializedItems: TObjectList;
+
+  procedure InsertBehind(List: TFPList);
+  var
+    Last: TPasElement;
+    i: Integer;
+  begin
+    Last:=GenericEl;
+    if SpecializedItems<>nil then
+      begin
+      i:=SpecializedItems.Count-2;
+      if i>=0 then
+        Last:=TPRSpecializedItem(SpecializedItems[i]).SpecializedEl;
+      end;
+    i:=List.IndexOf(Last);
+    if i<0 then
+      begin
+      {$IF defined(VerbosePasResolver) or defined(VerbosePas2JS)}
+      writeln('InsertBehind Generic=',GetObjName(GenericEl),' Last=',GetObjName(Last));
+      //for i:=0 to List.Count-1 do writeln('  ',GetObjName(TObject(List[i])));
+      {$ENDIF}
+      if GenericEl is TPasProcedure then
+        i:=List.Count-1
+      else
+        RaiseNotYetImplemented(20190826150507,El);
+      end;
+    List.Insert(i+1,NewEl);
+  end;
+
+var
+  NewName: String;
+  NewClass: TPTreeElement;
+  SrcModule: TPasModule;
+  SrcModuleScope: TPasModuleScope;
+  SrcResolver: TPasResolver;
+  NewParent: TPasElement;
+  TypeItem: TPRSpecializedTypeItem;
+  ProcItem: TPRSpecializedProcItem;
+begin
+  Result:=nil;
+  if Pos('$G',GenericEl.Name)>0 then
+    RaiseNotYetImplemented(20190813003729,El);
+
+  SrcModule:=GenericEl.GetModule;
+  SrcModuleScope:=SrcModule.CustomData as TPasModuleScope;
+  SrcResolver:=SrcModuleScope.Owner as TPasResolver;
+  if SrcResolver<>Self then
+    RaiseInternalError(20190728121705);
+
+  GenScope:=TPasGenericScope(GenericEl.CustomData);
+  SpecializedItems:=GenScope.SpecializedItems;
+
+  TypeItem:=nil;
+  ProcItem:=nil;
+  if GenericEl is TPasGenericType then
+    begin
+    TypeItem:=TPRSpecializedTypeItem.Create;
+    Result:=TypeItem;
+    end
+  else if GenericEl is TPasProcedure then
+    begin
+    ProcItem:=TPRSpecializedProcItem.Create;
+    Result:=ProcItem;
+    end
+  else
+    RaiseNotYetImplemented(20190920140756,GenericEl);
+  Result.GenericEl:=GenericEl;
+  Result.FirstSpecialize:=El;
+  Result.Params:=ParamsResolved;
+  Result.Index:=SpecializedItems.Count;
+  SpecializedItems.Add(Result);
+  NewName:=CreateSpecializedTypeName(SpecializedItems,Result);
+  NewClass:=TPTreeElement(GenericEl.ClassType);
+  NewParent:=GenericEl.Parent;
+  NewEl:=TPasElement(NewClass.Create(NewName,NewParent));
+  if TypeItem<>nil then
+    TypeItem.SpecializedType:=TPasGenericType(NewEl) // this calls AddRef
+  else
+    ProcItem.SpecializedProc:=TPasProcedure(NewEl); // this calls AddRef
+
+  if NewParent is TPasDeclarations then
+    begin
+    InsertBehind(TPasDeclarations(NewParent).Declarations);
+    {$IFDEF CheckPasTreeRefCount}NewEl.RefIds.Add('TPasDeclarations.Children');{$ENDIF}
+    end
+  else if NewParent is TPasMembersType then
+    begin
+    InsertBehind(TPasMembersType(NewParent).Members);
+    {$IFDEF CheckPasTreeRefCount}NewEl.RefIds.Add('TPasMembersType.Members');{$ENDIF}
+    end
+  else
+    NewEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF}; // fix refcount
+
+  if GenScope.GenericStep>=psgsInterfaceParsed then
+    SpecializeGenericIntf(Result);
+
+  if GenScope.GenericStep>=psgsImplementationParsed then
+    SpecializeGenericImpl(Result);
+end;
+
+function TPasResolver.CreateSpecializedTypeName(SpecializedItems: TObjectList;
+  Item: TPRSpecializedItem): string;
+begin
+  Result:=Item.GenericEl.Name+'$G'+IntToStr(SpecializedItems.Count);
+end;
+
+procedure TPasResolver.InitSpecializeScopes(El: TPasElement; out
+  State: TScopeStashState);
+
+  function PushParentScopes(CurEl: TPasElement): integer;
+  var
+    Keep: Integer;
+    Scope: TPasScope;
+    IntfSection: TInterfaceSection;
+  begin
+    {$IFDEF VerboseInitSpecializeScopes}
+    writeln('  PushParentScopes START ',GetObjName(CurEl));
+    {$ENDIF}
+    if CurEl=nil then
+      RaiseInternalError(20190728125025);
+    if CurEl is TPasModule then
+      begin
+      if not (CurEl.CustomData is TPasModuleScope) then
+        RaiseNotYetImplemented(20190728142609,El,GetObjName(CurEl)+' '+GetObjName(CurEl.CustomData));
+      Keep:=0;
+      if FScopeCount<=Keep then
+        RaiseInternalError(20190728124857);
+      if not (FScopes[Keep] is TPasDefaultScope) then
+        RaiseInternalError(20190728124858);
+      end
+    else
+      begin
+      if CurEl.Parent=nil then
+        RaiseInternalError(20190728130238,GetObjName(CurEl));
+      if CurEl.CustomData=nil then
+        exit(PushParentScopes(CurEl.Parent));
+      if not (CurEl.CustomData is TPasIdentifierScope) then
+        RaiseNotYetImplemented(20190728131934,El,GetObjName(CurEl)+' '+GetObjName(CurEl.CustomData));
+      Keep:=PushParentScopes(CurEl.Parent);
+      end;
+    inc(Keep);
+    Scope:=TPasScope(CurEl.CustomData);
+    {$IFDEF VerboseInitSpecializeScopes}
+    writeln('  PushParentScopes ',GetObjName(CurEl),' Scope=',GetObjName(Scope),' Keep=',Keep);
+    {$ENDIF}
+    if Scope.FreeOnPop then
+      RaiseInternalError(20190728131153,GetObjName(CurEl));
+    if (Keep<FScopeCount) and (FScopes[Keep]=Scope) then
+      // Scope is already on the scopestack
+    else
+      begin
+      if Keep<FScopeCount then
+        begin
+        // cannot use current scope stack -> stash
+        {$IFDEF VerboseInitSpecializeScopes}
+        writeln('  PushParentScopes StashScopes Keep=',Keep);
+        {$ENDIF}
+        StashScopes(Keep);
+        if Keep<>FScopeCount then
+          RaiseNotYetImplemented(20190813005130,El);
+        State.ScopeCount:=ScopeCount;
+        end;
+      if (CurEl.ClassType=TImplementationSection) then
+        begin
+        // unit implementation -> push interface scope
+        IntfSection:=CurEl.GetModule.InterfaceSection;
+        if IntfSection=nil then
+          RaiseNotYetImplemented(20190825112907,CurEl);
+        if not (IntfSection.CustomData is TPasSectionScope) then
+          RaiseNotYetImplemented(20190825112907,CurEl);
+        PushScope(TPasSectionScope(IntfSection.CustomData));
+        inc(Keep);
+        end;
+      PushScope(Scope);
+      end;
+    exit(Keep);
+  end;
+
+var
+  Keep: Integer;
+begin
+  {$IFDEF VerboseInitSpecializeScopes}
+  writeln('TPasResolver.InitSpecializeScopes START ',GetObjName(El));
+  {$ENDIF}
+  State.ScopeCount:=ScopeCount;
+  State.StashCount:=FStashScopeCount;
+  Keep:=PushParentScopes(El.Parent)+1;
+  if Keep<FScopeCount then
+    begin
+    // cannot use current scope stack -> stash
+    {$IFDEF VerboseInitSpecializeScopes}
+    writeln('TPasResolver.InitSpecializeScopes StashScopes Keep=',Keep);
+    {$ENDIF}
+    StashScopes(Keep);
+    if Keep<>FScopeCount then
+      RaiseNotYetImplemented(20190813005859,El);
+    end;
+  {$IFDEF VerboseInitSpecializeScopes}
+  WriteScopesShort('TPasResolver.InitSpecializeScopes END');
+  {$ENDIF}
+end;
+
+procedure TPasResolver.RestoreSpecializeScopes(const State: TScopeStashState);
+begin
+  while ScopeCount>State.ScopeCount do
+    PopScope;
+  RestoreStashedScopes(State.StashCount);
+end;
+
+procedure TPasResolver.SpecializeGenericIntf(SpecializedItem: TPRSpecializedItem
+  );
+var
+  SpecEl, GenericEl: TPasElement;
+  C: TClass;
+  NewRecordType, GenRecordType: TPasRecordType;
+  NewClassType, GenClassType: TPasClassType;
+  NewArrayType, GenArrayType: TPasArrayType;
+  GenProcType, NewProcType: TPasProcedureType;
+  GenProc, NewProc: TPasProcedure;
+  OldScopeState: TScopeStashState;
+begin
+  if SpecializedItem.Step<>prssNone then
+    exit;
+  SpecializedItem.Step:=prssInterfaceBuilding;
+  SpecEl:=SpecializedItem.SpecializedEl;
+  GenericEl:=SpecializedItem.GenericEl;
+
+  // change scope
+  InitSpecializeScopes(GenericEl,OldScopeState);
+  {$IFDEF VerbosePasResolver}
+  WriteScopesShort('TPasResolver.SpecializeGenericIntf Init SpecEl='+SpecEl.FullName+' GenericEl='+GenericEl.FullName);
+  {$ENDIF}
+
+  SpecializePasElementProperties(GenericEl,SpecEl);
+
+  C:=SpecEl.ClassType;
+  if C=TPasRecordType then
+    begin
+    NewRecordType:=TPasRecordType(SpecEl);
+    GenRecordType:=TPasRecordType(GenericEl);
+    SpecializeRecordType(GenRecordType,NewRecordType,TPRSpecializedTypeItem(SpecializedItem));
+    end
+  else if C=TPasClassType then
+    begin
+    NewClassType:=TPasClassType(SpecEl);
+    GenClassType:=TPasClassType(GenericEl);
+    SpecializeClassType(GenClassType,NewClassType,TPRSpecializedTypeItem(SpecializedItem));
+    end
+  else if C=TPasArrayType then
+    begin
+    GenArrayType:=TPasArrayType(GenericEl);
+    NewArrayType:=TPasArrayType(SpecEl);
+    SpecializeArrayType(GenArrayType,NewArrayType,TPRSpecializedTypeItem(SpecializedItem));
+    end
+  else if (C=TPasProcedureType)
+      or (C=TPasFunctionType) then
+    begin
+    GenProcType:=TPasProcedureType(GenericEl);
+    NewProcType:=TPasProcedureType(SpecEl);
+    SpecializeProcedureType(GenProcType,NewProcType,TPRSpecializedTypeItem(SpecializedItem));
+    end
+  else if C.InheritsFrom(TPasProcedure) then
+    begin
+    GenProc:=TPasProcedure(GenericEl);
+    NewProc:=TPasProcedure(SpecEl);
+    SpecializeProcedure(GenProc,NewProc,SpecializedItem);
+    end
+  else
+    RaiseNotYetImplemented(20190728134933,GenericEl);
+
+  {$IFDEF VerbosePasResolver}
+  WriteScopesShort('TPasResolver.SpecializeGenericIntf Finish: '+SpecEl.FullName);
+  {$ENDIF}
+
+  RestoreSpecializeScopes(OldScopeState);
+  {$IFDEF VerbosePasResolver}
+  WriteScopesShort('TPasResolver.SpecializeGenericIntf RestoreStashedScopes: '+SpecEl.FullName);
+  {$ENDIF}
+end;
+
+procedure TPasResolver.SpecializeGenericImpl(SpecializedItem: TPRSpecializedItem
+  );
+var
+  GenericEl: TPasElement;
+  GenScope: TPasGenericScope;
+  SpecializedTypeItem: TPRSpecializedTypeItem;
+  SpecializedProcItem: TPRSpecializedProcItem;
+  GenImplProc, GenIntfProc, SpecDeclProc: TPasProcedure;
+  GenDeclProcScope: TPasProcedureScope;
+  OldScopeState: TScopeStashState;
+begin
+  // check specialized type step
+  if SpecializedItem.Step>prssInterfaceFinished then
+    exit;
+  GenericEl:=SpecializedItem.GenericEl;
+  if SpecializedItem.Step<prssInterfaceFinished then
+    if GenericEl is TPasType then
+      RaiseMsg(20190804120128,nTypeXIsNotYetCompletelyDefined,sTypeXIsNotYetCompletelyDefined,
+        [GetTypeDescription(TPasType(GenericEl))],SpecializedItem.FirstSpecialize)
+    else
+      RaiseMsg(20190920190727,nTypeXIsNotYetCompletelyDefined,sTypeXIsNotYetCompletelyDefined,
+        [GenericEl.Name],SpecializedItem.FirstSpecialize);
+  SpecializedItem.Step:=prssImplementationBuilding;
+
+  // check generic type is resolved completely
+  GenScope:=TPasGenericScope(GenericEl.CustomData);
+  if GenScope.GenericStep<psgsImplementationParsed then
+    RaiseNotYetImplemented(20190804174019,GenericEl,GetObjName(SpecializedItem.SpecializedEl));
+
+  if GenericEl is TPasMembersType then
+    begin
+    // specialize all method bodies
+    SpecializedTypeItem:=TPRSpecializedTypeItem(SpecializedItem);
+    if SpecializedTypeItem.ImplProcs=nil then
+      SpecializedTypeItem.ImplProcs:=TFPList.Create;
+    SpecializeMembersImpl(TPasMembersType(GenericEl),
+      TPasMembersType(SpecializedTypeItem.SpecializedType),
+      SpecializedTypeItem);
+    end
+  else if GenericEl is TPasProcedure then
+    begin
+    // specialize proc implementation
+    GenIntfProc:=TPasProcedure(GenericEl);
+    if GenIntfProc.IsAbstract or GenIntfProc.IsExternal then
+      //
+    else
+      begin
+      SpecializedProcItem:=TPRSpecializedProcItem(SpecializedItem);
+      GenDeclProcScope:=TPasProcedureScope(GenScope);
+      GenImplProc:=GenDeclProcScope.ImplProc;
+      if GenImplProc=nil then
+        RaiseNotYetImplemented(20190920211609,SpecializedProcItem.SpecializedProc);
+      if GenImplProc.Body=nil then
+        RaiseNotYetImplemented(20190920192731,GenImplProc); // GenScope.GenericStep is wrong
+      SpecDeclProc:=SpecializedProcItem.SpecializedProc;
+
+      InitSpecializeScopes(GenImplProc,OldScopeState);
+      SpecializeGenImplProc(GenIntfProc,SpecDeclProc,SpecializedProcItem);
+      RestoreSpecializeScopes(OldScopeState);
+      end;
+    end;
+
+  SpecializedItem.Step:=prssImplementationFinished;
+end;
+
+procedure TPasResolver.SpecializeMembers(GenMembersType,
+  SpecMembersType: TPasMembersType);
+var
+  i: Integer;
+  GenEl, NewEl: TPasElement;
+  NewClass: TPTreeElement;
+begin
+  for i:=0 to GenMembersType.Members.Count-1 do
+    begin
+    GenEl:=TPasElement(GenMembersType.Members[i]);
+    if GenEl.Parent<>GenMembersType then
+      RaiseNotYetImplemented(20190728145634,GenEl,GetObjName(GenEl.Parent));
+    NewClass:=TPTreeElement(GenEl.ClassType);
+    NewEl:=TPasElement(NewClass.Create(GenEl.Name,SpecMembersType));
+    SpecMembersType.Members.Add(NewEl);
+    SpecializeElement(GenEl,NewEl);
+    end;
+end;
+
+procedure TPasResolver.SpecializeMembersImpl(GenericType,
+  SpecType: TPasMembersType; SpecializedItem: TPRSpecializedTypeItem);
+var
+  GenClassOrRec, SpecClassOrRec: TPasMembersType;
+  i: Integer;
+  GenMember, SpecMember, ImplParent: TPasElement;
+  GenIntfProc, GenImplProc, SpecIntfProc: TPasProcedure;
+  GenIntfProcScope: TPasProcedureScope;
+  OldScopeState: TScopeStashState;
+begin
+  GenClassOrRec:=TPasMembersType(GenericType);
+  SpecClassOrRec:=TPasMembersType(SpecType);
+
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.SpecializeMembersImpl RestoreStashedScopes ',GetObjPath(SpecClassOrRec),' ',ScopeCount,' FStashScopeCount=',FStashScopeCount);
+  {$ENDIF}
+
+  // specialize member bodies
+  ImplParent:=nil;
+  OldScopeState:=default(TScopeStashState);
+  for i:=0 to GenClassOrRec.Members.Count-1 do
+    begin
+    GenMember:=TPasElement(GenClassOrRec.Members[i]);
+    SpecMember:=TPasElement(SpecClassOrRec.Members[i]);
+    if SpecMember.ClassType<>GenMember.ClassType then
+      RaiseNotYetImplemented(20190816002658,GenMember,GetObjName(SpecMember));
+    if SpecMember.Name<>GenMember.Name then
+      RaiseNotYetImplemented(20190804124220,GenMember,GetObjName(SpecMember));
+    if GenMember is TPasProcedure then
+      begin
+      GenIntfProc:=TPasProcedure(GenMember);
+      SpecIntfProc:=TPasProcedure(SpecMember);
+      if GenIntfProc.IsAbstract or GenIntfProc.IsExternal then continue;
+      GenIntfProcScope:=TPasProcedureScope(GenIntfProc.CustomData);
+      GenImplProc:=GenIntfProcScope.ImplProc;
+      if GenImplProc=nil then
+        RaiseNotYetImplemented(20190921221246,GenIntfProc);
+      if ImplParent=nil then
+        begin
+        // switch scope (e.g. unit implementation section)
+        ImplParent:=GenImplProc.Parent;
+        InitSpecializeScopes(GenImplProc,OldScopeState);
+        {$IFDEF VerbosePasResolver}
+        writeln('TPasResolver.SpecializeGenImplProc Specialize implprocs: SpecType=',GetObjName(SpecType),' ImplParent=',GetObjName(ImplParent),' ScopeCount=',ScopeCount,' FStashScopeCount=',FStashScopeCount,' TopScope=',GetObjName(TopScope));
+        {$ENDIF}
+        end
+      else if ImplParent<>GenImplProc.Parent then
+        RaiseNotYetImplemented(20190804130322,GenImplProc,GetObjName(ImplParent));
+
+      SpecializeGenImplProc(GenIntfProc,SpecIntfProc,SpecializedItem);
+      end
+    else if GenMember is TPasMembersType then
+      begin
+      // nested record/class type
+      SpecializeMembersImpl(TPasMembersType(GenMember),TPasMembersType(SpecMember),
+                            SpecializedItem);
+      end;
+    end;
+  if ImplParent<>nil then
+    begin
+    // restore scope
+    RestoreSpecializeScopes(OldScopeState);
+    end;
+end;
+
+procedure TPasResolver.SpecializeGenImplProc(GenDeclProc,
+  SpecDeclProc: TPasProcedure; SpecializedItem: TPRSpecializedItem);
+
+  procedure InsertBehind(ParentElList: TFPList;
+    SpecializedItems: TObjectList; GenImplProc, SpecImplProc: TPasProcedure);
+  // insert SpecImplProc behind last specialized impl proc
+  // Note: impl procs are not always specialized in order
+  var
+    Last: TPasProcedure;
+    i: Integer;
+  begin
+    Last:=nil;
+
+    if SpecializedItems<>nil then
+      begin
+      i:=SpecializedItems.Count-1;
+      while i>=0 do
+        begin
+        Last:=TPRSpecializedProcItem(SpecializedItems[i]).ImplProc;
+        if Last=SpecImplProc then
+          Last:=nil
+        else if Last<>nil then
+          break;
+        dec(i);
+        end;
+      end;
+    if Last=nil then
+      Last:=GenImplProc;
+    i:=ParentElList.IndexOf(Last);
+    if i<0 then
+      begin
+      {$IF defined(VerbosePasResolver) or defined(VerbosePas2JS)}
+      {AllowWriteln}
+      writeln('InsertBehind GenImplProc=',GetObjPath(GenImplProc),' Last=',GetObjPath(Last));
+      for i:=0 to ParentElList.Count-1 do
+        begin
+        writeln('  ',GetObjName(TObject(ParentElList[i])));
+        if TObject(ParentElList[i]) is TPasProcedure then
+          writeln('    IsForward=',TPasProcedure(ParentElList[i]).IsForward);
+        end;
+      {AllowWriteln-}
+      {$ENDIF}
+      RaiseNotYetImplemented(20191017122900,GenDeclProc);
+      end;
+    ParentElList.Insert(i+1,SpecImplProc);
+    SpecImplProc.AddRef{$IFDEF CheckPasTreeRefCount}('TPasDeclarations.Children'){$ENDIF};
+  end;
+
+var
+  GenDeclProcScope, GenImplProcScope, SpecDeclProcScope,
+    SpecImplProcScope: TPasProcedureScope;
+  GenImplProc, SpecImplProc: TPasProcedure;
+  NewClass: TPTreeElement;
+  SpecClassOrRec, GenClassOrRec: TPasMembersType;
+  SpecClassOrRecScope: TPasClassOrRecordScope;
+  NewImplProcName, OldClassname: String;
+  p, LastDotP: Integer;
+  SpecializedProcItem: TPRSpecializedProcItem;
+  SpecializedTypeItem: TPRSpecializedTypeItem;
+  Templates: TFPList;
+  NewParent: TPasElement;
+begin
+  SpecializedProcItem:=nil;
+  SpecializedTypeItem:=nil;
+  if SpecializedItem is TPRSpecializedProcItem then
+    // impl proc of a specialized forward proc
+    SpecializedProcItem:=TPRSpecializedProcItem(SpecializedItem)
+  else if SpecializedItem is TPRSpecializedTypeItem then
+    // method of a specialized class/record
+    SpecializedTypeItem:=TPRSpecializedTypeItem(SpecializedItem)
+  else
+    RaiseNotYetImplemented(20190922145050,SpecDeclProc);
+
+  GenDeclProcScope:=TPasProcedureScope(GenDeclProc.CustomData);
+  GenImplProc:=GenDeclProcScope.ImplProc;
+  if GenImplProc=nil then
+    RaiseNotYetImplemented(20190804122134,GenDeclProc);
+  if GenImplProc.Body=nil then
+    RaiseNotYetImplemented(20190921220216,GenImplProc);
+  GenImplProcScope:=TPasProcedureScope(GenImplProc.CustomData);
+  SpecDeclProcScope:=TPasProcedureScope(SpecDeclProc.CustomData);
+  if SpecDeclProc.Parent is TPasMembersType then
+    begin
+    SpecClassOrRec:=SpecDeclProc.Parent as TPasMembersType;
+    SpecClassOrRecScope:=SpecClassOrRec.CustomData as TPasClassOrRecordScope;
+    end
+  else
+    begin
+    SpecClassOrRec:=nil;
+    SpecClassOrRecScope:=nil;
+    end;
+
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.SpecializeGenImplProc Specialize GenImplProc: ',GetObjName(GenImplProc));
+  {$ENDIF}
+
+  // create impl proc name
+  if SpecializedTypeItem<>nil then
+    begin
+    // method of a specialized class/record
+    if SpecClassOrRecScope=nil then
+      RaiseNotYetImplemented(20190921221839,SpecDeclProc);
+    NewImplProcName:=GenImplProc.Name;
+    p:=length(NewImplProcName);
+    while (p>0) and (NewImplProcName[p]<>'.') do dec(p);
+    if p=0 then
+      RaiseNotYetImplemented(20190921221730,GenImplProc);
+    // has classname -> replace generic classname with specialized classname
+    LastDotP:=p;
+    while (p>1) and (NewImplProcName[p-1]<>'.') do dec(p);
+    OldClassname:=copy(NewImplProcName,p,LastDotP-p);
+    GenClassOrRec:=GenDeclProc.Parent as TPasMembersType;
+    if not SameText(OldClassname,GenClassOrRec.Name) then
+      RaiseNotYetImplemented(20190814141833,GenImplProc);
+    NewImplProcName:=LeftStr(NewImplProcName,p-1)+SpecClassOrRec.Name+copy(NewImplProcName,LastDotP,length(NewImplProcName));
+    end
+  else
+    begin
+    // use classname of GenImplProc and name of SpecDeclProc
+    OldClassname:=GenImplProc.Name;
+    p:=length(OldClassname);
+    while (p>0) and (OldClassname[p]<>'.') do dec(p);
+    if p>0 then
+      NewImplProcName:=LeftStr(OldClassname,p)+SpecDeclProc.Name
+    else
+      NewImplProcName:=SpecDeclProc.Name;
+    end;
+
+  // create impl proc
+  NewClass:=TPTreeElement(GenImplProc.ClassType);
+  NewParent:=GenImplProc.Parent;
+  SpecImplProc:=TPasProcedure(NewClass.Create(NewImplProcName,NewParent));
+  SpecDeclProcScope.ImplProc:=SpecImplProc;
+  if SpecializedProcItem<>nil then
+    SpecializedProcItem.ImplProc:=SpecImplProc
+  else
+    SpecializedTypeItem.ImplProcs.Add(SpecImplProc);
+
+  if (SpecializedProcItem<>nil) and (NewParent is TPasDeclarations) then
+    InsertBehind(TPasDeclarations(NewParent).Declarations,
+                 GenDeclProcScope.SpecializedItems,GenImplProc,SpecImplProc);
+
+  // create impl proc scope
+  SpecImplProcScope:=TPasProcedureScope(CreateScope(SpecImplProc,FScopeClass_Proc));
+  SpecImplProcScope.Flags:=[ppsfIsSpecialized];
+  SpecImplProcScope.DeclarationProc:=SpecDeclProc;
+  SpecImplProcScope.ModeSwitches:=GenImplProcScope.Modeswitches;
+  SpecImplProcScope.BoolSwitches:=GenImplProcScope.BoolSwitches;
+  SpecImplProcScope.VisibilityContext:=SpecClassOrRec;
+  SpecImplProcScope.ClassRecScope:=SpecClassOrRecScope;
+  if GenDeclProcScope.SelfArg<>nil then
+    RaiseNotYetImplemented(20190922154603,GenImplProc);
+
+  if SpecializedProcItem<>nil then
+    begin
+    Templates:=GetProcTemplateTypes(GenDeclProc);
+    AddSpecializedTemplateIdentifiers(Templates,SpecializedItem,SpecImplProcScope,
+      false);
+    end;
+
+  // specialize props
+  SpecializePasElementProperties(GenImplProc,SpecImplProc);
+  AddProcedure(SpecImplProc,nil);
+  SpecializeProcedure(GenImplProc,SpecImplProc,SpecializedItem);
+end;
+
+procedure TPasResolver.SpecializeElement(GenEl, SpecEl: TPasElement);
+var
+  C: TClass;
+begin
+  // first copy sourcefilename and linenumber needed by error messages
+  SpecializePasElementProperties(GenEl,SpecEl);
+
+  C:=GenEl.ClassType;
+  // expressions
+  if C=TPrimitiveExpr then
+    SpecializePrimitiveExpr(TPrimitiveExpr(GenEl),TPrimitiveExpr(SpecEl))
+  else if C=TUnaryExpr then
+    SpecializeUnaryExpr(TUnaryExpr(GenEl),TUnaryExpr(SpecEl))
+  else if C=TBinaryExpr then
+    SpecializeBinaryExpr(TBinaryExpr(GenEl),TBinaryExpr(SpecEl))
+  else if C=TBoolConstExpr then
+    SpecializeBoolConstExpr(TBoolConstExpr(GenEl),TBoolConstExpr(SpecEl))
+  else if C=TNilExpr then
+    SpecializeExpr(TNilExpr(GenEl),TNilExpr(SpecEl))
+  else if C=TInheritedExpr then
+    SpecializeExpr(TInheritedExpr(GenEl),TInheritedExpr(SpecEl))
+  else if C=TParamsExpr then
+    SpecializeParamsExpr(TParamsExpr(GenEl),TParamsExpr(SpecEl))
+  else if C=TRecordValues then
+    SpecializeRecordValues(TRecordValues(GenEl),TRecordValues(SpecEl))
+  else if C=TArrayValues then
+    SpecializeArrayValues(TArrayValues(GenEl),TArrayValues(SpecEl))
+  else if C=TInlineSpecializeExpr then
+    SpecializeInlineSpecializeExpr(TInlineSpecializeExpr(GenEl),TInlineSpecializeExpr(SpecEl))
+  else if C=TProcedureExpr then
+    SpecializeProcedureExpr(TProcedureExpr(GenEl),TProcedureExpr(SpecEl))
+  // TPasType
+  else if (C=TPasAliasType)
+      or (C=TPasTypeAliasType)
+      or (C=TPasClassOfType) then
+    begin
+    AddType(TPasAliasType(SpecEl));
+    SpecializeAliasType(TPasAliasType(GenEl),TPasAliasType(SpecEl));
+    end
+  else if C=TPasPointerType then
+    begin
+    AddType(TPasPointerType(SpecEl));
+    SpecializePointerType(TPasPointerType(GenEl),TPasPointerType(SpecEl));
+    end
+  else if C=TPasRangeType then
+    begin
+    AddType(TPasRangeType(SpecEl));
+    SpecializeRangeType(TPasRangeType(GenEl),TPasRangeType(SpecEl));
+    end
+  else if C=TPasArrayType then
+    begin
+    if GetTypeParameterCount(TPasArrayType(GenEl))>0 then
+      RaiseNotYetImplemented(20190815201219,GenEl);
+    AddArrayType(TPasArrayType(SpecEl),nil);
+    SpecializeArrayType(TPasArrayType(GenEl),TPasArrayType(SpecEl),nil);
+    end
+  else if C=TPasEnumValue then
+    begin
+    AddEnumValue(TPasEnumValue(SpecEl));
+    SpecializeEnumValue(TPasEnumValue(GenEl),TPasEnumValue(SpecEl));
+    end
+  else if C=TPasEnumType then
+    begin
+    AddEnumType(TPasEnumType(SpecEl));
+    SpecializeEnumType(TPasEnumType(GenEl),TPasEnumType(SpecEl));
+    end
+  else if C=TPasSetType then
+    SpecializeSetType(TPasSetType(GenEl),TPasSetType(SpecEl))
+  else if C=TPasVariant then
+    SpecializeVariant(TPasVariant(GenEl),TPasVariant(SpecEl))
+  else if C=TPasRecordType then
+    begin
+    if GetTypeParameterCount(TPasRecordType(GenEl))>0 then
+      RaiseNotYetImplemented(20190815201201,GenEl);
+    AddRecordType(TPasRecordType(SpecEl),nil);
+    SpecializeRecordType(TPasRecordType(GenEl),TPasRecordType(SpecEl),nil);
+    end
+  else if C=TPasClassType then
+    begin
+    if GetTypeParameterCount(TPasClassType(GenEl))>0 then
+      RaiseNotYetImplemented(20190816214947,GenEl);
+    AddClassType(TPasClassType(SpecEl),nil);
+    SpecializeClassType(TPasClassType(GenEl),TPasClassType(SpecEl),nil);
+    end
+  else if C=TPasStringType then
+    begin
+    AddType(TPasStringType(SpecEl));
+    SpecializeStringType(TPasStringType(GenEl),TPasStringType(SpecEl));
+    end
+  else if C=TPasSpecializeType then
+    begin
+    AddType(TPasSpecializeType(SpecEl));
+    SpecializeSpecializeType(TPasSpecializeType(GenEl),TPasSpecializeType(SpecEl));
+    end
+  else if C=TPasGenericTemplateType then
+    SpecializeGenericTemplateType(TPasGenericTemplateType(GenEl),TPasGenericTemplateType(SpecEl))
+  // empty statement
+  else if C=TPasImplCommand then
+  // TPasImplBlock
+  else if C=TPasImplBeginBlock then
+    SpecializeImplBlock(TPasImplBeginBlock(GenEl),TPasImplBeginBlock(SpecEl))
+  else if C=TPasImplAsmStatement then
+    SpecializeImplAsmStatement(TPasImplAsmStatement(GenEl),TPasImplAsmStatement(SpecEl))
+  else if C=TPasImplRepeatUntil then
+    SpecializeImplRepeatUntil(TPasImplRepeatUntil(GenEl),TPasImplRepeatUntil(SpecEl))
+  else if C=TPasImplIfElse then
+    SpecializeImplIfElse(TPasImplIfElse(GenEl),TPasImplIfElse(SpecEl))
+  else if C=TPasImplWhileDo then
+    SpecializeImplWhileDo(TPasImplWhileDo(GenEl),TPasImplWhileDo(SpecEl))
+  else if C=TPasImplWithDo then
+    SpecializeImplWithDo(TPasImplWithDo(GenEl),TPasImplWithDo(SpecEl))
+  else if C=TPasImplCaseOf then
+    SpecializeImplCaseOf(TPasImplCaseOf(GenEl),TPasImplCaseOf(SpecEl))
+  else if C=TPasImplCaseStatement then
+    SpecializeImplCaseStatement(TPasImplCaseStatement(GenEl),TPasImplCaseStatement(SpecEl))
+  else if C=TPasImplCaseElse then
+    SpecializeImplBlock(TPasImplCaseElse(GenEl),TPasImplCaseElse(SpecEl))
+  else if C=TPasImplAssign then
+    SpecializeImplAssign(TPasImplAssign(GenEl),TPasImplAssign(SpecEl))
+  else if C=TPasImplSimple then
+    SpecializeImplSimple(TPasImplSimple(GenEl),TPasImplSimple(SpecEl))
+  else if C=TPasImplForLoop then
+    SpecializeImplForLoop(TPasImplForLoop(GenEl),TPasImplForLoop(SpecEl))
+  else if C=TPasImplTry then
+    SpecializeImplTry(TPasImplTry(GenEl),TPasImplTry(SpecEl))
+  else if (C=TPasImplTryFinally)
+      or (C=TPasImplTryExcept)
+      or (C=TPasImplTryExceptElse) then
+    SpecializeImplBlock(TPasImplTryHandler(GenEl),TPasImplTryHandler(SpecEl))
+  else if C=TPasImplExceptOn then
+    begin
+    AddExceptOn(TPasImplExceptOn(SpecEl));
+    SpecializeImplExceptOn(TPasImplExceptOn(GenEl),TPasImplExceptOn(SpecEl));
+    end
+  else if C=TPasImplRaise then
+    SpecializeImplRaise(TPasImplRaise(GenEl),TPasImplRaise(SpecEl))
+  // declaration
+  else if C=TPasResString then
+    begin
+    AddResourceString(TPasResString(SpecEl));
+    SpecializeResString(TPasResString(GenEl),TPasResString(SpecEl));
+    end
+  else if C=TPasVariable then
+    begin
+    AddVariable(TPasVariable(SpecEl));
+    SpecializeVariable(TPasVariable(GenEl),TPasVariable(SpecEl),true);
+    end
+  else if C=TPasConst then
+    begin
+    AddVariable(TPasConst(SpecEl));
+    SpecializeConst(TPasConst(GenEl),TPasConst(SpecEl));
+    end
+  else if C=TPasProperty then
+    begin
+    AddProperty(TPasProperty(SpecEl));
+    SpecializeProperty(TPasProperty(GenEl),TPasProperty(SpecEl));
+    end
+  else if C=TPasAttributes then
+    SpecializeAttributes(TPasAttributes(GenEl),TPasAttributes(SpecEl))
+  else if C=TPasMethodResolution then
+    SpecializeMethodResolution(TPasMethodResolution(GenEl),TPasMethodResolution(SpecEl))
+  // procedure
+  else if C=TPasArgument then
+    begin
+    AddArgument(TPasArgument(SpecEl));
+    SpecializeArgument(TPasArgument(GenEl),TPasArgument(SpecEl));
+    end
+  else if C=TProcedureBody then
+    begin
+    AddProcedureBody(TProcedureBody(SpecEl));
+    SpecializeProcedureBody(TProcedureBody(GenEl),TProcedureBody(SpecEl));
+    end
+  else if C=TPasOperator then
+    begin
+    AddProcedure(TPasOperator(SpecEl),nil);
+    SpecializeOperator(TPasOperator(GenEl),TPasOperator(SpecEl));
+    end
+  else if C.InheritsFrom(TPasProcedure) then
+    begin
+    AddProcedure(TPasProcedure(SpecEl),nil);
+    SpecializeProcedure(TPasProcedure(GenEl),TPasProcedure(SpecEl),nil);
+    end
+  else if C.InheritsFrom(TPasProcedureType) then
+    begin
+    AddProcedureType(TPasProcedureType(SpecEl),nil);
+    SpecializeProcedureType(TPasProcedureType(GenEl),TPasProcedureType(SpecEl),nil);
+    end
+  else
+    RaiseNotYetImplemented(20190728151215,GenEl);
+end;
+
+procedure TPasResolver.SpecializePasElementProperties(GenEl, SpecEl: TPasElement
+  );
+begin
+  SpecEl.SourceFilename:=GenEl.SourceFilename;
+  SpecEl.SourceLinenumber:=GenEl.SourceLinenumber;;
+  SpecEl.SourceEndLinenumber:=GenEl.SourceEndLinenumber;
+  SpecEl.Visibility:=GenEl.Visibility;
+  SpecEl.Hints:=GenEl.Hints;
+  SpecEl.HintMessage:=GenEl.HintMessage;
+  SpecEl.DocComment:=GenEl.DocComment;
+end;
+
+procedure TPasResolver.SpecializeVariable(GenEl, SpecEl: TPasVariable;
+  Finish: boolean);
+begin
+  SpecializeElType(GenEl,SpecEl,GenEl.VarType,SpecEl.VarType);
+  SpecEl.VarModifiers:=GenEl.VarModifiers;
+  if GenEl.LibraryName<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.LibraryName,SpecEl.LibraryName);
+  if GenEl.ExportName<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.ExportName,SpecEl.ExportName);
+  SpecEl.Modifiers:=GenEl.Modifiers;
+  if GenEl.AbsoluteExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.AbsoluteExpr,SpecEl.AbsoluteExpr);
+  if GenEl.Expr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
+  if Finish then
+    FinishVariable(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeConst(GenEl, SpecEl: TPasConst);
+begin
+  SpecEl.IsConst:=GenEl.IsConst;
+  SpecializeVariable(GenEl,SpecEl,true);
+end;
+
+procedure TPasResolver.SpecializeProperty(GenEl, SpecEl: TPasProperty);
+begin
+  SpecializeVariable(GenEl,SpecEl,false);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.IndexExpr,SpecEl.IndexExpr);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ReadAccessor,SpecEl.ReadAccessor);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.WriteAccessor,SpecEl.WriteAccessor);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.DispIDExpr,SpecEl.DispIDExpr);
+  SpecializeExprArray(GenEl,SpecEl,GenEl.Implements,SpecEl.Implements);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.StoredAccessor,SpecEl.StoredAccessor);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.DefaultExpr,SpecEl.DefaultExpr);
+  SpecEl.DispIDReadOnly:=GenEl.DispIDReadOnly;
+  SpecEl.IsDefault:=GenEl.IsDefault;
+  SpecEl.IsNodefault:=GenEl.IsNodefault;
+  SpecializeElList(GenEl,SpecEl,GenEl.Args,SpecEl.Args,false
+    {$IFDEF CheckPasTreeRefCount},'TPasProperty.Args'{$ENDIF});
+  FinishProperty(SpecEl);
+end;
+
+function TPasResolver.SpecializeTypeRef(GenEl, SpecEl: TPasElement;
+  GenTypeRef: TPasType): TPasType;
+var
+  Ref: TPasElement;
+begin
+  if GenTypeRef.Name='' then
+    RaiseNotYetImplemented(20190813213555,GenEl,GetObjPath(GenTypeRef));
+  Ref:=FindElement(GenTypeRef.Name);
+  if not (Ref is TPasType) then
+    RaiseNotYetImplemented(20190812021538,GenEl,GetObjName(Ref));
+  if SpecEl=nil then ;
+  Result:=TPasType(Ref);
+end;
+
+procedure TPasResolver.SpecializeElType(GenEl, SpecEl: TPasElement;
+  GenElType: TPasType; var SpecElType: TPasType);
+var
+  NewClass: TPTreeElement;
+begin
+  if GenElType=nil then exit;
+  if SpecElType<>nil then
+    RaiseNotYetImplemented(20190812021617,GenEl);
+  if (GenElType.Parent<>GenEl)
+      or (GenElType.ClassType=TPasGenericTemplateType) then
+    begin
+    // reference
+    GenElType:=SpecializeTypeRef(GenEl,SpecEl,GenElType);
+    SpecElType:=GenElType;
+    SpecElType.AddRef{$IFDEF CheckPasTreeRefCount}('ResolveTypeReference'){$ENDIF};
+    exit;
+    end;
+  // e.g. anonymous type
+  if SpecElType<>nil then
+    RaiseNotYetImplemented(20190808222744,SpecEl,GetObjName(SpecElType));
+  NewClass:=TPTreeElement(GenElType.ClassType);
+  SpecElType:=TPasType(NewClass.Create(GenElType.Name,SpecEl));
+  SpecializeElement(GenElType,SpecElType);
+end;
+
+procedure TPasResolver.SpecializeElExpr(GenEl, SpecEl: TPasElement;
+  GenElExpr: TPasExpr; var SpecElExpr: TPasExpr);
+var
+  NewClass: TPTreeElement;
+begin
+  if GenElExpr=nil then exit;
+  if SpecElExpr<>nil then
+    RaiseNotYetImplemented(20190803220248,SpecEl,GetObjName(SpecElExpr));
+  if GenElExpr.Parent<>GenEl then
+    RaiseNotYetImplemented(20190809160834,GenEl);
+  // normal expression
+  NewClass:=TPTreeElement(GenElExpr.ClassType);
+  SpecElExpr:=TPasExpr(NewClass.Create(GenElExpr.Name,SpecEl));
+  SpecializeElement(GenElExpr,SpecElExpr);
+end;
+
+procedure TPasResolver.SpecializeElImplEl(GenEl, SpecEl: TPasElement;
+  GenImplEl: TPasImplElement; var SpecImplEl: TPasImplElement);
+var
+  NewClass: TPTreeElement;
+begin
+  if GenImplEl=nil then exit;
+  if GenImplEl.Parent<>GenEl then
+    RaiseNotYetImplemented(20190808222638,GenEl,GetObjName(GenImplEl.Parent));
+  NewClass:=TPTreeElement(GenImplEl.ClassType);
+  SpecImplEl:=TPasImplElement(NewClass.Create(GenImplEl.Name,SpecEl));
+  SpecializeElement(GenImplEl,SpecImplEl);
+end;
+
+procedure TPasResolver.SpecializeElImplAlias(GenEl, SpecEl: TPasImplBlock;
+  GenImplAlias: TPasImplElement; var SpecImplAlias: TPasImplElement
+  {$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+var
+  i: Integer;
+begin
+  if GenImplAlias=nil then exit;
+  i:=GenEl.Elements.IndexOf(GenImplAlias);
+  if i<0 then
+    RaiseNotYetImplemented(20190808225239,GenEl);
+  SpecImplAlias:=TObject(SpecEl.Elements[i]) as TPasImplElement;
+  if SpecImplAlias.ClassType<>GenImplAlias.ClassType then
+    RaiseNotYetImplemented(20190808231616,GenImplAlias,GetObjName(SpecImplAlias));
+  SpecImplAlias.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
+end;
+
+procedure TPasResolver.SpecializeElList(GenEl, SpecEl: TPasElement;
+  GenList, SpecList: TFPList; AllowReferences: boolean
+  {$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+var
+  i: Integer;
+  GenListItem, SpecListItem, Ref: TPasElement;
+  NewClass: TPTreeElement;
+begin
+  for i:=0 to GenList.Count-1 do
+    begin
+    GenListItem:=TPasElement(GenList[i]);
+    if GenListItem.Parent<>GenEl then
+      begin
+      if not AllowReferences then
+        RaiseNotYetImplemented(20190808212421,GenEl,IntToStr(i));
+      if not (GenListItem is TPasType) then
+        RaiseNotYetImplemented(20190812025715,GenEl,IntToStr(i)+' GenListItem='+GetObjName(GenListItem));
+      // reference
+      Ref:=SpecializeTypeRef(GenEl,SpecEl,TpasType(GenListItem));
+      Ref.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
+      SpecList.Add(Ref);
+      continue;
+      end;
+    if GenListItem.ClassType=TPasGenericTemplateType then
+      RaiseNotYetImplemented(20190812233309,GenEl);
+    NewClass:=TPTreeElement(GenListItem.ClassType);
+    SpecListItem:=TPasElement(NewClass.Create(GenListItem.Name,SpecEl));
+    SpecList.Add(SpecListItem);
+    SpecializeElement(GenListItem,SpecListItem);
+    end;
+end;
+
+procedure TPasResolver.SpecializeElArray(GenEl, SpecEl: TPasElement;
+  GenList: TPasElementArray; var SpecList: TPasElementArray;
+  AllowReferences: boolean{$IFDEF CheckPasTreeRefCount}; const RefId: string{$ENDIF});
+var
+  l, i: Integer;
+  GenListItem, Ref, SpecListItem: TPasElement;
+  NewClass: TPTreeElement;
+begin
+  if length(SpecList)>0 then
+    RaiseNotYetImplemented(20190914102814,GenEl,GetObjName(SpecEl));
+  l:=length(GenList);
+  SetLength(SpecList,l);
+  for i:=0 to l-1 do
+    SpecList[i]:=nil;
+  for i:=0 to l-1 do
+    begin
+    GenListItem:=GenList[i];
+    if GenListItem.Parent<>GenEl then
+      begin
+      if not AllowReferences then
+        RaiseNotYetImplemented(20190914102952,GenEl,IntToStr(i));
+      if not (GenListItem is TPasType) then
+        RaiseNotYetImplemented(20190914102957,GenEl,IntToStr(i)+' GenListItem='+GetObjName(GenListItem));
+      // reference
+      Ref:=SpecializeTypeRef(GenEl,SpecEl,TPasType(GenListItem));
+      Ref.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
+      SpecList[i]:=Ref;
+      continue;
+      end;
+    if GenListItem.ClassType=TPasGenericTemplateType then
+      RaiseNotYetImplemented(20190914103040,GenEl);
+    NewClass:=TPTreeElement(GenListItem.ClassType);
+    SpecListItem:=TPasElement(NewClass.Create(GenListItem.Name,SpecEl));
+    SpecList[i]:=SpecListItem;
+    SpecializeElement(GenListItem,SpecListItem);
+    end;
+end;
+
+procedure TPasResolver.SpecializeProcedure(GenEl, SpecEl: TPasProcedure;
+  SpecializedItem: TPRSpecializedItem);
+var
+  GenProcType: TPasProcedureType;
+  NewClass: TPTreeElement;
+  SpecProcScope, GenProcScope: TPasProcedureScope;
+  i, j: Integer;
+  GenPart, SpecPart: TProcedureNamePart;
+  GenTempl, SpecTempl: TPasGenericTemplateType;
+  Templates: TFPList;
+  GenBody: TProcedureBody;
+begin
+  GenProcScope:=GenEl.CustomData as TPasProcedureScope;
+  SpecProcScope:=SpecEl.CustomData as TPasProcedureScope;
+  if SpecProcScope<>nil then
+    begin
+    if TopScope<>SpecProcScope then
+      RaiseNotYetImplemented(20190920194151,SpecEl);
+    end
+  else if SpecializedItem<>nil then
+    begin
+    // specialized generic/parametrized procedure
+    SpecProcScope:=TPasProcedureScope(PushScope(SpecEl,ScopeClass_Procedure));
+    SpecProcScope.SpecializedFromItem:=SpecializedItem;
+    if GenProcScope.DeclarationProc<>nil then
+      RaiseNotYetImplemented(20190920203700,SpecEl);
+    if GenProcScope.OverriddenProc<>nil then
+      RaiseNotYetImplemented(20190920203536,SpecEl);
+    SpecProcScope.ClassRecScope:=GenProcScope.ClassRecScope;
+    if GenProcScope.SelfArg<>nil then
+      RaiseNotYetImplemented(20190920203626,SpecEl);
+    // SpecProcScope.Flags
+    SpecProcScope.ModeSwitches:=GenProcScope.ModeSwitches;
+    SpecProcScope.BoolSwitches:=GenProcScope.BoolSwitches;
+    Templates:=GetProcTemplateTypes(GenEl);
+    if (Templates=nil) or (Templates.Count=0) then
+      RaiseNotYetImplemented(20190920183140,SpecEl);
+    AddSpecializedTemplateIdentifiers(Templates,SpecializedItem,SpecProcScope,true);
+    end
+  else
+    RaiseNotYetImplemented(20190922153918,SpecEl);
+  Include(SpecProcScope.Flags,ppsfIsSpecialized);
+
+  if GenEl.PublicName<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.PublicName,SpecEl.PublicName);
+  if GenEl.LibrarySymbolName<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.LibrarySymbolName,SpecEl.LibrarySymbolName);
+  if GenEl.LibraryExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.LibraryExpr,SpecEl.LibraryExpr);
+  if GenEl.DispIDExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.DispIDExpr,SpecEl.DispIDExpr);
+  if GenEl.MessageExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.MessageExpr,SpecEl.MessageExpr);
+  SpecEl.MessageName:=GenEl.MessageName;
+  SpecEl.MessageType:=GenEl.MessageType;
+  SpecEl.AliasName:=GenEl.AliasName;
+  SpecEl.Modifiers:=GenEl.Modifiers;
+  if GenEl.NameParts<>nil then
+    begin
+    if SpecEl.NameParts<>nil then
+      RaiseNotYetImplemented(20190818125620,SpecEl);
+    SpecEl.NameParts:=TFPList.Create;
+    for i:=0 to GenEl.NameParts.Count-1 do
+      begin
+      GenPart:=TProcedureNamePart(GenEl.NameParts[i]);
+      SpecPart:=TProcedureNamePart.Create;
+      SpecEl.NameParts.Add(SpecPart);
+      SpecPart.Name:=GenPart.Name;
+      if GenPart.Templates<>nil then
+        begin
+        if (SpecializedItem<>nil) and (i=GenEl.NameParts.Count-1) then
+          begin
+          // the templates have been specialized to SpecializedItem.Params
+          continue;
+          end;
+        SpecPart.Templates:=TFPList.Create;
+        for j:=0 to GenPart.Templates.Count-1 do
+          begin
+          GenTempl:=TPasGenericTemplateType(GenPart.Templates[j]);
+          if GenTempl.Parent<>GenEl then
+            RaiseNotYetImplemented(20190818130001,GenEl,IntToStr(i)+','+IntToStr(j)+':'+GenTempl.Name+' GenParent='+GetObjName(GenTempl.Parent)+' GenEl='+GetObjName(GenEl));
+          NewClass:=TPTreeElement(GenTempl.ClassType);
+          SpecTempl:=TPasGenericTemplateType(NewClass.Create(GenTempl.Name,SpecEl));
+          SpecPart.Templates.Add(SpecTempl);
+          SpecializeElement(GenTempl,SpecTempl);
+          end;
+        end;
+      end;
+    end;
+  if GenEl.ProcType<>nil then
+    begin
+    GenProcType:=GenEl.ProcType;
+    if GenProcType.Parent<>GenEl then
+      RaiseNotYetImplemented(20190803212426,GenEl,GetObjName(GenProcType.Parent));
+    NewClass:=TPTreeElement(GenProcType.ClassType);
+    SpecEl.ProcType:=TPasProcedureType(NewClass.Create(GenProcType.Name,SpecEl));
+    SpecializeElement(GenProcType,SpecEl.ProcType);
+    end;
+  SpecProcScope.GenericStep:=psgsInterfaceParsed;
+
+  if GenEl.Body<>nil then
+    begin
+    // implementation proc
+    if SpecializedItem<>nil then
+      SpecializedItem.Step:=prssImplementationBuilding;
+    GenBody:=GenEl.Body;
+    if GenBody.Parent<>GenEl then
+      RaiseNotYetImplemented(20190804183308,GenEl,GetObjName(GenBody.Parent));
+    if SpecEl.Body<>nil then
+      RaiseNotYetImplemented(20190920211853,SpecEl);
+    NewClass:=TPTreeElement(GenBody.ClassType);
+    SpecEl.Body:=TProcedureBody(NewClass.Create(GenBody.Name,SpecEl));
+    SpecializeElement(GenBody,SpecEl.Body);
+    FinishProcedure(SpecEl);
+    end
+  else if SpecializedItem=nil then
+    // declaration proc, parent is specialized
+    FinishProcedure(SpecEl)
+  else
+    begin
+    // specialized generic procedure, body is not yet parsed
+    SpecializedItem.Step:=prssInterfaceFinished;
+    if TopScope<>SpecProcScope then
+      RaiseNotYetImplemented(20190920190400,SpecEl);
+    PopScope;
+    end;
+end;
+
+procedure TPasResolver.SpecializeOperator(GenEl, SpecEl: TPasOperator);
+begin
+  SpecEl.OperatorType:=GenEl.OperatorType;
+  SpecEl.TokenBased:=GenEl.TokenBased;
+  SpecializeProcedure(GenEl,SpecEl,nil);
+end;
+
+procedure TPasResolver.SpecializeProcedureType(GenEl,
+  SpecEl: TPasProcedureType; SpecializedItem: TPRSpecializedItem);
+var
+  GenResultEl, NewResultEl: TPasResultElement;
+  NewClass: TPTreeElement;
+  i: Integer;
+  GenScope: TPasGenericScope;
+begin
+  if GenEl.GenericTemplateTypes<>nil then
+    begin
+    GenScope:=TPasGenericScope(PushScope(SpecEl,TPasProcTypeScope));
+    if SpecializedItem<>nil then
+      begin
+      // specialized procedure type
+      GenScope.SpecializedFromItem:=SpecializedItem;
+      AddSpecializedTemplateIdentifiers(GenEl.GenericTemplateTypes,
+        SpecializedItem,GenScope,true);
+      end
+    else
+      begin
+      // generic procedure type inside a generic type
+      RaiseNotYetImplemented(20190813194550,GenEl);
+      end;
+    end;
+  // Args
+  SpecializeElList(GenEl,SpecEl,GenEl.Args,SpecEl.Args,false
+    {$IFDEF CheckPasTreeRefCount},'TPasProcedureType.Args'{$ENDIF});
+  for i:=0 to SpecEl.Args.Count-1 do
+    FinishArgument(TPasArgument(SpecEl.Args[i]));
+
+  // properties
+  SpecEl.CallingConvention:=GenEl.CallingConvention;
+  SpecEl.Modifiers:=GenEl.Modifiers;
+
+  // function result
+  if SpecEl is TPasFunctionType then
+    begin
+    GenResultEl:=TPasFunctionType(GenEl).ResultEl;
+    if GenResultEl.Parent<>GenEl then
+      RaiseNotYetImplemented(20190803212935,GenEl,GetObjName(GenResultEl.Parent));
+    NewClass:=TPTreeElement(GenResultEl.ClassType);
+    NewResultEl:=TPasResultElement(NewClass.Create(GenResultEl.Name,SpecEl));
+    TPasFunctionType(SpecEl).ResultEl:=NewResultEl;
+    AddFunctionResult(NewResultEl);
+    SpecializeElType(GenResultEl,NewResultEl,GenResultEl.ResultType,NewResultEl.ResultType);
+    end;
+
+  FinishProcedureType(SpecEl);
+  if SpecializedItem<>nil then
+    SpecializedItem.Step:=prssImplementationFinished;
+end;
+
+procedure TPasResolver.SpecializeProcedureBody(GenEl, SpecEl: TProcedureBody);
+var
+  GenBody, NewBody: TPasImplBlock;
+  NewClass: TPTreeElement;
+begin
+  SpecializeDeclarations(GenEl,SpecEl);
+  FinishTypeSection(SpecEl);
+
+  if GenEl.Body<>nil then
+    begin
+    GenBody:=GenEl.Body;
+    if GenBody.Parent<>GenEl then
+      RaiseNotYetImplemented(20190804184934,GenBody);
+    NewClass:=TPTreeElement(GenBody.ClassType);
+    NewBody:=TPasImplBlock(NewClass.Create(GenBody.Name,SpecEl));
+    SpecEl.Body:=NewBody;
+    SpecializeElement(GenBody,NewBody);
+    end;
+end;
+
+procedure TPasResolver.SpecializeDeclarations(GenEl, SpecEl: TPasDeclarations);
+var
+  i: Integer;
+  GenDecl, NewDecl: TPasElement;
+  NewClass: TPTreeElement;
+begin
+  for i:=0 to GenEl.Declarations.Count-1 do
+    begin
+    GenDecl:=TPasElement(GenEl.Declarations[i]);
+    if GenDecl.Parent<>GenEl then
+      RaiseNotYetImplemented(20190806091336,GenEl,GetObjName(GenDecl));
+    NewClass:=TPTreeElement(GenDecl.ClassType);
+    NewDecl:=TPasElement(NewClass.Create(GenDecl.Name,SpecEl));
+    SpecEl.Declarations.Add(NewDecl);
+    if NewClass=TPasAttributes then
+      SpecEl.Attributes.Add(NewDecl)
+    else if (NewClass=TPasClassType)
+        or (NewClass=TPasRecordType) then
+      SpecEl.Classes.Add(NewDecl)
+    else if NewClass=TPasConst then
+      SpecEl.Consts.Add(NewDecl)
+    else if NewClass=TPasExportSymbol then
+      SpecEl.ExportSymbols.Add(NewDecl)
+    else if NewClass.InheritsFrom(TPasProcedure) then
+      SpecEl.Functions.Add(NewDecl)
+    else if NewClass=TPasProperty then
+      SpecEl.Properties.Add(NewDecl)
+    else if NewClass=TPasResString then
+      SpecEl.ResStrings.Add(NewDecl)
+    else if NewClass.InheritsFrom(TPasType) then
+      SpecEl.Types.Add(NewDecl)
+    else if NewClass=TPasVariable then
+      SpecEl.Variables.Add(NewDecl)
+    else
+      RaiseNotYetImplemented(20190804184718,GenDecl);
+    SpecializeElement(GenDecl,NewDecl);
+    end;
+end;
+
+procedure TPasResolver.SpecializeSpecializeType(GenEl,
+  SpecEl: TPasSpecializeType);
+var
+  GenDestType: TPasType;
+  Ref: TPasElement;
+begin
+  // search DestType<ParamCount>
+  GenDestType:=GenEl.DestType;
+  if GenDestType=nil then
+    RaiseNotYetImplemented(20190812022211,GenEl);
+  if GenDestType.Parent=GenEl then
+    RaiseNotYetImplemented(20190812022251,GenEl);
+  Ref:=FindElementFor(GenDestType.Name,GenEl.Parent,GenEl.Params.Count);
+  if not (Ref is TPasGenericType) then
+    RaiseNotYetImplemented(20190812022359,GenEl,GetObjName(Ref));
+  SpecEl.DestType:=TPasGenericType(Ref);
+  SpecEl.DestType.AddRef{$IFDEF CheckPasTreeRefCount}('ResolveTypeReference'){$ENDIF};
+
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
+  SpecializeElList(GenEl,SpecEl,GenEl.Params,SpecEl.Params,true
+    {$IFDEF CheckPasTreeRefCount},'TPasSpecializeType.Params'{$ENDIF});
+
+  FinishSpecializeType(SpecEl);
+  {$IFDEF VerbosePasResolver}
+  //writeln('TPasResolver.SpecializeSpecializeType ',GetObjName(SpecEl.DestType),' ',GetObjName(SpecEl.CustomData));
+  {$ENDIF}
+end;
+
+procedure TPasResolver.SpecializeGenericTemplateType(GenEl,
+  SpecEl: TPasGenericTemplateType);
+var
+  GenConstraints, SpecConstraints: TPasElementArray;
+  i: Integer;
+  ConEl: TPasElement;
+begin
+  GenConstraints:=GenEl.Constraints;
+  if length(SpecEl.Constraints)>0 then
+    RaiseNotYetImplemented(20190914070209,GenEl);
+  SetLength(SpecEl.Constraints,length(GenConstraints));
+  SpecConstraints:=SpecEl.Constraints;
+  for i:=0 to length(SpecConstraints)-1 do
+    SpecConstraints[i]:=nil;
+  for i:=0 to length(GenConstraints)-1 do
+    begin
+    ConEl:=GenConstraints[i];
+    if ConEl is TPasExpr then
+      SpecializeElExpr(GenEl,SpecEl,TPasExpr(ConEl),TPasExpr(SpecConstraints[i]))
+    else if ConEl is TPasType then
+      SpecializeElType(GenEl,SpecEl,TPasType(ConEl),TPasType(SpecConstraints[i]))
+    else
+      RaiseNotYetImplemented(20190914070522,GenEl,IntToStr(i)+' '+GetObjName(ConEl));
+    end;
+end;
+
+procedure TPasResolver.SpecializeArgument(GenEl, SpecEl: TPasArgument);
+begin
+  SpecEl.Access:=GenEl.Access;
+  SpecializeElType(GenEl,SpecEl,GenEl.ArgType,SpecEl.ArgType);
+  if GenEl.ValueExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.ValueExpr,SpecEl.ValueExpr);
+
+  // FinishArgument is called when all arguments are ready
+end;
+
+procedure TPasResolver.SpecializeImplBlock(GenEl, SpecEl: TPasImplBlock);
+var
+  i: Integer;
+  GenImpl, NewImpl: TPasImplElement;
+  NewClass: TPTreeElement;
+begin
+  for i:=0 to GenEl.Elements.Count-1 do
+    begin
+    GenImpl:=TPasImplElement(GenEl.Elements[i]);
+    if GenImpl.Parent<>GenEl then
+      RaiseNotYetImplemented(20190806092151,GenEl,GetElementSourcePosStr(GenImpl));
+    NewClass:=TPTreeElement(GenImpl.ClassType);
+    NewImpl:=TPasImplElement(NewClass.Create(GenImpl.Name,SpecEl));
+    SpecEl.Elements.Add(NewImpl);
+    SpecializeElement(GenImpl,NewImpl);
+    end;
+end;
+
+procedure TPasResolver.SpecializeImplAsmStatement(GenEl,
+  SpecEl: TPasImplAsmStatement);
+begin
+  SpecializeImplBlock(GenEl,SpecEl);
+  SpecEl.Tokens.Assign(GenEl.Tokens);
+end;
+
+procedure TPasResolver.SpecializeImplRepeatUntil(GenEl,
+  SpecEl: TPasImplRepeatUntil);
+begin
+  SpecializeImplBlock(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ConditionExpr,SpecEl.ConditionExpr);
+end;
+
+procedure TPasResolver.SpecializeImplIfElse(GenEl, SpecEl: TPasImplIfElse);
+begin
+  // do not call SpecializeImplBlock(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ConditionExpr,SpecEl.ConditionExpr);
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.IfBranch,SpecEl.IfBranch);
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.ElseBranch,SpecEl.ElseBranch);
+end;
+
+procedure TPasResolver.SpecializeImplWhileDo(GenEl, SpecEl: TPasImplWhileDo);
+begin
+  // do not call SpecializeImplBlock(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ConditionExpr,SpecEl.ConditionExpr);
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.Body,SpecEl.Body);
+end;
+
+procedure TPasResolver.SpecializeImplWithDo(GenEl, SpecEl: TPasImplWithDo);
+var
+  i: Integer;
+  GenExpr, SpecExpr: TPasExpr;
+  NewClass: TPTreeElement;
+begin
+  for i:=0 to GenEl.Expressions.Count-1 do
+    begin
+    GenExpr:=TPasExpr(GenEl.Expressions[i]);
+    if GenExpr.Parent<>GenEl then
+      RaiseNotYetImplemented(20190808224343,GenEl,IntToStr(i));
+    NewClass:=TPTreeElement(GenExpr.ClassType);
+    SpecExpr:=TPasExpr(NewClass.Create(GenExpr.Name,SpecEl));
+    SpecEl.Expressions.Add(SpecExpr);
+    BeginScope(stWithExpr,SpecExpr);
+    SpecializeElement(GenExpr,SpecExpr);
+    end;
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.Body,SpecEl.Body);
+
+  FinishWithDo(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeImplCaseOf(GenEl, SpecEl: TPasImplCaseOf);
+begin
+  SpecializeElExpr(GenEl,SpecEl,GenEl.CaseExpr,SpecEl.CaseExpr);
+  SpecializeImplBlock(GenEl,SpecEl); // Elements
+  if GenEl.ElseBranch<>nil then
+    SpecializeElImplAlias(GenEl,SpecEl,GenEl.ElseBranch,TPasImplElement(SpecEl.ElseBranch)
+      {$IFDEF CheckPasTreeRefCount},'TPasImplCaseOf.ElseBranch'{$ENDIF});
+end;
+
+procedure TPasResolver.SpecializeImplCaseStatement(GenEl,
+  SpecEl: TPasImplCaseStatement);
+begin
+  SpecializeElList(GenEl,SpecEl,GenEl.Expressions,SpecEl.Expressions,false
+    {$IFDEF CheckPasTreeRefCount},'TPasImplCaseStatement.CaseExpr'{$ENDIF});
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.Body,SpecEl.Body);
+end;
+
+procedure TPasResolver.SpecializeImplAssign(GenEl, SpecEl: TPasImplAssign);
+begin
+  if GenEl.Elements.Count>0 then
+    RaiseNotYetImplemented(20190808142935,GenEl);
+  SpecEl.Kind:=GenEl.Kind;
+  SpecializeElExpr(GenEl,SpecEl,GenEl.left,SpecEl.left);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.right,SpecEl.right);
+end;
+
+procedure TPasResolver.SpecializeImplSimple(GenEl, SpecEl: TPasImplSimple);
+begin
+  if GenEl.Elements.Count>0 then
+    RaiseNotYetImplemented(20190808142935,GenEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
+end;
+
+procedure TPasResolver.SpecializeImplForLoop(GenEl, SpecEl: TPasImplForLoop);
+var
+  i: Integer;
+  GenImpl, NewImpl: TPasImplElement;
+  NewClass: TPTreeElement;
+begin
+  if GenEl.Variable<>nil then
+    RaiseNotYetImplemented(20190808142627,GenEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.VariableName,SpecEl.VariableName);
+  SpecEl.LoopType:=GenEl.LoopType;
+  SpecializeElExpr(GenEl,SpecEl,GenEl.StartExpr,SpecEl.StartExpr);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.EndExpr,SpecEl.EndExpr);
+  FinishForLoopHeader(SpecEl);
+
+  // SpecEl.Body is set via AddElement
+  for i:=0 to GenEl.Elements.Count-1 do
+    begin
+    GenImpl:=TPasImplElement(GenEl.Elements[i]);
+    if GenImpl.Parent<>GenEl then
+      RaiseNotYetImplemented(20190806092151,GenEl,GetElementSourcePosStr(GenImpl));
+    NewClass:=TPTreeElement(GenImpl.ClassType);
+    NewImpl:=TPasImplElement(NewClass.Create(GenImpl.Name,SpecEl));
+    SpecEl.AddElement(NewImpl);
+    SpecializeElement(GenImpl,NewImpl);
+    end;
+end;
+
+procedure TPasResolver.SpecializeImplTry(GenEl, SpecEl: TPasImplTry);
+begin
+  SpecializeImplBlock(GenEl,SpecEl); // clone elements
+  if GenEl.FinallyExcept<>nil then
+    SpecializeElImplEl(GenEl,SpecEl,GenEl.FinallyExcept,
+      TPasImplElement(SpecEl.FinallyExcept));
+  if GenEl.ElseBranch<>nil then
+    SpecializeElImplEl(GenEl,SpecEl,GenEl.ElseBranch,
+      TPasImplElement(SpecEl.ElseBranch));
+end;
+
+procedure TPasResolver.SpecializeImplExceptOn(GenEl, SpecEl: TPasImplExceptOn);
+var
+  GenVar: TPasVariable;
+  NewClass: TPTreeElement;
+begin
+  GenVar:=GenEl.VarEl;
+  if GenVar<>nil then
+    begin
+    if GenVar.Parent<>GenEl then
+      RaiseNotYetImplemented(20190808232327,GenEl);
+    NewClass:=TPTreeElement(GenVar.ClassType);
+    SpecEl.VarEl:=TPasVariable(NewClass.Create(GenVar.Name,SpecEl));
+    SpecializeElement(GenVar,SpecEl.VarEl);
+    if GenVar.VarType<>GenEl.TypeEl then
+      RaiseNotYetImplemented(20190808232601,GenEl);
+    SpecEl.TypeEl:=SpecEl.VarEl.VarType;
+    SpecEl.TypeEl.AddRef{$IFDEF CheckPasTreeRefCount}('TPasVariable.VarType'){$ENDIF};
+    end
+  else
+    SpecializeElType(GenEl,SpecEl,GenEl.TypeEl,SpecEl.TypeEl);
+
+  FinishExceptOnExpr;
+  SpecializeElImplEl(GenEl,SpecEl,GenEl.Body,SpecEl.Body);
+  FinishExceptOnStatement;
+end;
+
+procedure TPasResolver.SpecializeImplRaise(GenEl, SpecEl: TPasImplRaise);
+begin
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ExceptObject,SpecEl.ExceptObject);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ExceptAddr,SpecEl.ExceptAddr);
+end;
+
+procedure TPasResolver.SpecializeExpr(GenEl, SpecEl: TPasExpr);
+begin
+  SpecEl.Kind:=GenEl.Kind;
+  SpecEl.OpCode:=GenEl.OpCode;
+  SpecializeElExpr(GenEl,SpecEl,GenEl.format1,SpecEl.format1);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.format2,SpecEl.format2);
+end;
+
+procedure TPasResolver.SpecializeExprArray(GenEl, SpecEl: TPasElement;
+  GenArray: TPasExprArray; var SpecArray: TPasExprArray);
+var
+  i: Integer;
+begin
+  if length(SpecArray)>0 then
+    RaiseNotYetImplemented(20190808205855,GenEl);
+  SetLength(SpecArray,length(GenArray));
+  for i:=0 to length(SpecArray)-1 do
+    SpecArray[i]:=nil;
+  for i:=0 to length(GenArray)-1 do
+    SpecializeElExpr(GenEl,SpecEl,GenArray[i],SpecArray[i]);
+end;
+
+procedure TPasResolver.SpecializePrimitiveExpr(GenEl, SpecEl: TPrimitiveExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecEl.Value:=GenEl.Value;
+end;
+
+procedure TPasResolver.SpecializeUnaryExpr(GenEl, SpecEl: TUnaryExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Operand,SpecEl.Operand);
+end;
+
+procedure TPasResolver.SpecializeBinaryExpr(GenEl, SpecEl: TBinaryExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.left,SpecEl.left);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.right,SpecEl.right);
+end;
+
+procedure TPasResolver.SpecializeBoolConstExpr(GenEl, SpecEl: TBoolConstExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecEl.Value:=GenEl.Value;
+end;
+
+procedure TPasResolver.SpecializeParamsExpr(GenEl, SpecEl: TParamsExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Value,SpecEl.Value);
+  SpecializeExprArray(GenEl,SpecEl,GenEl.Params,SpecEl.Params);
+end;
+
+procedure TPasResolver.SpecializeRecordValues(GenEl, SpecEl: TRecordValues);
+var
+  GenField: TRecordValuesItem;
+  i: Integer;
+  SpecFieldP: PRecordValuesItem;
+begin
+  SpecializeExpr(GenEl,SpecEl);
+
+  // fields
+  SetLength(SpecEl.Fields,length(GenEl.Fields));
+  for i:=0 to length(SpecEl.Fields)-1 do
+    with SpecEl.Fields[i] do
+      begin
+      NameExp:=nil;
+      ValueExp:=nil;
+      end;
+  for i:=0 to length(GenEl.Fields)-1 do
+    begin
+    GenField:=GenEl.Fields[i];
+    if GenField.NameExp.Parent<>GenEl then
+      RaiseNotYetImplemented(20190808205128,GenEl);
+    if GenField.ValueExp.Parent<>GenEl then
+      RaiseNotYetImplemented(20190808205138,GenEl);
+    SpecFieldP:=@SpecEl.Fields[i];
+    SpecializeElExpr(GenEl,SpecEl,GenField.NameExp,TPasExpr(SpecFieldP^.NameExp));
+    SpecializeElExpr(GenEl,SpecEl,GenField.ValueExp,SpecFieldP^.ValueExp);
+    end;
+end;
+
+procedure TPasResolver.SpecializeArrayValues(GenEl, SpecEl: TArrayValues);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecializeExprArray(GenEl,SpecEl,GenEl.Values,SpecEl.Values);
+end;
+
+procedure TPasResolver.SpecializeInlineSpecializeExpr(GenEl,
+  SpecEl: TInlineSpecializeExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.NameExpr,SpecEl.NameExpr);
+  SpecializeElList(GenEl,SpecEl,GenEl.Params,SpecEl.Params,
+    true{$IFDEF CheckPasTreeRefCount},'TInlineSpecializeExpr.Params'{$ENDIF});
+end;
+
+procedure TPasResolver.SpecializeProcedureExpr(GenEl, SpecEl: TProcedureExpr);
+begin
+  SpecializeExpr(GenEl,SpecEl);
+  if GenEl.Proc=nil then
+    RaiseNotYetImplemented(20190808221018,GenEl);
+  RaiseNotYetImplemented(20190808221040,GenEl);
+end;
+
+procedure TPasResolver.SpecializeResString(GenEl, SpecEl: TPasResString);
+begin
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
+  FinishResourcestring(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeAliasType(GenEl, SpecEl: TPasAliasType);
+begin
+  SpecializeElType(GenEl,SpecEl,GenEl.DestType,SpecEl.DestType);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
+  // not needed by specialize: FinishTypeAlias();
+  FinishTypeDef(SpecEl);
+end;
+
+procedure TPasResolver.SpecializePointerType(GenEl, SpecEl: TPasPointerType);
+begin
+  SpecializeElType(GenEl,SpecEl,GenEl.DestType,SpecEl.DestType);
+  FinishPointerType(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeRangeType(GenEl, SpecEl: TPasRangeType);
+begin
+  SpecializeElExpr(GenEl,SpecEl,GenEl.RangeExpr,TPasExpr(SpecEl.RangeExpr));
+  FinishRangeType(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeArrayType(GenEl, SpecEl: TPasArrayType;
+  SpecializedItem: TPRSpecializedTypeItem);
+var
+  GenScope: TPasGenericScope;
+begin
+  SpecEl.IndexRange:=GenEl.IndexRange;
+  SpecEl.PackMode:=GenEl.PackMode;
+  if GenEl.GenericTemplateTypes<>nil then
+    begin
+    GenScope:=TPasGenericScope(PushScope(SpecEl,TPasArrayScope));
+    if SpecializedItem<>nil then
+      begin
+      // specialized generic array
+      GenScope.SpecializedFromItem:=SpecializedItem;
+      AddSpecializedTemplateIdentifiers(GenEl.GenericTemplateTypes,
+                                        SpecializedItem,GenScope,true);
+      end
+    else
+      begin
+      // generic arraytype inside a generic type
+      RaiseNotYetImplemented(20190812225218,GenEl);
+      end;
+    end;
+  SpecializeExprArray(GenEl,SpecEl,GenEl.Ranges,SpecEl.Ranges);
+  SpecializeElType(GenEl,SpecEl,GenEl.ElType,SpecEl.ElType);
+  FinishArrayType(SpecEl);
+  if SpecializedItem<>nil then
+    SpecializedItem.Step:=prssImplementationFinished;
+end;
+
+procedure TPasResolver.SpecializeRecordType(GenEl, SpecEl: TPasRecordType;
+  SpecializedItem: TPRSpecializedTypeItem);
+var
+  SpecScope: TPasGenericScope;
+begin
+  SpecEl.PackMode:=GenEl.PackMode;
+  if SpecializedItem<>nil then
+    begin
+    // specialized generic record
+    if SpecEl.CustomData<>nil then
+      RaiseNotYetImplemented(20190921204740,SpecEl);
+    SpecScope:=TPasGenericScope(PushScope(SpecEl,TPasRecordScope));
+    SpecScope.VisibilityContext:=SpecEl;
+    SpecScope.SpecializedFromItem:=SpecializedItem;
+    AddSpecializedTemplateIdentifiers(GenEl.GenericTemplateTypes,
+                                      SpecializedItem,SpecScope,true);
+    if not (msDelphi in CurrentParser.CurrentModeswitches) then
+      begin
+      // ObjFPC: add canonical type alias
+      SpecScope.AddIdentifier(GenEl.Name,SpecEl,pikSimple);
+      end;
+    end
+  else if GenEl.GenericTemplateTypes.Count>0 then
+    begin
+    // generic recordtype inside a generic type
+    if SpecEl.CustomData=nil then
+      RaiseNotYetImplemented(20190815201634,SpecEl);
+    SpecScope:=TPasGenericScope(SpecEl.CustomData);
+    RaiseNotYetImplemented(20190815194327,GenEl);
+    end;
+  // specialize sub elements
+  SpecializeMembers(GenEl,SpecEl);
+  FinishRecordType(SpecEl);
+  if SpecializedItem<>nil then
+    SpecializedItem.Step:=prssInterfaceFinished;
+end;
+
+procedure TPasResolver.SpecializeClassType(GenEl, SpecEl: TPasClassType;
+  SpecializedItem: TPRSpecializedTypeItem);
+var
+  HeaderScope: TPasGenericParamsScope;
+  TemplType: TPasGenericTemplateType;
+  GenericTemplateTypes: TFPList;
+  SpecClassScope: TPasClassScope;
+begin
+  GenericTemplateTypes:=GenEl.GenericTemplateTypes;
+  SpecEl.ObjKind:=GenEl.ObjKind;
+  SpecEl.PackMode:=GenEl.PackMode;
+  if GenEl.HelperForType<>nil then
+    RaiseNotYetImplemented(20190730182758,GenEl,'');
+  if GenEl.IsForward then
+    RaiseNotYetImplemented(20190730182858,GenEl);
+  SpecEl.IsExternal:=GenEl.IsExternal;
+  SpecEl.IsShortDefinition:=GenEl.IsShortDefinition;
+  if GenEl.GUIDExpr<>nil then
+    SpecializeElExpr(GenEl,SpecEl,GenEl.GUIDExpr,SpecEl.GUIDExpr);
+  SpecEl.Modifiers.Assign(GenEl.Modifiers);
+  SpecEl.ExternalNameSpace:=GenEl.ExternalNameSpace;
+  SpecEl.ExternalName:=GenEl.ExternalName;
+  SpecEl.InterfaceType:=GenEl.InterfaceType;
+
+  // ancestor+interfaces
+  if SpecializedItem<>nil then
+    begin
+    // ancestor can be a specialized type. For example: = class(TAncestor<T>)
+    // -> create a scope with the specialized parameters
+    HeaderScope:=TPasGenericParamsScope.Create;
+    SpecializedItem.HeaderScope:=HeaderScope;
+    TemplType:=TPasGenericTemplateType(GenericTemplateTypes[0]);
+    HeaderScope.Element:=TemplType;
+    PushScope(HeaderScope);
+    AddSpecializedTemplateIdentifiers(GenericTemplateTypes,
+                                      SpecializedItem,HeaderScope,true);
+    end
+  else
+    HeaderScope:=nil;
+  SpecializeElType(GenEl,SpecEl,
+                   GenEl.AncestorType,SpecEl.AncestorType);
+  SpecializeElList(GenEl,SpecEl,
+                   GenEl.Interfaces,SpecEl.Interfaces,true
+                   {$IFDEF CheckPasTreeRefCount},'TPasClassType.Interfaces'{$ENDIF});
+  if HeaderScope<>nil then
+    begin
+    if TopScope<>HeaderScope then
+      RaiseNotYetImplemented(20190813003056,GenEl);
+    PopScope;
+    SpecializedItem.HeaderScope:=nil;
+    HeaderScope.Free;
+    end;
+
+  FinishAncestors(SpecEl);
+  // Note: class scope was created by FinishAncestors
+  SpecClassScope:=NoNil(SpecEl.CustomData) as TPasClassScope;
+
+  if SpecClassScope.SpecializedFromItem<>nil then
+    RaiseNotYetImplemented(20190816215413,SpecEl);
+  if SpecializedItem<>nil then
+    begin
+    SpecClassScope.SpecializedFromItem:=SpecializedItem;
+    AddSpecializedTemplateIdentifiers(GenericTemplateTypes,
+                                      SpecializedItem,SpecClassScope,false);
+    if not (msDelphi in CurrentParser.CurrentModeswitches) then
+      begin
+      // ObjFPC: add canonical type alias
+      SpecClassScope.AddIdentifier(GenEl.Name,SpecEl,pikSimple);
+      end;
+    end;
+  // specialize sub elements
+  SpecializeMembers(GenEl,SpecEl);
+  if SpecializedItem<>nil then
+    SpecializedItem.Step:=prssInterfaceFinished;
+  FinishClassType(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeEnumValue(GenEl, SpecEl: TPasEnumValue);
+begin
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Value,SpecEl.Value);
+end;
+
+procedure TPasResolver.SpecializeEnumType(GenEl, SpecEl: TPasEnumType);
+begin
+  SpecializeElList(GenEl,SpecEl,GenEl.Values,SpecEl.Values,false
+    {$IFDEF CheckPasTreeRefCount},'TPasEnumType.Values'{$ENDIF});
+  FinishEnumType(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeSetType(GenEl, SpecEl: TPasSetType);
+begin
+  SpecEl.IsPacked:=GenEl.IsPacked;
+  SpecializeElType(GenEl,SpecEl,GenEl.EnumType,SpecEl.EnumType);
+  FinishSetType(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeVariant(GenEl, SpecEl: TPasVariant);
+begin
+  SpecializeElList(GenEl,SpecEl,GenEl.Values,SpecEl.Values,false
+    {$IFDEF CheckPasTreeRefCount},'TPasVariant.Values'{$ENDIF});
+  RaiseNotYetImplemented(20190808214218,GenEl)
+  //ToDo: Members: TPasRecordType;
+end;
+
+procedure TPasResolver.SpecializeStringType(GenEl, SpecEl: TPasStringType);
+begin
+  SpecEl.LengthExpr:=GenEl.LengthExpr;
+  FinishTypeDef(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeAttributes(GenEl, SpecEl: TPasAttributes);
+begin
+  SpecializeExprArray(GenEl,SpecEl,GenEl.Calls,SpecEl.Calls);
+  FinishAttributes(SpecEl);
+end;
+
+procedure TPasResolver.SpecializeMethodResolution(GenEl,
+  SpecEl: TPasMethodResolution);
+begin
+  SpecEl.ProcClass:=GenEl.ProcClass;
+  SpecializeElExpr(GenEl,SpecEl,GenEl.InterfaceName,SpecEl.InterfaceName);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.InterfaceProc,SpecEl.InterfaceProc);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.ImplementationProc,SpecEl.ImplementationProc);
+  FinishMethodResolution(SpecEl);
 end;
 
 function TPasResolver.CheckAssignCompatibilityCustom(const LHS,
@@ -11951,6 +18271,7 @@ var
   ParamResolved: TPasResolverResult;
   Value: TResEvalValue;
   Ranges: TPasExprArray;
+  IdentEl: TPasElement;
 begin
   Evaluated:=nil;
   // first param: string or dynamic array or type/const of static array
@@ -11963,8 +18284,10 @@ begin
       Value:=Eval(Param,Flags);
       if Value=nil then exit;
       case Value.Kind of
+      {$ifdef FPC_HAS_CPSTRING}
       revkString:
         Evaluated:=TResEvalInt.CreateValue(length(TResEvalString(Value).S));
+      {$endif}
       revkUnicodeString:
         Evaluated:=TResEvalInt.CreateValue(length(TResEvalUTF16(Value).S));
       end;
@@ -11979,10 +18302,11 @@ begin
       if length(Ranges)=0 then
         begin
         // open or dynamic array
-        if (ParamResolved.IdentEl is TPasVariable)
-            and (TPasVariable(ParamResolved.IdentEl).Expr is TPasExpr) then
+        IdentEl:=ParamResolved.IdentEl;
+        if (IdentEl is TPasVariable)
+            and (TPasVariable(IdentEl).Expr is TPasExpr) then
           begin
-          Expr:=TPasVariable(ParamResolved.IdentEl).Expr;
+          Expr:=TPasVariable(IdentEl).Expr;
           if Expr is TArrayValues then
             Evaluated:=TResEvalInt.CreateValue(length(TArrayValues(Expr).Values))
           else if (Expr is TParamsExpr) and (TParamsExpr(Expr).Kind=pekSet) then
@@ -12065,6 +18389,7 @@ var
 begin
   if Proc=nil then ;
   P:=Params.Params;
+  if P=nil then ;
   FinishCallArgAccess(P[0],rraVarParam);
   FinishCallArgAccess(P[1],rraRead);
 end;
@@ -12077,6 +18402,7 @@ var
   Param: TPasExpr;
   ParamResolved: TPasResolverResult;
   EnumType: TPasEnumType;
+  C: TClass;
 begin
   if not CheckBuiltInMinParamCount(Proc,Expr,2,RaiseOnError) then
     exit(cIncompatible);
@@ -12088,12 +18414,17 @@ begin
   ComputeElement(Param,ParamResolved,[rcNoImplicitProc]);
   EnumType:=nil;
   if ([rrfReadable,rrfWritable]*ParamResolved.Flags=[rrfReadable,rrfWritable])
-      and ((ParamResolved.IdentEl is TPasVariable)
-        or (ParamResolved.IdentEl is TPasArgument)) then
+      and (ParamResolved.IdentEl<>nil) then
     begin
-    if (ParamResolved.BaseType=btSet)
-        and (ParamResolved.LoTypeEl is TPasEnumType) then
-      EnumType:=TPasEnumType(ParamResolved.LoTypeEl);
+    C:=ParamResolved.IdentEl.ClassType;
+    if (C.InheritsFrom(TPasVariable)
+        or (C=TPasArgument)
+        or (C=TPasResultElement)) then
+      begin
+      if (ParamResolved.BaseType=btSet)
+          and (ParamResolved.LoTypeEl is TPasEnumType) then
+        EnumType:=TPasEnumType(ParamResolved.LoTypeEl);
+      end;
     end;
   if EnumType=nil then
     begin
@@ -12126,6 +18457,7 @@ var
 begin
   if Proc=nil then ;
   P:=Params.Params;
+  if P=nil then ;
   FinishCallArgAccess(P[0],rraVarParam);
   FinishCallArgAccess(P[1],rraRead);
 end;
@@ -12172,6 +18504,7 @@ var
   ProcScope: TPasProcedureScope;
   ResultEl: TPasResultElement;
   Flags: TPasResolverComputeFlags;
+  CtxProc: TPasProcedure;
 begin
   if (not (Expr is TParamsExpr)) or (length(TParamsExpr(Expr).Params)=0) then
     exit(cExact);
@@ -12189,14 +18522,15 @@ begin
     begin
     // first param is function result
     ProcScope:=TPasProcedureScope(Scopes[i]);
-    if not (ProcScope.Element is TPasFunction) then
+    CtxProc:=TPasProcedure(ProcScope.Element);
+    if not (CtxProc.ProcType is TPasFunctionType) then
       begin
       if RaiseOnError then
         RaiseMsg(20170216152312,nWrongNumberOfParametersForCallTo,
           sWrongNumberOfParametersForCallTo,['procedure exit'],Params.Params[0]);
       exit(cIncompatible);
       end;
-    ResultEl:=(ProcScope.Element as TPasFunction).FuncType.ResultEl;
+    ResultEl:=TPasFunctionType(CtxProc.ProcType).ResultEl;
     ComputeElement(ResultEl,ResultResolved,[rcType]);
     end
   else
@@ -12260,14 +18594,14 @@ begin
     Result:=cExact
   else if ParamResolved.BaseType=btPointer then
     begin
-    if bsPointerMath in GetElBoolSwitches(Expr) then
+    if ElHasBoolSwitch(Expr,bsPointerMath) then
       Result:=cExact;
     end
   else if ParamResolved.BaseType=btContext then
     begin
     TypeEl:=ParamResolved.LoTypeEl;
     if (TypeEl.ClassType=TPasPointerType)
-        and (bsPointerMath in GetElBoolSwitches(Expr)) then
+        and ElHasBoolSwitch(Expr,bsPointerMath) then
       Result:=cExact;
     end;
   if Result=cIncompatible then
@@ -12342,6 +18676,7 @@ procedure TPasResolver.BI_Assigned_OnGetCallResult(Proc: TResElDataBuiltInProc;
 begin
   SetResolverIdentifier(ResolvedEl,btBoolean,Proc.Proc,
                      FBaseTypes[btBoolean],FBaseTypes[btBoolean],[rrfReadable]);
+  if Params=nil then ;
 end;
 
 procedure TPasResolver.BI_Assigned_OnFinishParamsExpr(
@@ -12387,6 +18722,7 @@ procedure TPasResolver.BI_Chr_OnGetCallResult(Proc: TResElDataBuiltInProc;
 begin
   SetResolverIdentifier(ResolvedEl,BaseTypeChar,Proc.Proc,
     FBaseTypes[BaseTypeChar],FBaseTypes[BaseTypeChar],[rrfReadable]);
+  if Params=nil then ;
 end;
 
 procedure TPasResolver.BI_Chr_OnEval(Proc: TResElDataBuiltInProc;
@@ -12464,6 +18800,7 @@ procedure TPasResolver.BI_Ord_OnGetCallResult(Proc: TResElDataBuiltInProc;
 begin
   SetResolverIdentifier(ResolvedEl,btLongint,Proc.Proc,
     FBaseTypes[btLongint],FBaseTypes[btLongint],[rrfReadable]);
+  if Params=nil then ;
 end;
 
 procedure TPasResolver.BI_Ord_OnEval(Proc: TResElDataBuiltInProc;
@@ -12509,9 +18846,8 @@ begin
   Param:=Params.Params[0];
   ComputeElement(Param,ParamResolved,[]);
   Result:=cIncompatible;
-  if not (rrfReadable in ParamResolved.Flags)
-      and (ParamResolved.BaseType in btAllRanges) then
-    // built-in range e.g. high(char)
+  if ParamResolved.BaseType in btAllRanges then
+    // e.g. high(char)
     Result:=cExact
   else if ParamResolved.BaseType=btSet then
     Result:=cExact
@@ -12524,7 +18860,12 @@ begin
       Result:=cExact;
     end;
   if Result=cIncompatible then
+    begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.BI_LowHigh_OnGetCallCompatibility ParamResolved=',GetResolverResultDbg(ParamResolved));
+    {$ENDIF}
     exit(CheckRaiseTypeArgNo(20170216152338,1,Param,ParamResolved,'ordinal type, array or set',RaiseOnError));
+    end;
 
   Result:=CheckBuiltInMaxParamCount(Proc,Params,1,RaiseOnError);
 end;
@@ -12573,6 +18914,19 @@ end;
 
 procedure TPasResolver.BI_LowHigh_OnEval(Proc: TResElDataBuiltInProc;
   Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue);
+
+  function IsDynArrayConstExpr(IdentEl: TPasElement): boolean;
+  begin
+    Result:=false;
+    if not (IdentEl is TPasVariable) then exit;
+    if not (TPasVariable(IdentEl).Expr is TPasExpr) then exit;
+
+    if (IdentEl.ClassType=TPasConst) and TPasConst(IdentEl).IsConst then
+      exit(true);
+    if fExprEvaluator.IsConst(Params) then
+      exit(true); // a const refers an initial value
+  end;
+
 var
   Param: TPasExpr;
   ParamResolved: TPasResolverResult;
@@ -12582,9 +18936,8 @@ var
   Value: TResEvalValue;
   EnumType: TPasEnumType;
   aSet: TResEvalSet;
-  Int: MaxPrecInt;
   bt: TResolverBaseType;
-  MinInt, MaxInt: int64;
+  Int, MinInt, MaxInt: TMaxPrecInt;
   i: Integer;
   Expr: TPasExpr;
 begin
@@ -12603,14 +18956,13 @@ begin
         // dyn or open array
         if Proc.BuiltIn=bfLow then
           Evaluated:=TResEvalInt.CreateValue(0)
-        else if (ParamResolved.IdentEl is TPasVariable)
-            and (TPasVariable(ParamResolved.IdentEl).Expr is TPasExpr) then
+        else if IsDynArrayConstExpr(ParamResolved.IdentEl) then
           begin
           Expr:=TPasVariable(ParamResolved.IdentEl).Expr;
           if Expr is TArrayValues then
-            Evaluated:=TResEvalInt.CreateValue(length(TArrayValues(Expr).Values)-1)
+            Evaluated:=TResEvalInt.CreateValue(TMaxPrecInt(length(TArrayValues(Expr).Values))-1)
           else if (Expr is TParamsExpr) and (TParamsExpr(Expr).Kind=pekSet) then
-            Evaluated:=TResEvalInt.CreateValue(length(TParamsExpr(Expr).Params)-1);
+            Evaluated:=TResEvalInt.CreateValue(TMaxPrecInt(length(TParamsExpr(Expr).Params))-1);
           if Evaluated=nil then
             RaiseXExpectedButYFound(20170601191003,'array constant','expression',Params);
           end
@@ -12677,9 +19029,11 @@ begin
         revskInt:
           Evaluated:=TResEvalInt.CreateValue(Int);
         revskChar:
+          {$ifdef FPC_HAS_CPSTRING}
           if Int<256 then
             Evaluated:=TResEvalString.CreateValue(chr(Int))
           else
+          {$endif}
             Evaluated:=TResEvalUTF16.CreateValue(widechar(Int));
         revskBool:
           if Int=0 then
@@ -12700,6 +19054,7 @@ begin
     bt:=GetActualBaseType(bt);
     if bt in btAllBooleans then
       Evaluated:=TResEvalBool.CreateValue(Proc.BuiltIn=bfHigh)
+    {$ifdef HasInt64}
     else if bt=btQWord then
       begin
       if Proc.BuiltIn=bfLow then
@@ -12707,20 +19062,23 @@ begin
       else
         Evaluated:=TResEvalUInt.CreateValue(High(QWord));
       end
-    else if (bt in (btAllInteger-[btQWord])) and GetIntegerRange(bt,MinInt,MaxInt) then
+    {$endif}
+    else if (bt in btAllIntegerNoQWord) and GetIntegerRange(bt,MinInt,MaxInt) then
       begin
       if Proc.BuiltIn=bfLow then
         Evaluated:=TResEvalInt.CreateValue(MinInt)
       else
         Evaluated:=TResEvalInt.CreateValue(MaxInt);
       end
-    else if bt in [btChar,btAnsiChar] then
+    {$ifdef FPC_HAS_CPSTRING}
+    else if bt=btAnsiChar then
       begin
       if Proc.BuiltIn=bfLow then
         Evaluated:=TResEvalString.CreateValue(#0)
       else
         Evaluated:=TResEvalString.CreateValue(#255);
       end
+    {$endif}
     else if bt=btWideChar then
       begin
       if Proc.BuiltIn=bfLow then
@@ -12787,6 +19145,7 @@ procedure TPasResolver.BI_PredSucc_OnGetCallResult(Proc: TResElDataBuiltInProc;
 begin
   ComputeElement(Params.Params[0],ResolvedEl,[]);
   ResolvedEl.Flags:=ResolvedEl.Flags-[rrfWritable];
+  if Proc=nil then ;
 end;
 
 procedure TPasResolver.BI_PredSucc_OnEval(Proc: TResElDataBuiltInProc;
@@ -12921,6 +19280,7 @@ var
 begin
   if Proc=nil then ;
   P:=Params.Params;
+  if P=nil then ;
   FinishCallArgAccess(P[0],rraRead);
   FinishCallArgAccess(P[1],rraVarParam);
 end;
@@ -12961,15 +19321,17 @@ end;
 procedure TPasResolver.BI_StrFunc_OnGetCallResult(Proc: TResElDataBuiltInProc;
   Params: TParamsExpr; out ResolvedEl: TPasResolverResult);
 begin
-  if Params=nil then ;
   SetResolverIdentifier(ResolvedEl,btString,Proc.Proc,
     FBaseTypes[btString],FBaseTypes[btString],[rrfReadable]);
+  if Params=nil then ;
+  if Proc=nil then ;
 end;
 
 procedure TPasResolver.BI_StrFunc_OnEval(Proc: TResElDataBuiltInProc;
   Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue);
 begin
   Evaluated:=fExprEvaluator.EvalStrFunc(Params,Flags);
+  if Proc=nil then ;
 end;
 
 function TPasResolver.BI_WriteStrProc_OnGetCallCompatibility(
@@ -13016,9 +19378,148 @@ var
 begin
   if Proc=nil then ;
   P:=Params.Params;
+  if P=nil then ;
   FinishCallArgAccess(P[0],rraOutParam);
   for i:=0 to length(Params.Params)-1 do
     FinishCallArgAccess(P[i],rraRead);
+end;
+
+function TPasResolver.BI_Val_OnGetCallCompatibility(
+  Proc: TResElDataBuiltInProc; Expr: TPasExpr; RaiseOnError: boolean): integer;
+// check params of built-in procedure 'Val(const s: string; out v: valtype; out code: integer)'
+var
+  Params: TParamsExpr;
+  Param: TPasExpr;
+  ParamResolved: TPasResolverResult;
+begin
+  if not CheckBuiltInMinParamCount(Proc,Expr,3,RaiseOnError) then
+    exit(cIncompatible);
+  Params:=TParamsExpr(Expr);
+
+  // first parameter: string
+  Param:=Params.Params[0];
+  ComputeElement(Param,ParamResolved,[]);
+  Result:=cIncompatible;
+  if ParamResolved.BaseType in btAllStrings then
+    Result:=cExact;
+  if Result=cIncompatible then
+    exit(CheckRaiseTypeArgNo(20181214141250,1,Param,ParamResolved,'string',RaiseOnError));
+
+  // second parameter: var value
+  Param:=Params.Params[1];
+  ComputeElement(Param,ParamResolved,[]);
+  Result:=cIncompatible;
+  if ResolvedElCanBeVarParam(ParamResolved,Expr) then
+    begin
+    if ParamResolved.BaseType in (btAllInteger+btAllBooleans+btAllFloats) then
+      Result:=cExact
+    else if ParamResolved.BaseType=btContext then
+      begin
+      if ParamResolved.LoTypeEl is TPasEnumType then
+        Result:=cExact;
+      end;
+    end;
+  if Result=cIncompatible then
+    exit(CheckRaiseTypeArgNo(20181214141704,2,Param,ParamResolved,
+         'boolean/integer/float/enum variable',RaiseOnError));
+
+  // third parameter: out Code: integer
+  Param:=Params.Params[2];
+  ComputeElement(Param,ParamResolved,[]);
+  Result:=cIncompatible;
+  if ResolvedElCanBeVarParam(ParamResolved,Expr) then
+    begin
+    if ParamResolved.BaseType in btAllInteger then
+      Result:=cExact;
+    end;
+  if Result=cIncompatible then
+    exit(CheckRaiseTypeArgNo(20181214141511,3,Param,ParamResolved,'integer variable',RaiseOnError));
+
+  Result:=CheckBuiltInMaxParamCount(Proc,Params,3,RaiseOnError);
+end;
+
+procedure TPasResolver.BI_Val_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
+  Params: TParamsExpr);
+var
+  P: TPasExprArray;
+begin
+  if Proc=nil then ;
+  P:=Params.Params;
+  if P=nil then ;
+  FinishCallArgAccess(P[0],rraRead);
+  FinishCallArgAccess(P[1],rraOutParam);
+  FinishCallArgAccess(P[2],rraOutParam);
+end;
+
+function TPasResolver.BI_LoHi_OnGetCallCompatibility(
+  Proc: TResElDataBuiltInProc; Expr: TPasExpr; RaiseOnError: boolean): integer;
+var
+  Params: TParamsExpr;
+  Param: TPasExpr;
+  ParamResolved: TPasResolverResult;
+begin
+  if not CheckBuiltInMinParamCount(Proc,Expr,1,RaiseOnError) then
+    Exit(cIncompatible);
+  Params:=TParamsExpr(Expr);
+  // first Param: any integer type
+  Param:=Params.params[0];
+  ComputeElement(Param,ParamResolved,[]);
+  Result:=cIncompatible;
+  if (rrfReadable in ParamResolved.Flags)
+      and (ParamResolved.BaseType in btAllInteger)
+  then
+    Result:=cExact;
+  if Result=cIncompatible then
+    Exit(CheckRaiseTypeArgNo(20190128232600,1,Param,ParamResolved,'integer type',RaiseOnError));
+  Result:=CheckBuiltInMaxParamCount(Proc,Params,1,RaiseOnError);
+end;
+
+procedure TPasResolver.BI_LoHi_OnGetCallResult(Proc: TResElDataBuiltInProc;
+  Params: TParamsExpr; out ResolvedEl: TPasResolverResult);
+var
+  ResolvedParam: TPasResolverResult;
+  BaseType: TResolverBaseType;
+  Mask: LongWord;
+begin
+  ComputeElement(Params.Params[0],ResolvedParam,[]);
+  GetShiftAndMaskForLoHiFunc(ResolvedParam.BaseType, Proc.BuiltIn=bfLo, Mask);
+  case Mask of
+    $F, $FF: BaseType := btByte;
+    $FFFF: BaseType := btWord;
+    else { $FFFFFFFF } BaseType := btLongWord;
+  end;
+  SetResolverIdentifier(ResolvedEl,BaseType,Proc.Proc,
+    FBaseTypes[BaseType],FBaseTypes[BaseType],[rrfReadable]);
+end;
+
+procedure TPasResolver.BI_LoHi_OnEval(Proc: TResElDataBuiltInProc;
+  Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue);
+var
+  Param: TPasExpr;
+  ResolvedParam: TPasResolverResult;
+  Value: TResEvalValue;
+  Shift: Integer;
+  Mask: LongWord;
+begin
+  Evaluated := nil;
+  Param := Params.Params[0];
+  Value := Eval(Param,Flags);
+  {$IFDEF VerbosePasResEval}
+  {AllowWriteln}
+  if value=nil then
+    writeln('TPasResolver.BI_LoHi_OnEval Value=NIL')
+  else
+    writeln('TPasResolver.BI_LoHi_OnEval Value=',value.AsDebugString);
+  {AllowWriteln-}
+  {$ENDIF}
+  if Value=nil then exit;
+  try
+    ComputeElement(Param,ResolvedParam,[]);
+    Shift := GetShiftAndMaskForLoHiFunc(ResolvedParam.BaseType, Proc.BuiltIn=bfLo, Mask);
+    Evaluated := fExprEvaluator.LoHiValue(Value,Shift,Mask,Params);
+  finally
+    ReleaseEvalValue(Value);
+  end;
 end;
 
 function TPasResolver.BI_ConcatArray_OnGetCallCompatibility(
@@ -13028,6 +19529,8 @@ var
   Param: TPasExpr;
   ParamResolved, ElTypeResolved, FirstElTypeResolved: TPasResolverResult;
   i: Integer;
+  ArrType: TPasArrayType;
+  ElType: TPasType;
 begin
   Result:=cIncompatible;
   if not CheckBuiltInMinParamCount(Proc,Expr,1,RaiseOnError) then
@@ -13046,7 +19549,11 @@ begin
       if ParamResolved.BaseType=btContext then
         begin
         if IsDynArray(ParamResolved.LoTypeEl) then
-          ComputeElement(TPasArrayType(ParamResolved.LoTypeEl).ElType,ElTypeResolved,[rcType]);
+          begin
+          ArrType:=TPasArrayType(ParamResolved.LoTypeEl);
+          ElType:=GetArrayElType(ArrType);
+          ComputeElement(ElType,ElTypeResolved,[rcType]);
+          end;
         end
       else if ParamResolved.BaseType in [btArrayLit,btArrayOrSet] then
         SetResolverValueExpr(ElTypeResolved,ParamResolved.SubType,
@@ -13076,6 +19583,100 @@ begin
   ResolvedEl.IdentEl:=nil;
   if ResolvedEl.BaseType=btArrayOrSet then
     ResolvedEl.BaseType:=btArrayLit;
+  if Proc=nil then ;
+end;
+
+function TPasResolver.BI_ConcatString_OnGetCallCompatibility(
+  Proc: TResElDataBuiltInProc; Expr: TPasExpr; RaiseOnError: boolean): integer;
+var
+  Params: TParamsExpr;
+  i: Integer;
+  Param: TPasExpr;
+  ParamResolved: TPasResolverResult;
+begin
+  Result:=cIncompatible;
+  if not CheckBuiltInMinParamCount(Proc,Expr,1,RaiseOnError) then
+    exit;
+  Params:=TParamsExpr(Expr);
+
+  for i:=0 to length(Params.Params)-1 do
+    begin
+    // all params: char or string
+    Param:=Params.Params[i];
+    ComputeElement(Param,ParamResolved,[]);
+    if not (rrfReadable in ParamResolved.Flags)
+        or not (ParamResolved.BaseType in btAllStringAndChars) then
+      exit(CheckRaiseTypeArgNo(20181219230329,i+1,Param,ParamResolved,'string',RaiseOnError));
+    end;
+  Result:=cExact;
+end;
+
+procedure TPasResolver.BI_ConcatString_OnGetCallResult(
+  Proc: TResElDataBuiltInProc; Params: TParamsExpr; out
+  ResolvedEl: TPasResolverResult);
+var
+  i: Integer;
+  Param: TPasExpr;
+  ParamResolved, CombinedResolved: TPasResolverResult;
+  ParamsArr: TPasExprArray;
+begin
+  if Proc=nil then ;
+  ParamsArr:=Params.Params;
+  for i:=0 to length(ParamsArr)-1 do
+    begin
+    // all params: char or string
+    Param:=ParamsArr[i];
+    ComputeElement(Param,ParamResolved,[]);
+    if i=0 then
+      ResolvedEl:=ParamResolved
+    else
+      begin
+      ComputeAddStringRes(ResolvedEl,ParamResolved,Params,CombinedResolved);
+      ResolvedEl:=CombinedResolved;
+      end;
+    end;
+end;
+
+procedure TPasResolver.BI_ConcatString_OnEval(Proc: TResElDataBuiltInProc;
+  Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue);
+var
+  i: Integer;
+  Param: TPasExpr;
+  Value, NewValue: TResEvalValue;
+  ok: Boolean;
+begin
+  if Proc=nil then ;
+  Value:=nil;
+  Evaluated:=nil;
+  ok:=false;
+  try
+    for i:=0 to length(Params.Params)-1 do
+      begin
+      // all params: char or string
+      Param:=Params.Params[i];
+      Value:=Eval(Param,Flags);
+      if Value=nil then
+        exit;
+      if i=0 then
+        begin
+        Evaluated:=Value;
+        Value:=nil;
+        end
+      else
+        begin
+        NewValue:=ExprEvaluator.EvalStringAddExpr(Param,Params.Params[i-1],Param,
+          Evaluated,Value);
+        ReleaseEvalValue(Evaluated);
+        Evaluated:=NewValue;
+        ReleaseEvalValue(Value);
+        end;
+      end;
+    ok:=true;
+  finally
+    ReleaseEvalValue(Value);
+    if not ok then
+      ReleaseEvalValue(Evaluated);
+  end;
 end;
 
 function TPasResolver.BI_CopyArray_OnGetCallCompatibility(
@@ -13131,6 +19732,7 @@ procedure TPasResolver.BI_CopyArray_OnGetCallResult(
   Proc: TResElDataBuiltInProc; Params: TParamsExpr; out
   ResolvedEl: TPasResolverResult);
 begin
+  if Proc=nil then ;
   ComputeElement(Params.Params[0],ResolvedEl,[]);
   ResolvedEl.Flags:=ResolvedEl.Flags-[rrfWritable];
   ResolvedEl.ExprEl:=Params;
@@ -13146,6 +19748,8 @@ var
   Params: TParamsExpr;
   Param, ItemParam: TPasExpr;
   ItemResolved, ParamResolved, ElTypeResolved: TPasResolverResult;
+  ArrType: TPasArrayType;
+  ElType: TPasType;
 begin
   Result:=cIncompatible;
   if not CheckBuiltInMinParamCount(Proc,Expr,3,RaiseOnError) then
@@ -13170,7 +19774,9 @@ begin
   if (ParamResolved.BaseType<>btContext)
       or not IsDynArray(ParamResolved.LoTypeEl) then
     exit(CheckRaiseTypeArgNo(20170329172024,2,Param,ParamResolved,'dynamic array',RaiseOnError));
-  ComputeElement(TPasArrayType(ParamResolved.LoTypeEl).ElType,ElTypeResolved,[rcType]);
+  ArrType:=TPasArrayType(ParamResolved.LoTypeEl);
+  ElType:=GetArrayElType(ArrType);
+  ComputeElement(ElType,ElTypeResolved,[rcType]);
   if CheckAssignResCompatibility(ElTypeResolved,ItemResolved,ItemParam,RaiseOnError)=cIncompatible then
     exit(cIncompatible);
 
@@ -13190,6 +19796,7 @@ var
   P: TPasExprArray;
   Param0, Param1: TPasExpr;
   ArrayResolved, ElTypeResolved: TPasResolverResult;
+  ElType: TPasType;
 begin
   if Proc=nil then ;
   P:=Params.Params;
@@ -13206,7 +19813,8 @@ begin
     if (ArrayResolved.BaseType<>btContext)
         or not IsDynArray(ArrayResolved.LoTypeEl) then
       RaiseNotYetImplemented(20180622144039,Param1);
-    ComputeElement(TPasArrayType(ArrayResolved.LoTypeEl).ElType,ElTypeResolved,[rcType]);
+    ElType:=GetArrayElType(TPasArrayType(ArrayResolved.LoTypeEl));
+    ComputeElement(ElType,ElTypeResolved,[rcType]);
     if (ElTypeResolved.BaseType=btContext)
         and (ElTypeResolved.LoTypeEl.ClassType=TPasArrayType) then
       MarkArrayExprRecursive(Param0,TPasArrayType(ElTypeResolved.LoTypeEl));
@@ -13215,7 +19823,7 @@ end;
 
 function TPasResolver.BI_DeleteArray_OnGetCallCompatibility(
   Proc: TResElDataBuiltInProc; Expr: TPasExpr; RaiseOnError: boolean): integer;
-// Delete(var Array; Start, Count: integer)
+// DeleteScope(var Array; Start, Count: integer)
 var
   Params: TParamsExpr;
   Param: TPasExpr;
@@ -13263,6 +19871,7 @@ var
 begin
   if Proc=nil then ;
   P:=Params.Params;
+  if P=nil then ;
   FinishCallArgAccess(P[0],rraVarParam);
   FinishCallArgAccess(P[1],rraRead);
   FinishCallArgAccess(P[2],rraRead);
@@ -13297,8 +19906,9 @@ begin
       aType:=TPasArgument(Decl).ArgType
     else if Decl.ClassType=TPasResultElement then
       aType:=TPasResultElement(Decl).ResultType
-    else if Decl is TPasFunction then
-      aType:=TPasFunction(Decl).FuncType.ResultEl.ResultType;
+    else if (Decl is TPasProcedure)
+        and (TPasProcedure(Decl).ProcType is TPasFunctionType) then
+      aType:=TPasFunctionType(TPasProcedure(Decl).ProcType).ResultEl.ResultType;
     {$IFDEF VerbosePasResolver}
     {AllowWriteln}
     if aType=nil then
@@ -13511,6 +20121,7 @@ procedure TPasResolver.BI_Default_OnGetCallResult(Proc: TResElDataBuiltInProc;
 var
   Param: TPasExpr;
 begin
+  if Proc=nil then ;
   Param:=Params.Params[0];
   ComputeElement(Param,ResolvedEl,[rcNoImplicitProc]);
   ResolvedEl.Flags:=[rrfReadable];
@@ -13527,8 +20138,9 @@ var
   i: Integer;
   ArrayEl: TPasArrayType;
   bt: TResolverBaseType;
-  MinInt, MaxInt: MaxPrecInt;
+  MinInt, MaxInt: TMaxPrecInt;
 begin
+  if Proc=nil then ;
   Evaluated:=nil;
   Param:=Params.Params[0];
   ComputeElement(Param,ParamResolved,[rcNoImplicitProc]);
@@ -13581,16 +20193,22 @@ begin
     bt:=GetActualBaseType(bt);
     if bt in btAllBooleans then
       Evaluated:=TResEvalBool.CreateValue(false)
+    {$ifdef HasInt64}
     else if bt=btQWord then
       Evaluated:=TResEvalInt.CreateValue(0)
-    else if (bt in (btAllInteger-[btQWord])) and GetIntegerRange(bt,MinInt,MaxInt) then
+    {$endif}
+    else if (bt in btAllIntegerNoQWord) and GetIntegerRange(bt,MinInt,MaxInt) then
       Evaluated:=TResEvalInt.CreateValue(MinInt)
+    {$ifdef FPC_HAS_CPSTRING}
     else if bt in [btAnsiString,btShortString] then
       Evaluated:=TResEvalString.CreateValue('')
+    {$endif}
     else if bt in [btUnicodeString,btWideString] then
       Evaluated:=TResEvalUTF16.CreateValue('')
-    else if bt in [btChar,btAnsiChar] then
+    {$ifdef FPC_HAS_CPSTRING}
+    else if bt=btAnsiChar then
       Evaluated:=TResEvalString.CreateValue(#0)
+    {$endif}
     else if bt=btWideChar then
       Evaluated:=TResEvalUTF16.CreateValue(#0)
     else if bt in btAllFloats then
@@ -13644,12 +20262,12 @@ begin
   inherited Create;
   FDefaultScope:=TPasDefaultScope.Create;
   FPendingForwardProcs:=TFPList.Create;
-  FBaseTypeChar:=btAnsiChar;
-  FBaseTypeString:=btAnsiString;
+  FBaseTypeChar:={$ifdef FPC_HAS_CPSTRING}btAnsiChar{$else}btWideChar{$endif};
+  FBaseTypeString:={$ifdef FPC_HAS_CPSTRING}btAnsiString{$else}btUnicodeString{$endif};
   FBaseTypeExtended:=btDouble;
-  FBaseTypeLength:=btInt64;
+  FBaseTypeLength:={$ifdef HasInt64}btInt64{$else}btIntDouble{$endif};
   FDynArrayMinIndex:=0;
-  FDynArrayMaxIndex:=High(int64);
+  FDynArrayMaxIndex:=High(TMaxPrecInt);
 
   cTGUIDToString:=cTypeConversion+1;
   cStringToTGUID:=cTypeConversion+1;
@@ -13696,12 +20314,13 @@ end;
 
 function TPasResolver.CreateElement(AClass: TPTreeElement; const AName: String;
   AParent: TPasElement; AVisibility: TPasMemberVisibility;
-  const ASrcPos: TPasSourcePos): TPasElement;
+  const ASrcPos: TPasSourcePos; TypeParams: TFPList): TPasElement;
 var
   El: TPasElement;
   SrcY: integer;
   SectionScope: TPasSectionScope;
 begin
+  Result:=nil;
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.CreateElement ',AClass.ClassName,' Name=',AName,' Parent=',GetObjName(AParent),' (',ASrcPos.Row,',',ASrcPos.Column,')');
   {$ENDIF}
@@ -13719,11 +20338,13 @@ begin
   if StoreSrcColumns then
     SrcY:=MangleSourceLineNumber(SrcY,ASrcPos.Column);
 
+  if AClass=TSelfExpr then
+    RaiseInternalError(20190131154235);
+
   // create element
   El:=AClass.Create(AName,AParent);
   {$IFDEF CheckPasTreeRefCount}El.RefIds.Add('CreateElement');{$ENDIF}
   FLastElement:=El;
-  Result:=nil;
   try
     El.Visibility:=AVisibility;
     El.SourceFilename:=ASrcPos.FileName;
@@ -13745,7 +20366,9 @@ begin
     if IsElementSkipped(El) then exit;
 
     // create scope
-    if (AClass=TPasVariable)
+    if AClass.InheritsFrom(TPasExpr) then
+      // resolved when finished
+    else if (AClass=TPasVariable)
         or (AClass=TPasConst) then
       AddVariable(TPasVariable(El))
     else if AClass=TPasResString then
@@ -13763,25 +20386,32 @@ begin
         or (AClass=TPasTypeAliasType)
         or (AClass=TPasClassOfType)
         or (AClass=TPasPointerType)
-        or (AClass=TPasArrayType)
-        or (AClass=TPasProcedureType)
-        or (AClass=TPasFunctionType)
         or (AClass=TPasSetType)
-        or (AClass=TPasRangeType) then
+        or (AClass=TPasRangeType)
+        or (AClass=TPasSpecializeType) then
       AddType(TPasType(El))
+    else if AClass=TPasArrayType then
+      AddArrayType(TPasArrayType(El),TypeParams)
+    else if (AClass=TPasProcedureType)
+        or (AClass=TPasFunctionType) then
+      AddProcedureType(TPasProcedureType(El),TypeParams)
+    else if AClass=TPasGenericTemplateType then
+      AddGenericTemplateType(TPasGenericTemplateType(El))
     else if AClass=TPasStringType then
       begin
       AddType(TPasType(El));
+      {$ifdef FPC_HAS_CPSTRING}
       if BaseTypes[btShortString]=nil then
+      {$endif}
         RaiseMsg(20170419203043,nIllegalQualifier,sIllegalQualifier,['['],El);
       end
     else if AClass=TPasRecordType then
-      AddRecordType(TPasRecordType(El))
+      AddRecordType(TPasRecordType(El),TypeParams)
     else if AClass=TPasClassType then
-      AddClassType(TPasClassType(El))
+      AddClassType(TPasClassType(El),TypeParams)
     else if AClass=TPasVariant then
     else if AClass.InheritsFrom(TPasProcedure) then
-      AddProcedure(TPasProcedure(El))
+      AddProcedure(TPasProcedure(El),TypeParams)
     else if AClass=TPasResultElement then
       AddFunctionResult(TPasResultElement(El))
     else if AClass=TProcedureBody then
@@ -13789,6 +20419,8 @@ begin
     else if AClass=TPasMethodResolution then
     else if AClass=TPasImplExceptOn then
       AddExceptOn(TPasImplExceptOn(El))
+    else if AClass=TPasImplWithDo then
+      AddWithDo(TPasImplWithDo(El))
     else if AClass=TPasImplLabelMark then
     else if AClass=TPasOverloadedProc then
     else if (AClass=TInterfaceSection)
@@ -13801,14 +20433,14 @@ begin
         or (AClass=TPasLibrary) then
       AddModule(TPasModule(El))
     else if AClass=TPasUsesUnit then
-    else if AClass.InheritsFrom(TPasExpr) then
-      // resolved when finished
     else if AClass=TInitializationSection then
       AddInitialFinalizationSection(TInitializationSection(El))
     else if AClass=TFinalizationSection then
       AddInitialFinalizationSection(TFinalizationSection(El))
+    else if AClass=TPasImplCommand then
     else if AClass.InheritsFrom(TPasImplBlock) then
       // resolved when finished
+    else if AClass=TPasAttributes then
     else if AClass=TPasUnresolvedUnitRef then
       RaiseMsg(20171018121900,nCantFindUnitX,sCantFindUnitX,[AName],El)
     else
@@ -13850,6 +20482,12 @@ begin
 end;
 
 function TPasResolver.FindElement(const aName: String): TPasElement;
+begin
+  Result:=FindElementFor(aName,nil,0);
+end;
+
+function TPasResolver.FindElementFor(const aName: String; AParent: TPasElement;
+  TypeParamCount: integer): TPasElement;
 // called by TPasParser for direct types, e.g. type t = ns1.unit1.tobj.tsub
 var
   p: SizeInt;
@@ -13859,8 +20497,10 @@ var
   CurSection: TPasSection;
   i: Integer;
   UsesUnit: TPasUsesUnit;
+  CurScope: TPasDotBaseScope;
+  FindData: TPRFindData;
 begin
-  //writeln('TPasResolver.FindElement Name="',aName,'"');
+  Result:=nil;
   ErrorEl:=nil; // use nil to use scanner position as error position
 
   RightPath:=aName;
@@ -13892,14 +20532,17 @@ begin
     {AllowWriteln-}
     {$ENDIF}
     if not IsValidIdent(CurName) then
-      RaiseNotYetImplemented(20170328000033,ErrorEl);
+      RaiseNotYetImplemented(20170328000033,ErrorEl,CurName);
     if CurScopeEl<>nil then
       begin
       NeedPop:=true;
-      if CurScopeEl.ClassType=TPasClassType then
-        PushClassDotScope(TPasClassType(CurScopeEl))
-      else if CurScopeEl.ClassType=TPasRecordType then
-        PushRecordDotScope(TPasRecordType(CurScopeEl))
+      if CurScopeEl is TPasType then
+        begin
+        CurScope:=PushDotScope(TPasType(CurScopeEl));
+        if CurScope=nil then
+          RaiseMsg(20190122122529,nIllegalQualifierAfter,sIllegalQualifierAfter,
+            ['.',LeftPath],ErrorEl);
+        end
       else if CurScopeEl is TPasModule then
         PushModuleDotScope(TPasModule(CurScopeEl))
       else
@@ -13909,7 +20552,15 @@ begin
     else
       NeedPop:=false;
 
-    NextEl:=FindElementWithoutParams(CurName,ErrorEl,true);
+    if (RightPath='') and (TypeParamCount>0) then
+      begin
+      NextEl:=FindGenericEl(CurName,TypeParamCount,FindData,ErrorEl);
+      if (FindData.StartScope<>nil) and (FindData.StartScope.ClassType=ScopeClass_WithExpr)
+          and (wesfNeedTmpVar in TPasWithExprScope(FindData.StartScope).Flags) then
+        RaiseInternalError(20190801104033); // caller forgot to handle "With"
+      end
+    else
+      NextEl:=FindElementWithoutParams(CurName,ErrorEl,true,true);
     {$IFDEF VerbosePasResolver}
     //if RightPath<>'' then
     //  writeln('TPasResolver.FindElement searching scope "',CurName,'" RightPath="',RightPath,'" ... NextEl=',GetObjName(NextEl));
@@ -13979,14 +20630,16 @@ begin
     if RightPath='' then
       exit(NextEl);
   until false;
+
+  if AParent=nil then ;;
 end;
 
 function TPasResolver.FindElementWithoutParams(const AName: String;
-  ErrorPosEl: TPasElement; NoProcsWithArgs: boolean): TPasElement;
+  ErrorPosEl: TPasElement; NoProcsWithArgs, NoGenerics: boolean): TPasElement;
 var
   Data: TPRFindData;
 begin
-  Result:=FindElementWithoutParams(AName,Data,ErrorPosEl,NoProcsWithArgs);
+  Result:=FindElementWithoutParams(AName,Data,ErrorPosEl,NoProcsWithArgs,NoGenerics);
   if Data.Found=nil then exit; // forward type: class-of or ^
   CheckFoundElement(Data,nil);
   if (Data.StartScope<>nil) and (Data.StartScope.ClassType=ScopeClass_WithExpr)
@@ -13995,8 +20648,8 @@ begin
 end;
 
 function TPasResolver.FindElementWithoutParams(const AName: String; out
-  Data: TPRFindData; ErrorPosEl: TPasElement; NoProcsWithArgs: boolean
-  ): TPasElement;
+  Data: TPRFindData; ErrorPosEl: TPasElement; NoProcsWithArgs,
+  NoGenerics: boolean): TPasElement;
 var
   Abort: boolean;
 begin
@@ -14005,14 +20658,15 @@ begin
   Abort:=false;
   Data:=Default(TPRFindData);
   Data.ErrorPosEl:=ErrorPosEl;
-  IterateElements(AName,@OnFindFirstElement,@Data,Abort);
+  Data.SkipGenerics:=NoGenerics;
+  IterateElements(AName,@OnFindFirst_PreferNoParams,@Data,Abort);
   Result:=Data.Found;
   if Result=nil then
     begin
     if (ErrorPosEl=nil) and (LastElement<>nil) then
       begin
       if (LastElement.ClassType=TPasClassOfType)
-        and (TPasClassOfType(LastElement).DestType=nil) then
+          and (TPasClassOfType(LastElement).DestType=nil) then
         begin
         // 'class of' of a not yet defined class
         Result:=CreateElement(TUnresolvedPendingRef,AName,LastElement,visDefault,
@@ -14020,7 +20674,7 @@ begin
         exit;
         end
       else if (LastElement.ClassType=TPasPointerType)
-        and (TPasPointerType(LastElement).DestType=nil) then
+          and (TPasPointerType(LastElement).DestType=nil) then
         begin
         // pointer of a not yet defined type
         Result:=CreateElement(TUnresolvedPendingRef,AName,LastElement,visDefault,
@@ -14036,6 +20690,18 @@ begin
     // proc needs parameters
     RaiseMsg(20170216152347,nWrongNumberOfParametersForCallTo,
       sWrongNumberOfParametersForCallTo,[GetProcTypeDescription(TPasProcedure(Result).ProcType)],ErrorPosEl);
+end;
+
+function TPasResolver.FindFirstEl(const AName: String; out Data: TPRFindData;
+  ErrorPosEl: TPasElement): TPasElement;
+var
+  Abort: boolean;
+begin
+  Abort:=false;
+  Data:=Default(TPRFindData);
+  Data.ErrorPosEl:=ErrorPosEl;
+  IterateElements(AName,@OnFindFirst,@Data,Abort);
+  Result:=Data.Found;
 end;
 
 procedure TPasResolver.FindLongestUnitName(var El: TPasElement; Expr: TPasExpr);
@@ -14110,6 +20776,30 @@ begin
   {$ENDIF}
 end;
 
+function TPasResolver.FindGenericEl(const AName: string;
+  TemplateCount: integer; out Find: TPRFindData; ErrorPosEl: TPasElement
+  ): TPasElement;
+var
+  Data: TPRFindGenericData;
+  Abort: boolean;
+begin
+  Data:=Default(TPRFindGenericData);
+  Data.TemplateCount:=TemplateCount;
+  Data.Find.ErrorPosEl:=ErrorPosEl;
+  Abort:=false;
+  IterateElements(AName,@OnFindFirst_GenericEl,@Data,Abort);
+  Find:=Data.Find;
+  Result:=Find.Found;
+  if Result=nil then
+    begin
+    {$IFDEF VerbosePasResolver}
+    WriteScopesShort('TPasResolver.FindGenericType');
+    {$ENDIF}
+    RaiseMsg(20190801104759,nIdentifierNotFound,sIdentifierNotFound,[AName+GetGenericParamCommas(TemplateCount)],ErrorPosEl);
+    end;
+  CheckFoundElement(Find,nil);
+end;
+
 procedure TPasResolver.IterateElements(const aName: string;
   const OnIterateElement: TIterateScopeElement; Data: Pointer;
   var Abort: boolean);
@@ -14123,7 +20813,7 @@ begin
     Scope.IterateElements(AName,Scope,OnIterateElement,Data,Abort);
     if Abort then
       exit;
-    if Scope is TPasSubScope then break;
+    if Scope is TPasSubExprScope then break;
     end;
 end;
 
@@ -14131,29 +20821,48 @@ procedure TPasResolver.CheckFoundElement(
   const FindData: TPRFindData; Ref: TResolvedReference);
 // check visibility rules
 // Call this method after finding an element by searching the scopes.
+
+  function IsFieldInheritingConst(aRef: TResolvedReference): boolean;
+  // returns true of aRef is a TPasVariable that inherits its const from parent.
+  // For example
+  //  type TRecord = record
+  //    a: word; // inherits const
+  //    const b: word = 3; // does not inherit const
+  //    class var c: word; // does not inherit const
+  //  end;
+  //  procedure DoIt(const r:TRecord)
+  var
+    El: TPasElement;
+  begin
+    El:=aRef.Declaration;
+    Result:=(El.ClassType=TPasVariable)
+        and (TPasVariable(El).VarModifiers*[vmClass, vmStatic]=[]);
+    //writeln('IsFieldInheritingConst ',GetObjName(El),' ',Result,' vmClass=',vmClass in TPasVariable(El).VarModifiers);
+  end;
+
 var
   Proc: TPasProcedure;
-  Context: TPasElement;
-  FoundContext: TPasClassType;
   StartScope: TPasScope;
   OnlyTypeMembers, IsClassOf: Boolean;
-  TypeEl: TPasType;
   C: TClass;
-  ClassScope: TPasClassScope;
+  ClassRecScope: TPasClassOrRecordScope;
   i: Integer;
+  AbstractProcs: TArrayOfPasProcedure;
+  TypeEl: TPasType;
 begin
   StartScope:=FindData.StartScope;
   OnlyTypeMembers:=false;
   IsClassOf:=false;
-  if StartScope is TPasDotIdentifierScope then
+  if StartScope is TPasDotBaseScope then
     begin
-    OnlyTypeMembers:=TPasDotIdentifierScope(StartScope).OnlyTypeMembers;
+    OnlyTypeMembers:=TPasDotBaseScope(StartScope).OnlyTypeMembers;
     if StartScope.ClassType=TPasDotClassScope then
       IsClassOf:=TPasDotClassScope(StartScope).IsClassOf;
     if Ref<>nil then
       begin
       Include(Ref.Flags,rrfDotScope);
-      if TPasDotIdentifierScope(StartScope).ConstParent then
+      if TPasDotBaseScope(StartScope).ConstParent
+          and IsFieldInheritingConst(Ref) then
         Include(Ref.Flags,rrfConstInherited);
       end;
     end
@@ -14164,7 +20873,8 @@ begin
     if Ref<>nil then
       begin
       Include(Ref.Flags,rrfDotScope);
-      if wesfConstParent in TPasWithExprScope(StartScope).Flags then
+      if (wesfConstParent in TPasWithExprScope(StartScope).Flags)
+          and IsFieldInheritingConst(Ref) then
         Include(Ref.Flags,rrfConstInherited);
       end;
     end
@@ -14174,19 +20884,21 @@ begin
     //writeln('TPasResolver.CheckFoundElement ',GetObjName(Proc),' ',IsClassMethod(Proc),' ElScope=',GetObjName(FindData.ElScope));
     if (FindData.ElScope<>StartScope) and IsClassMethod(Proc) then
       OnlyTypeMembers:=true;
-    end;
+    end
+  else if StartScope.ClassType=TPasGroupScope then
+    OnlyTypeMembers:=TPasGroupScope(StartScope).OnlyTypeMembers;
 
   //writeln('TPasResolver.CheckFoundElOnStartScope StartScope=',StartScope.ClassName,
-  //    ' StartIsDot=',StartScope is TPasDotIdentifierScope,
-  //    ' OnlyTypeMembers=',(StartScope is TPasDotIdentifierScope)
-  //       and TPasDotIdentifierScope(StartScope).OnlyTypeMembers,
+  //    ' StartIsDot=',StartScope is TPasDotBaseScope,
+  //    ' OnlyTypeMembers=',(StartScope is TPasDotBaseScope)
+  //       and TPasDotBaseScope(StartScope).OnlyTypeMembers,
   //    ' FindData.Found=',GetObjName(FindData.Found));
   if OnlyTypeMembers then
     begin
     //writeln('TPasResolver.CheckFoundElOnStartScope ',GetObjName(FindData.Found),' ',(FindData.Found is TPasVariable)
     //    and (vmClass in TPasVariable(FindData.Found).VarModifiers));
     // only class vars/procs allowed
-    if (FindData.Found.ClassType=TPasConstructor) then
+    if FindData.Found.ClassType=TPasConstructor then
       // constructor: ok
     else if IsClassMethod(FindData.Found)
     then
@@ -14194,34 +20906,38 @@ begin
     else if (FindData.Found is TPasVariable)
         and (vmClass in TPasVariable(FindData.Found).VarModifiers) then
       // class var/const/property: ok
-    else if (FindData.Found is TPasType) then
-      // local type: ok
+    else if FindData.Found is TPasType then
+      // nested type: ok
+    else if FindData.Found is TPasEnumValue then
+      // e.g. enumtype.enumvalue: ok
     else
       begin
-      RaiseMsg(20170216152348,nCannotAccessThisMemberFromAX,
-        sCannotAccessThisMemberFromAX,[GetElementTypeName(FindData.Found.Parent)],FindData.ErrorPosEl);
+      RaiseMsg(20170216152348,nInstanceMemberXInaccessible,
+        sInstanceMemberXInaccessible,[FindData.Found.Name],FindData.ErrorPosEl);
       end;
     end
   else if (proExtClassInstanceNoTypeMembers in Options)
-      and (StartScope.ClassType=TPasDotClassScope)
-      and TPasClassType(TPasDotClassScope(StartScope).ClassScope.Element).IsExternal then
+      and (StartScope is TPasDotClassScope)
+      and TPasClassType(TPasDotClassScope(StartScope).ClassRecScope.Element).IsExternal then
     begin
-    // found member in external class instance
-      C:=FindData.Found.ClassType;
-      if (C=TPasProcedure) or (C=TPasFunction) then
-        // ok
-      else if (C=TPasConst) then
-        // ok
-      else if C.InheritsFrom(TPasVariable)
-          and (not (vmClass in TPasVariable(FindData.Found).VarModifiers)) then
-        // ok
-      else
-        begin
-        RaiseMsg(20170331184224,nExternalClassInstanceCannotAccessStaticX,
-          sExternalClassInstanceCannotAccessStaticX,
-          [GetElementTypeName(FindData.Found)+' '+FindData.Found.Name],
-          FindData.ErrorPosEl);
-        end;
+    // e.g. ExtClassInstance.Member
+    C:=FindData.Found.ClassType;
+    if (C=TPasProcedure) or (C=TPasFunction) then
+      // ok
+    else if (C=TPasConst) then
+      // ok
+    else if ((C=TPasVariable) or (C=TPasProperty))
+        and (not (vmClass in TPasVariable(FindData.Found).VarModifiers)) then
+      // ok
+    else if IsHelper(FindData.Found.Parent) then
+      // ok
+    else
+      begin
+      RaiseMsg(20170331184224,nExternalClassInstanceCannotAccessStaticX,
+        sExternalClassInstanceCannotAccessStaticX,
+        [GetElementTypeName(FindData.Found)+' '+FindData.Found.Name],
+        FindData.ErrorPosEl);
+      end;
     end;
 
   if (FindData.Found is TPasProcedure) then
@@ -14229,10 +20945,9 @@ begin
     Proc:=TPasProcedure(FindData.Found);
     if Proc.IsVirtual or Proc.IsOverride then
       begin
-      if (StartScope.ClassType=TPasDotClassScope)
-      and TPasDotClassScope(StartScope).InheritedExpr then
+      if StartScope.ClassType=TPasInheritedScope then
         begin
-        // call directly
+        // inherited expr  ->  call directly
         if Proc.IsAbstract then
           RaiseMsg(20170216152352,nAbstractMethodsCannotBeCalledDirectly,
             sAbstractMethodsCannotBeCalledDirectly,[],FindData.ErrorPosEl);
@@ -14246,36 +20961,64 @@ begin
       end;
 
     // constructor: NewInstance or normal call
-    //  it is a NewInstance iff the scope is a class, e.g. TObject.Create
+    //  it is a NewInstance iff the scope is a class/record, e.g. TObject.Create
     if (Proc.ClassType=TPasConstructor)
-        and OnlyTypeMembers
         and (Ref<>nil) then
       begin
-      Ref.Flags:=Ref.Flags+[rrfNewInstance]-[rrfConstInherited];
+      if OnlyTypeMembers then
+        Ref.Flags:=Ref.Flags+[rrfNewInstance]-[rrfConstInherited];
       // store the class in Ref.Context
       if Ref.Context<>nil then
         RaiseInternalError(20170131141936);
       Ref.Context:=TResolvedRefCtxConstructor.Create;
-      if StartScope is TPasDotClassScope then
-        ClassScope:=TPasDotClassScope(StartScope).ClassScope
-      else if (StartScope is TPasWithExprScope)
-          and (TPasWithExprScope(StartScope).Scope is TPasClassScope) then
-        ClassScope:=TPasClassScope(TPasWithExprScope(StartScope).Scope)
-      else if (StartScope is TPasProcedureScope) then
-        ClassScope:=TPasProcedureScope(StartScope).ClassScope
+      TypeEl:=nil;
+      ClassRecScope:=nil;
+      C:=StartScope.ClassType;
+      if C.InheritsFrom(TPasDotClassOrRecordScope) then
+        ClassRecScope:=TPasDotClassOrRecordScope(StartScope).ClassRecScope
+      else if C=ScopeClass_WithExpr then
+        begin
+        ClassRecScope:=TPasWithExprScope(StartScope).ClassRecScope;
+        if ClassRecScope=nil then
+          TypeEl:=TPasWithExprScope(StartScope).Scope.Element as TPasType;
+        end
+      else if C=ScopeClass_Procedure then
+        ClassRecScope:=TPasProcedureScope(StartScope).ClassRecScope
+      else if C=TPasDotHelperScope then
+        TypeEl:=NoNil(TPasDotHelperScope(StartScope).Element) as TPasType
       else
         RaiseInternalError(20170131150855,GetObjName(StartScope));
-      TypeEl:=ClassScope.Element as TPasType;
-      TResolvedRefCtxConstructor(Ref.Context).Typ:=TypeEl;
-      if (length(ClassScope.AbstractProcs)>0) then
+      if TypeEl<>nil then
+        TResolvedRefCtxConstructor(Ref.Context).Typ:=TypeEl
+      else
         begin
-        if IsClassOf then
-          // aClass.Create: do not warn
-        else
-          for i:=0 to length(ClassScope.AbstractProcs)-1 do
-            LogMsg(20171227110746,mtWarning,nConstructingClassXWithAbstractMethodY,
-              sConstructingClassXWithAbstractMethodY,
-              [TypeEl.Name,ClassScope.AbstractProcs[i].Name],FindData.ErrorPosEl);
+        if ClassRecScope=nil then
+          RaiseInternalError(20190123120156,GetObjName(StartScope));
+        TypeEl:=ClassRecScope.Element as TPasMembersType;
+        if (TypeEl.ClassType=TPasClassType)
+            and (TPasClassType(TypeEl).HelperForType<>nil) then
+          TypeEl:=ResolveAliasType(TPasClassType(TypeEl).HelperForType) as TPasType;
+        TResolvedRefCtxConstructor(Ref.Context).Typ:=TypeEl;
+        if OnlyTypeMembers and (ClassRecScope is TPasClassScope) then
+          begin
+          if (TypeEl.ClassType=TPasClassType) and TPasClassType(TypeEl).IsAbstract then
+            LogMsg(20190224153450,mtWarning,nCreatingAnInstanceOfAbstractClassY,
+              sCreatingAnInstanceOfAbstractClassY,[TypeEl.Name],FindData.ErrorPosEl)
+          else
+            begin
+            AbstractProcs:=TPasClassScope(ClassRecScope).AbstractProcs;
+            if (length(AbstractProcs)>0) then
+              begin
+              if IsClassOf then
+                // aClass.Create: do not warn
+              else
+                for i:=0 to length(AbstractProcs)-1 do
+                  LogMsg(20171227110746,mtWarning,nConstructingClassXWithAbstractMethodY,
+                    sConstructingClassXWithAbstractMethodY,
+                    [TypeEl.Name,AbstractProcs[i].Name],FindData.ErrorPosEl);
+              end;
+            end;
+          end;
         end;
       end;
     {$IFDEF VerbosePasResolver}
@@ -14299,8 +21042,7 @@ begin
     // destructor: FreeInstance or normal call
     // it is a normal call if 'inherited'
     if (Proc.ClassType=TPasDestructor) and (Ref<>nil) then
-      if ((StartScope.ClassType<>TPasDotClassScope)
-          or (not TPasDotClassScope(StartScope).InheritedExpr)) then
+      if not (StartScope is TPasInheritedScope) then
         Ref.Flags:=Ref.Flags+[rrfFreeInstance];
     {$IFDEF VerbosePasResolver}
     {AllowWriteln}
@@ -14313,8 +21055,8 @@ begin
         begin
         write(' rrfFreeInstance=',rrfFreeInstance in Ref.Flags,
           ' StartScope=',GetObjName(StartScope));
-        if StartScope.ClassType=TPasDotClassScope then
-          write(' InheritedExpr=',TPasDotClassScope(StartScope).InheritedExpr);
+        if StartScope is TPasDotClassOrRecordScope then
+          write(' InheritedExpr=',StartScope is TPasInheritedScope);
         end;
       writeln;
       end;
@@ -14322,50 +21064,76 @@ begin
     {$ENDIF}
     end;
 
+  CheckFoundElementVisibility(FindData,Ref);
+end;
+
+procedure TPasResolver.CheckFoundElementVisibility(const FindData: TPRFindData;
+  Ref: TResolvedReference);
+var
+  Context: TPasElement;
+  FoundContext: TPasMembersType;
+  CurScope: TPasScope;
+  {$IFDEF VerbosePasResolver}
+  i: Integer;
+  {$ENDIF}
+begin
   // check class visibility
   if FindData.Found.Visibility in [visPrivate,visProtected,visStrictPrivate,visStrictProtected] then
     begin
     Context:=GetVisibilityContext;
-    FoundContext:=FindData.Found.Parent as TPasClassType;
+    FoundContext:=FindData.Found.Parent as TPasMembersType;
     case FindData.Found.Visibility of
       visPrivate:
         // private members can only be accessed in same module
         if FoundContext.GetModule<>Context.GetModule then
-          RaiseMsg(20170216152354,nCantAccessPrivateMember,sCantAccessPrivateMember,
+          RaiseMsg(20170216152354,nCantAccessXMember,sCantAccessXMember,
             ['private',FindData.Found.Name],FindData.ErrorPosEl);
       visProtected:
+        begin
         // protected members can only be accessed in same module
-        // or modules of descendant classes
+        // or descendant classes
+        CurScope:=TopScope;
         if FoundContext.GetModule=Context.GetModule then
           // same module -> ok
         else if (Context is TPasType)
-            and (CheckClassIsClass(TPasType(Context),FoundContext,FindData.ErrorPosEl)<>cIncompatible) then
+            and (CheckClassIsClass(TPasType(Context),FoundContext)<>cIncompatible) then
           // context in class or descendant
-        else if (TopScope is TPasDotClassScope)
-            and (TPasDotClassScope(TopScope).ClassScope.Element.GetModule=Context.GetModule) then
+        else if (CurScope is TPasDotClassOrRecordScope)
+            and (TPasDotClassOrRecordScope(CurScope).ClassRecScope.Element.GetModule=Context.GetModule) then
           // e.g. aClassInThisModule.identifier
-        else if (TopScope is TPasWithExprScope)
-            and (TPasWithExprScope(TopScope).Scope is TPasClassScope)
-            and (TPasClassScope(TPasWithExprScope(TopScope).Scope).Element.GetModule=Context.GetModule) then
+        else if (CurScope is TPasWithExprScope)
+            and (TPasWithExprScope(CurScope).Scope.Element<>nil)
+            and (TPasWithExprScope(CurScope).Scope.Element.GetModule=Context.GetModule) then
           // e.g. with aClassInThisModule do identifier
         else
-          RaiseMsg(20170216152356,nCantAccessPrivateMember,sCantAccessPrivateMember,
+          RaiseMsg(20170216152356,nCantAccessXMember,sCantAccessXMember,
             ['protected',FindData.Found.Name],FindData.ErrorPosEl);
+        end;
       visStrictPrivate:
         // strict private members can only be accessed in their class
         if Context<>FoundContext then
-          RaiseMsg(20170216152357,nCantAccessPrivateMember,sCantAccessPrivateMember,
+          begin
+          {$IFDEF VerbosePasResolver}
+          {AllowWriteln}
+          writeln('TPasResolver.CheckFoundElement Context=',GetElementDbgPath(Context),' FoundContext=',GetElementDbgPath(FoundContext));
+          for i:=ScopeCount-1 downto 0 do
+            writeln('  ',i,' ',Scopes[i].ClassName,' Element=',GetObjName(Scopes[i].Element),' VisibilityContext=',GetObjName(Scopes[i].VisibilityContext));
+          {AllowWriteln-}
+          {$ENDIF}
+          RaiseMsg(20170216152357,nCantAccessXMember,sCantAccessXMember,
             ['strict private',FindData.Found.Name],FindData.ErrorPosEl);
+          end;
       visStrictProtected:
         // strict protected members can only be accessed in their and descendant classes
         if (Context is TPasType)
-            and (CheckClassIsClass(TPasType(Context),FoundContext,FindData.ErrorPosEl)<>cIncompatible) then
+            and (CheckClassIsClass(TPasType(Context),FoundContext)<>cIncompatible) then
           // context in class or descendant
         else
-          RaiseMsg(20170216152400,nCantAccessPrivateMember,sCantAccessPrivateMember,
+          RaiseMsg(20170216152400,nCantAccessXMember,sCantAccessXMember,
             ['strict protected',FindData.Found.Name],FindData.ErrorPosEl);
     end;
     end;
+  if Ref=nil then ;
 end;
 
 function TPasResolver.GetVisibilityContext: TPasElement;
@@ -14380,19 +21148,30 @@ begin
   Result:=nil;
 end;
 
+procedure TPasResolver.BeginScope(ScopeType: TPasScopeType; El: TPasElement);
+begin
+  case ScopeType of
+  stWithExpr: PushWithExprScope(El as TPasExpr);
+  else
+    RaiseMsg(20181210163324,nNotYetImplemented,sNotYetImplemented+' BeginScope',[IntToStr(ord(ScopeType))],nil);
+  end;
+end;
+
 procedure TPasResolver.FinishScope(ScopeType: TPasScopeType; El: TPasElement);
 begin
   if IsElementSkipped(El) then exit;
   case ScopeType of
   stModule: FinishModule(El as TPasModule);
   stUsesClause: FinishUsesClause;
-  stTypeSection: FinishTypeSection(El as TPasDeclarations);
+  stTypeSection: FinishTypeSection(El);
   stTypeDef: FinishTypeDef(El as TPasType);
   stResourceString: FinishResourcestring(El as TPasResString);
   stProcedure: FinishProcedure(El as TPasProcedure);
   stProcedureHeader: FinishProcedureType(El as TPasProcedureType);
   stExceptOnExpr: FinishExceptOnExpr;
   stExceptOnStatement: FinishExceptOnStatement;
+  stWithExpr: FinishWithDo(El as TPasImplWithDo);
+  stForLoopHeader: FinishForLoopHeader(El as TPasImplForLoop);
   stDeclaration: FinishDeclaration(El);
   stAncestors: FinishAncestors(El as TPasClassType);
   stInitialFinalization: FinishInitialFinalization(El as TPasImplBlock);
@@ -14407,6 +21186,7 @@ var
   AncestorClass, aClass: TPasClassType;
   Scope: TPasIdentifierScope;
   OldType: TPasTypeAliasType;
+  LocalScope: TPasScope;
 begin
   DestType:=TPasTypeAliasType(NewType).DestType;
   TypeEl:=ResolveSimpleAliasType(DestType);
@@ -14417,7 +21197,8 @@ begin
     AncestorClass := TPasClassType(TypeEl);
 
     // remove aliastype from scope
-    Scope:=TopScope as TPasIdentifierScope;
+    LocalScope:=GetLocalScope;
+    Scope:=LocalScope as TPasIdentifierScope;
     Scope.RemoveLocalIdentifier(NewType);
 
     // create class or interface
@@ -14668,7 +21449,8 @@ end;
 
 procedure TPasResolver.Clear;
 begin
-  RestoreSubScopes(0);
+  ClearHelperList(FActiveHelpers);
+  RestoreStashedScopes(0);
   // clear stack, keep DefaultScope
   while (FScopeCount>0) and (FTopScope<>DefaultScope) do
     PopScope;
@@ -14734,7 +21516,8 @@ begin
         nil,@BI_Assigned_OnFinishParamsExpr,bfAssigned);
   if bfChr in TheBaseProcs then
     AddBuiltInProc('Chr','function Chr(const Integer): char',
-        @BI_Chr_OnGetCallCompatibility,@BI_Chr_OnGetCallResult,nil,nil,bfChr);
+        @BI_Chr_OnGetCallCompatibility,@BI_Chr_OnGetCallResult,
+        @BI_Chr_OnEval,nil,bfChr);
   if bfOrd in TheBaseProcs then
     AddBuiltInProc('Ord','function Ord(const Enum or Char): integer',
         @BI_Ord_OnGetCallCompatibility,@BI_Ord_OnGetCallResult,
@@ -14767,10 +21550,26 @@ begin
     AddBuiltInProc('WriteStr','procedure WriteStr(out String; params...)',
         @BI_WriteStrProc_OnGetCallCompatibility,nil,nil,
         @BI_WriteStrProc_OnFinishParamsExpr,bfWriteStr,[bipfCanBeStatement]);
+  if bfVal in TheBaseProcs then
+    AddBuiltInProc('Val','procedure Val(const String; var Value: bool|int|float|enum; out Int)',
+        @BI_Val_OnGetCallCompatibility,nil,nil,
+        @BI_Val_OnFinishParamsExpr,bfVal,[bipfCanBeStatement]);
+  if bfLo in TheBaseProcs then
+    AddBuiltInProc('Lo','function Lo(X: any integer type): Byte|Word)',
+      @BI_LoHi_OnGetCallCompatibility,@BI_LoHi_OnGetCallResult,
+      @BI_LoHi_OnEval,nil,bfLo);
+  if bfHi in TheBaseProcs then
+    AddBuiltInProc('Hi','function Hi(X: any integer type): Byte|Word)',
+      @BI_LoHi_OnGetCallCompatibility,@BI_LoHi_OnGetCallResult,
+      @BI_LoHi_OnEval,nil,bfHi);
   if bfConcatArray in TheBaseProcs then
     AddBuiltInProc('Concat','function Concat(const Array1, Array2, ...): Array',
         @BI_ConcatArray_OnGetCallCompatibility,@BI_ConcatArray_OnGetCallResult,
         nil,nil,bfConcatArray);
+  if bfConcatString in TheBaseProcs then
+    AddBuiltInProc('Concat','function Concat(const String1, String2, ...): String',
+        @BI_ConcatString_OnGetCallCompatibility,@BI_ConcatString_OnGetCallResult,
+        @BI_ConcatString_OnEval,nil,bfConcatString);
   if bfCopyArray in TheBaseProcs then
     AddBuiltInProc('Copy','function Copy(const Array; Start: integer = 0; Count: integer = all): Array',
         @BI_CopyArray_OnGetCallCompatibility,@BI_CopyArray_OnGetCallResult,
@@ -14924,6 +21723,17 @@ begin
   EmitElementHints(RefEl,DeclEl);
 end;
 
+procedure TPasResolver.WriteScopesShort(Title: string);
+var
+  i: Integer;
+begin
+  {AllowWriteln}
+  writeln(Title,' ScopeCount=',ScopeCount,' FStashScopeCount=',FStashScopeCount);
+  for i:=0 to FScopeCount-1 do
+    writeln('  ',i,'/',FScopeCount,' ',GetObjName(FScopes[i]));
+  {AllowWriteln-}
+end;
+
 function TPasResolver.CreateScope(El: TPasElement; ScopeClass: TPasScopeClass
   ): TPasScope;
 begin
@@ -14945,6 +21755,80 @@ begin
   else
     // add to free list
     AddResolveData(El,Result,lkModule);
+end;
+
+function TPasResolver.CreateGroupScope(HiType: TPasType; WithTopHelpers: boolean
+  ): TPasGroupScope;
+begin
+  Result:=TPasGroupScope.Create;
+  Result.Element:=HiType;
+  GroupScope_AddTypeAndAncestors(Result,HiType,WithTopHelpers);
+end;
+
+procedure TPasResolver.GroupScope_AddTypeAndAncestors(Scope: TPasGroupScope;
+  HiType: TPasType; WithTopHelpers: boolean);
+var
+  IsClass: Boolean;
+  i: Integer;
+  Entry: TPRHelperEntry;
+  HelperForType, LoType: TPasType;
+  AncestorScope, HelperScope: TPasClassScope;
+  C: TClass;
+begin
+  HiType:=ResolveAliasType(HiType,false);
+  LoType:=ResolveAliasType(HiType);
+  IsClass:=LoType.ClassType=TPasClassType;
+  if IsClass and (TPasClassType(LoType).HelperForType<>nil) then
+    begin
+    // start in a helper
+    WithTopHelpers:=false;
+    // first add helper and its ancestors
+    HelperScope:=TPasClassScope(LoType.CustomData);
+    while HelperScope<>nil do
+      begin
+      Scope.Add(HelperScope);
+      HelperScope:=HelperScope.AncestorScope;
+      end;
+    // then add the HelperForType and its ancestors
+    HiType:=ResolveAliasType(TPasClassType(HiType).HelperForType,false);
+    LoType:=ResolveAliasType(HiType);
+    IsClass:=LoType.ClassType=TPasClassType;
+    end;
+  repeat
+    // first add helper(s)
+    if WithTopHelpers then
+      begin
+      for i:=length(FActiveHelpers)-1 downto 0 do
+        begin
+        Entry:=FActiveHelpers[i];
+        HelperForType:=Entry.HelperForType;
+        if IsSameType(HelperForType,HiType,prraNone) then
+          begin
+          // add Helper and its ancestors
+          HelperScope:=TPasClassScope(Entry.Helper.CustomData);
+          while HelperScope<>nil do
+            begin
+            Scope.Add(HelperScope);
+            HelperScope:=HelperScope.AncestorScope;
+            end;
+          if not (msMultiHelpers in CurrentParser.CurrentModeswitches) then
+            break;
+          end;
+        end;
+      end
+    else
+      WithTopHelpers:=true;
+    // then add scope of LoType
+    C:=LoType.ClassType;
+    if (C=TPasClassType) or (C=TPasRecordType) then
+      Scope.Add(LoType.CustomData as TPasIdentifierScope);
+    // continue with ancestor
+    if not IsClass then break;
+    AncestorScope:=(LoType.CustomData as TPasClassScope).AncestorScope;
+    if AncestorScope=nil then break;
+    HiType:=TPasClassType(AncestorScope.Element);
+    LoType:=HiType;
+  until LoType=nil;
 end;
 
 procedure TPasResolver.PopScope;
@@ -14976,6 +21860,43 @@ begin
     FTopScope:=nil;
 end;
 
+procedure TPasResolver.PopWithScope(El: TPasImplWithDo);
+var
+  WithScope: TPasWithScope;
+  i: Integer;
+begin
+  WithScope:=El.CustomData as TPasWithScope;
+  for i:=WithScope.ExpressionScopes.Count-1 downto 0 do
+    begin
+    CheckTopScope(ScopeClass_WithExpr);
+    if TopScope<>WithScope.ExpressionScopes[i] then
+      RaiseInternalError(20160923102846);
+    PopScope;
+    end;
+  CheckTopScope(TPasWithScope);
+  PopScope;
+end;
+
+procedure TPasResolver.PopGenericParamScope(El: TPasGenericType);
+var
+  TemplType: TPasGenericTemplateType;
+begin
+  if (El.GenericTemplateTypes<>nil) and (El.GenericTemplateTypes.Count>0) then
+    begin
+    TemplType:=TPasGenericTemplateType(El.GenericTemplateTypes[0]);
+    if not (TopScope is TPasGenericParamsScope) then
+      RaiseNotYetImplemented(20190831204109,El,GetObjName(TopScope));
+    if TopScope.Element<>TemplType then
+      RaiseNotYetImplemented(20190831204134,El,GetObjName(TopScope.Element));
+    PopScope;
+    end
+  else
+    begin
+    if TopScope is TPasGenericParamsScope then
+      RaiseNotYetImplemented(20190831204213,El,GetObjName(TopScope.Element));
+    end;
+end;
+
 procedure TPasResolver.PushScope(Scope: TPasScope);
 begin
   if Scope=nil then
@@ -14994,6 +21915,12 @@ function TPasResolver.PushScope(El: TPasElement; ScopeClass: TPasScopeClass
   ): TPasScope;
 begin
   Result:=CreateScope(El,ScopeClass);
+  PushScope(Result);
+end;
+
+function TPasResolver.PushGroupScope(HiType: TPasType): TPasGroupScope;
+begin
+  Result:=CreateGroupScope(HiType);
   PushScope(Result);
 end;
 
@@ -15031,8 +21958,8 @@ begin
   PushScope(Result);
 end;
 
-function TPasResolver.PushClassDotScope(var CurClassType: TPasClassType
-  ): TPasDotClassScope;
+function TPasResolver.PushClassDotScope(var CurClassType: TPasClassType;
+  WithTopHelpers: boolean): TPasDotClassScope;
 var
   ClassScope: TPasClassScope;
   Ref: TResolvedReference;
@@ -15047,47 +21974,257 @@ begin
   ClassScope:=NoNil(CurClassType.CustomData) as TPasClassScope;
   Result:=TPasDotClassScope.Create;
   Result.Owner:=Self;
-  Result.ClassScope:=ClassScope;
+  Result.ClassRecScope:=ClassScope;
+  Result.GroupScope:=CreateGroupScope(CurClassType,WithTopHelpers);
   PushScope(Result);
 end;
 
-function TPasResolver.PushRecordDotScope(CurRecordType: TPasRecordType
-  ): TPasDotRecordScope;
+function TPasResolver.PushRecordDotScope(CurRecordType: TPasRecordType): TPasDotClassOrRecordScope;
 var
   RecScope: TPasRecordScope;
 begin
   RecScope:=NoNil(CurRecordType.CustomData) as TPasRecordScope;
-  Result:=TPasDotRecordScope.Create;
+  Result:=TPasDotClassOrRecordScope.Create;
   Result.Owner:=Self;
-  Result.IdentifierScope:=RecScope;
+  Result.ClassRecScope:=RecScope;
+  Result.GroupScope:=CreateGroupScope(CurRecordType);
   PushScope(Result);
 end;
 
-function TPasResolver.PushEnumDotScope(CurEnumType: TPasEnumType
-  ): TPasDotEnumTypeScope;
-var
-  EnumScope: TPasEnumTypeScope;
+function TPasResolver.PushInheritedScope(ClassOrRec: TPasMembersType;
+  WithTopHelpers: boolean; AncestorScope: TPasClassScope): TPasInheritedScope;
 begin
-  EnumScope:=NoNil(CurEnumType.CustomData) as TPasEnumTypeScope;
+  Result:=TPasInheritedScope.Create;
+  Result.Owner:=Self;
+  Result.ClassRecScope:=NoNil(ClassOrRec.CustomData) as TPasClassOrRecordScope;
+  Result.AncestorScope:=AncestorScope;
+  Result.GroupScope:=CreateGroupScope(ClassOrRec,WithTopHelpers);
+  PushScope(Result);
+end;
+
+function TPasResolver.PushEnumDotScope(HiType: TPasType;
+  EnumLoType: TPasEnumType): TPasDotEnumTypeScope;
+begin
   Result:=TPasDotEnumTypeScope.Create;
   Result.Owner:=Self;
-  Result.IdentifierScope:=EnumScope;
+  Result.EnumScope:=NoNil(EnumLoType.CustomData) as TPasEnumTypeScope;
+  Result.GroupScope:=CreateGroupScope(HiType);
   PushScope(Result);
 end;
 
-procedure TPasResolver.ResetSubScopes(out Depth: integer);
-// move all sub scopes from Scopes to SubScopes
+function TPasResolver.PushHelperDotScope(HiType: TPasType): TPasDotBaseScope;
+var
+  Group: TPasGroupScope;
 begin
-  Depth:=FSubScopeCount;
-  while TopScope is TPasSubScope do
+  Group:=CreateGroupScope(HiType);
+  if Group.Count=0 then
+    begin
+    Group.Free;
+    exit(nil);
+    end;
+  Result:=TPasDotHelperScope.Create;
+  Result.Element:=HiType;
+  Result.Owner:=Self;
+  Result.GroupScope:=Group;
+  PushScope(Result);
+end;
+
+function TPasResolver.PushTemplateDotScope(TemplType: TPasGenericTemplateType;
+  ErrorEl: TPasElement): TPasDotBaseScope;
+
+  procedure PushConstraintScope(ConEl: TPasElement);
+  var
+    ConToken: TToken;
+    DotClassScope: TPasDotClassScope;
+    MemberType: TPasMembersType;
+    GenTempl: TPasGenericTemplateType;
+    aClass: TPasClassType;
+    aConstructor: TPasConstructor;
+    i: Integer;
+    ResolvedEl: TPasResolverResult;
+  begin
+    ConToken:=GetGenericConstraintKeyword(ConEl);
+    case ConToken of
+    tkrecord: ;
+    tkclass, tkconstructor:
+      begin
+      if Result<>nil then
+        RaiseNotYetImplemented(20190831005217,TemplType);
+
+      if not FindClassTypeAndConstructor('system','tobject',aClass,aConstructor,ErrorEl) then
+        RaiseIdentifierNotFound(20190831002421,'system.TObject.Create()',ErrorEl);
+      DotClassScope:=TPasDotClassScope.Create;
+      Result:=DotClassScope;
+      PushScope(Result);
+      DotClassScope.Owner:=Self;
+      DotClassScope.ClassRecScope:=aClass.CustomData as TPasClassScope;
+      Result.GroupScope:=CreateGroupScope(aClass,false);
+      end;
+    else
+      if not (ConEl is TPasType) then
+        RaiseNotYetImplemented(20190914070842,TemplType,GetObjName(ConEl));
+      ComputeElement(ConEl,ResolvedEl,[rcType]);
+      if ResolvedEl.BaseType<>btContext then
+        RaiseNotYetImplemented(20190915183241,ConEl);
+      if ResolvedEl.IdentEl=nil then
+        RaiseNotYetImplemented(20190831214135,ConEl);
+      if ResolvedEl.LoTypeEl is TPasGenericTemplateType then
+        begin
+        GenTempl:=TPasGenericTemplateType(ResolvedEl.LoTypeEl);
+        if ConEl.HasParent(GenTempl) then
+          RaiseNotYetImplemented(20190831214258,ConEl);
+        for i:=0 to length(GenTempl.Constraints)-1 do
+          PushConstraintScope(GenTempl.Constraints[i]);
+        end
+      else if ResolvedEl.LoTypeEl is TPasMembersType then
+        begin
+        MemberType:=TPasMembersType(ResolvedEl.LoTypeEl);
+        if Result=nil then
+          begin
+          DotClassScope:=TPasDotClassScope.Create;
+          Result:=DotClassScope;
+          PushScope(Result);
+          DotClassScope.Owner:=Self;
+          DotClassScope.ClassRecScope:=MemberType.CustomData as TPasClassScope;
+          Result.GroupScope:=CreateGroupScope(ResolvedEl.HiTypeEl,false);
+          end
+        else
+          GroupScope_AddTypeAndAncestors(Result.GroupScope,MemberType,false);
+        end
+      else
+        RaiseNotYetImplemented(20190831001450, ConEl);
+    end;
+  end;
+
+var
+  i: Integer;
+begin
+  Result:=nil;
+  for i:=0 to length(TemplType.Constraints)-1 do
+    PushConstraintScope(TemplType.Constraints[i]);
+end;
+
+function TPasResolver.PushDotScope(HiType: TPasType): TPasDotBaseScope;
+var
+  C: TClass;
+  LoType: TPasType;
+begin
+  LoType:=ResolveAliasType(HiType);
+  C:=LoType.ClassType;
+  if C=TPasClassType then
+    Result:=PushClassDotScope(TPasClassType(LoType))
+  else if C=TPasRecordType then
+    Result:=PushRecordDotScope(TPasRecordType(LoType))
+  else if C=TPasEnumType then
+    Result:=PushEnumDotScope(HiType,TPasEnumType(LoType))
+  else if C=TPasGenericTemplateType then
+    Result:=PushTemplateDotScope(TPasGenericTemplateType(LoType),HiType)
+  else
+    Result:=PushHelperDotScope(HiType);
+end;
+
+function TPasResolver.PushWithExprScope(Expr: TPasExpr): TPasWithExprScope;
+var
+  WithEl: TPasImplWithDo;
+  WithScope: TPasWithScope;
+  ExprResolved: TPasResolverResult;
+  ErrorEl: TPasExpr;
+  LoType, HiType, DestType: TPasType;
+  ExprScope: TPasGroupScope;
+  ClassEl: TPasClassType;
+  WithExprScope: TPasWithExprScope;
+  Flags: TPasWithExprScopeFlags;
+  ClassRecScope: TPasClassOrRecordScope;
+begin
+  if not (Expr.Parent is TPasImplWithDo) then
+    RaiseInternalError(20181210163412,GetObjName(Expr.Parent));
+  WithEl:=TPasImplWithDo(Expr.Parent);
+  if not (WithEl.CustomData is TPasWithScope) then
+    RaiseInternalError(20181210175526);
+  WithScope:=TPasWithScope(WithEl.CustomData);
+
+  ResolveExpr(Expr,rraRead);
+  ComputeElement(Expr,ExprResolved,[rcSetReferenceFlags]);
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.PushWithExprScope ExprResolved=',GetResolverResultDbg(ExprResolved));
+  {$ENDIF}
+  ErrorEl:=Expr;
+  HiType:=ExprResolved.HiTypeEl;
+  LoType:=ExprResolved.LoTypeEl;
+  // ToDo: use last element in Expr for error position
+  if LoType=nil then
+    RaiseMsg(20170216152004,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
+      [BaseTypeNames[ExprResolved.BaseType]],ErrorEl);
+  if (ExprResolved.BaseType in btAllStandardTypes) then
+    // ok
+  else if (ExprResolved.BaseType=btContext) then
+    // ok
+  else
+    RaiseMsg(20190210143257,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
+      [BaseTypeNames[ExprResolved.BaseType]],ErrorEl);
+
+  Flags:=[];
+  CheckUseAsType(LoType,20190123113957,Expr);
+  ClassRecScope:=nil;
+  ExprScope:=nil;
+  if LoType.ClassType=TPasClassOfType then
+    begin
+    // e.g. with ImageClass do FindHandlerFromExtension()
+    DestType:=TPasClassOfType(LoType).DestType;
+    ClassEl:=ResolveAliasType(DestType) as TPasClassType;
+    ExprScope:=CreateGroupScope(DestType);
+    ClassRecScope:=TPasClassOrRecordScope(ClassEl.CustomData);
+    Include(Flags,wesfOnlyTypeMembers);
+    Include(Flags,wesfIsClassOf);
+    end
+  else if LoType is TPasMembersType then
+    ClassRecScope:=TPasClassOrRecordScope(LoType.CustomData);
+
+  if ExprScope=nil then
+    begin
+    ExprScope:=CreateGroupScope(HiType);
+    if ExprScope.Count=0 then
+      begin
+      ExprScope.Free;
+      RaiseMsg(20170216152007,nExprTypeMustBeClassOrRecordTypeGot,sExprTypeMustBeClassOrRecordTypeGot,
+        [GetElementTypeName(LoType)],ErrorEl);
+      end;
+    if ExprResolved.IdentEl is TPasType then
+      // e.g. with TPoint do PointInCircle
+      Include(Flags,wesfOnlyTypeMembers);
+    end;
+  WithExprScope:=ScopeClass_WithExpr.Create;
+  WithExprScope.WithScope:=WithScope;
+  WithExprScope.Index:=WithEl.Expressions.Count;
+  WithExprScope.Expr:=Expr;
+  WithExprScope.Scope:=ExprScope;
+  WithExprScope.ClassRecScope:=ClassRecScope;
+  if not (ExprResolved.IdentEl is TPasType) then
+    Include(Flags,wesfNeedTmpVar);
+  if (not (rrfWritable in ExprResolved.Flags))
+      and (ExprResolved.BaseType=btContext)
+      and (ExprResolved.LoTypeEl.ClassType=TPasRecordType) then
+    Include(Flags,wesfConstParent);
+  WithExprScope.Flags:=Flags;
+  WithScope.ExpressionScopes.Add(WithExprScope);
+  PushScope(WithExprScope);
+  Result:=WithExprScope;
+end;
+
+function TPasResolver.StashScopes(NewScopeCnt: integer): integer;
+begin
+  Result:=FStashScopeCount;
+  if NewScopeCnt>ScopeCount then
+    RaiseInternalError(20190728125505);
+  while ScopeCount>NewScopeCnt do
     begin
     {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.ResetSubScopes moving ',TopScope.ClassName,' ScopeCount=',ScopeCount,' SubScopeCount=',FSubScopeCount);
+    writeln('TPasResolver.StashScopes moving ',TopScope.ClassName,' ScopeCount=',ScopeCount,' StashScopeCount=',FStashScopeCount);
     {$ENDIF}
-    if FSubScopeCount=length(FSubScopes) then
-      SetLength(FSubScopes,FSubScopeCount+4);
-    FSubScopes[FSubScopeCount]:=TopScope;
-    inc(FSubScopeCount);
+    if FStashScopeCount=length(FStashScopes) then
+      SetLength(FStashScopes,FStashScopeCount+4);
+    FStashScopes[FStashScopeCount]:=TopScope;
+    inc(FStashScopeCount);
     dec(FScopeCount);
     FScopes[FScopeCount]:=nil;
     if FScopeCount>0 then
@@ -15097,25 +22234,77 @@ begin
     end;
 end;
 
-procedure TPasResolver.RestoreSubScopes(Depth: integer);
+function TPasResolver.StashSubExprScopes: integer;
+// move all subexpr scopes from Scopes to StashScopes
+var
+  NewScopeCnt: Integer;
+begin
+  NewScopeCnt:=FScopeCount;
+  while (NewScopeCnt>0) and (FScopes[NewScopeCnt-1] is TPasSubExprScope) do
+    dec(NewScopeCnt);
+  Result:=StashScopes(NewScopeCnt);
+end;
+
+procedure TPasResolver.RestoreStashedScopes(StashDepth: integer);
 // restore sub scopes
 begin
-  while FSubScopeCount>Depth do
+  while FStashScopeCount>StashDepth do
     begin
     {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.RestoreSubScopes moving ',FSubScopes[FSubScopeCount-1].ClassName,' ScopeCount=',ScopeCount,' SubScopeCount=',FSubScopeCount);
+    writeln('TPasResolver.RestoreStashScopes moving ',FStashScopes[FStashScopeCount-1].ClassName,' ScopeCount=',ScopeCount,' StashScopeCount=',FStashScopeCount);
     {$ENDIF}
     if FScopeCount=length(FScopes) then
       SetLength(FScopes,FScopeCount+4);
-    dec(FSubScopeCount);
-    FScopes[FScopeCount]:=FSubScopes[FSubScopeCount];
+    dec(FStashScopeCount);
+    FScopes[FScopeCount]:=FStashScopes[FStashScopeCount];
     FTopScope:=FScopes[FScopeCount];
-    FSubScopes[FSubScopeCount]:=nil;
+    FStashScopes[FStashScopeCount]:=nil;
     inc(FScopeCount);
     end;
 end;
 
-function TPasResolver.GetInheritedExprScope(ErrorEl: TPasElement
+procedure TPasResolver.DeleteScope(Index: integer);
+  {$IF defined(fpc) and (FPC_FULLVERSION<30101)}
+  procedure Delete(var A: TPasScopeArray; Index, Count: integer); overload;
+  var
+    i: Integer;
+  begin
+    if Index<0 then
+      raise Exception.Create('20191014232344');
+    if Index+Count>length(A) then
+      raise Exception.Create('20191014232345');
+    for i:=Index+Count to length(A)-1 do
+      A[i-Count]:=A[i];
+    SetLength(A,length(A)-Count);
+  end;
+  {$ENDIF}
+begin
+  Delete(FScopes,Index,1);
+  dec(FScopeCount);
+end;
+
+procedure TPasResolver.InsertScope(Scope: TPasScope; Index: integer);
+  {$IF defined(fpc) and (FPC_FULLVERSION<30101)}
+  procedure Insert(Item: TPasScope; var A: TPasScopeArray; Index: integer); overload;
+  var
+    i: Integer;
+  begin
+    if Index<0 then
+      raise Exception.Create('20191014232355');
+    if Index>length(A) then
+      raise Exception.Create('20191014232356');
+    SetLength(A,length(A)+1);
+    for i:=length(A)-1 downto Index+1 do
+      A[i]:=A[i-1];
+    A[Index]:=Item;
+  end;
+  {$ENDIF}
+begin
+  Insert(Scope,FScopes,Index);
+  inc(FScopeCount);
+end;
+
+function TPasResolver.GetCurrentProcScope(ErrorEl: TPasElement
   ): TPasProcedureScope;
 var
   Scope: TPasScope;
@@ -15130,6 +22319,56 @@ begin
     if Scope is TPasProcedureScope then
       exit(TPasProcedureScope(Scope));
   until false;
+  Result:=nil;
+end;
+
+function TPasResolver.GetProcScope(El: TPasElement): TPasProcedureScope;
+var
+  CurEl: TPasElement;
+begin
+  CurEl:=El;
+  while CurEl<>nil do
+    begin
+    if CurEl is TPasProcedure then
+      exit(TPasProcedureScope(CurEl.CustomData));
+    CurEl:=CurEl.Parent;
+    end;
+  Result:=nil;
+end;
+
+function TPasResolver.GetCurrentSelfScope(ErrorEl: TPasElement): TPasProcedureScope;
+begin
+  Result:=GetCurrentProcScope(ErrorEl);
+  Result:=Result.GetSelfScope;
+end;
+
+function TPasResolver.GetSelfScope(El: TPasElement): TPasProcedureScope;
+begin
+  Result:=GetProcScope(El);
+  if Result<>nil then
+    Result:=Result.GetSelfScope;
+end;
+
+procedure TPasResolver.AddHelper(Helper: TPasClassType;
+  var List: TPRHelperEntryArray);
+var
+  NewEntry: TPRHelperEntry;
+  Added: Integer;
+  HelperForType: TPasType;
+begin
+  HelperForType:=ResolveAliasType(Helper.HelperForType,false);
+  NewEntry:=TPRHelperEntry.Create;
+  NewEntry.Helper:=Helper;
+  NewEntry.HelperForType:=HelperForType;
+  Added:=length(List);
+  NewEntry.Added:=Added;
+  SetLength(List,Added+1);
+  List[Added]:=NewEntry;
+end;
+
+procedure TPasResolver.AddActiveHelper(Helper: TPasClassType);
+begin
+  AddHelper(Helper,FActiveHelpers);
 end;
 
 class function TPasResolver.MangleSourceLineNumber(Line, Column: integer
@@ -15142,8 +22381,9 @@ begin
     Result:=Line;
 end;
 
-procedure TPasResolver.SetLastMsg(const id: int64; MsgType: TMessageType;
-  MsgNumber: integer; const Fmt: String; Args: array of const;
+procedure TPasResolver.SetLastMsg(const id: TMaxPrecInt; MsgType: TMessageType;
+  MsgNumber: integer; const Fmt: String;
+  Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
   PosEl: TPasElement);
 var
 {$IFDEF VerbosePasResolver}
@@ -15184,8 +22424,9 @@ begin
   {$ENDIF}
 end;
 
-procedure TPasResolver.RaiseMsg(const Id: int64; MsgNumber: integer;
-  const Fmt: String; Args: array of const; ErrorPosEl: TPasElement);
+procedure TPasResolver.RaiseMsg(const Id: TMaxPrecInt; MsgNumber: integer;
+  const Fmt: String; Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+  ErrorPosEl: TPasElement);
 var
   E: EPasResolve;
 begin
@@ -15201,26 +22442,29 @@ begin
   raise E;
 end;
 
-procedure TPasResolver.RaiseNotYetImplemented(id: int64; El: TPasElement;
+procedure TPasResolver.RaiseNotYetImplemented(id: TMaxPrecInt; El: TPasElement;
   Msg: string);
 var
   s: String;
 begin
   s:=sNotYetImplemented+' ['+IntToStr(id)+']';
   if Msg<>'' then
-    s:=s+' '+Msg;
+    s:=s+' "'+Msg+'"';
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.RaiseNotYetImplemented s="',s,'" El=',GetObjName(El));
   {$ENDIF}
   RaiseMsg(id,nNotYetImplemented,s,[GetObjName(El)],El);
 end;
 
-procedure TPasResolver.RaiseInternalError(id: int64; const Msg: string);
+procedure TPasResolver.RaiseInternalError(id: TMaxPrecInt; const Msg: string);
 begin
+  {$IFDEF VerbosePasResolver}
+  writeln('TPasResolver.RaiseInternalError [',id,'] ',Msg);
+  {$ENDIF}
   raise Exception.Create('Internal error: ['+IntToStr(id)+'] '+Msg);
 end;
 
-procedure TPasResolver.RaiseInvalidScopeForElement(id: int64; El: TPasElement;
+procedure TPasResolver.RaiseInvalidScopeForElement(id: TMaxPrecInt; El: TPasElement;
   const Msg: string);
 var
   i: Integer;
@@ -15237,7 +22481,7 @@ begin
   RaiseInternalError(id,s);
 end;
 
-procedure TPasResolver.RaiseIdentifierNotFound(id: int64; Identifier: string;
+procedure TPasResolver.RaiseIdentifierNotFound(id: TMaxPrecInt; Identifier: string;
   El: TPasElement);
 begin
   {$IFDEF VerbosePasResolver}
@@ -15247,30 +22491,37 @@ begin
   RaiseMsg(id,nIdentifierNotFound,sIdentifierNotFound,[Identifier],El);
 end;
 
-procedure TPasResolver.RaiseXExpectedButYFound(id: int64; const X, Y: string;
+procedure TPasResolver.RaiseXExpectedButYFound(id: TMaxPrecInt; const X, Y: string;
   El: TPasElement);
 begin
   RaiseMsg(id,nXExpectedButYFound,sXExpectedButYFound,[X,Y],El);
 end;
 
-procedure TPasResolver.RaiseContextXExpectedButYFound(id: int64; const C, X,
+procedure TPasResolver.RaiseXExpectedButTypeYFound(id: TMaxPrecInt;
+  const X: string; Y: TPasType; El: TPasElement);
+begin
+  RaiseMsg(id,nXExpectedButYFound,sXExpectedButYFound,
+    [x,GetTypeDescription(Y)],El);
+end;
+
+procedure TPasResolver.RaiseContextXExpectedButYFound(id: TMaxPrecInt; const C, X,
   Y: string; El: TPasElement);
 begin
   RaiseMsg(id,nContextExpectedXButFoundY,sContextExpectedXButFoundY,[C,X,Y],El);
 end;
 
-procedure TPasResolver.RaiseContextXInvalidY(id: int64; const X, Y: string;
+procedure TPasResolver.RaiseContextXInvalidY(id: TMaxPrecInt; const X, Y: string;
   El: TPasElement);
 begin
   RaiseMsg(id,nContextXInvalidY,sContextXInvalidY,[X,Y],El);
 end;
 
-procedure TPasResolver.RaiseConstantExprExp(id: int64; ErrorEl: TPasElement);
+procedure TPasResolver.RaiseConstantExprExp(id: TMaxPrecInt; ErrorEl: TPasElement);
 begin
   RaiseMsg(id,nConstantExpressionExpected,sConstantExpressionExpected,[],ErrorEl);
 end;
 
-procedure TPasResolver.RaiseVarExpected(id: int64; ErrorEl: TPasElement;
+procedure TPasResolver.RaiseVarExpected(id: TMaxPrecInt; ErrorEl: TPasElement;
   IdentEl: TPasElement);
 begin
   if IdentEl is TPasProperty then
@@ -15280,23 +22531,31 @@ begin
     RaiseMsg(id,nVariableIdentifierExpected,sVariableIdentifierExpected,[],ErrorEl);
 end;
 
-procedure TPasResolver.RaiseRangeCheck(id: int64; ErrorEl: TPasElement);
+procedure TPasResolver.RaiseRangeCheck(id: TMaxPrecInt; ErrorEl: TPasElement);
 begin
   RaiseMsg(id,nRangeCheckError,sRangeCheckError,[],ErrorEl);
 end;
 
-procedure TPasResolver.RaiseIncompatibleTypeDesc(id: int64; MsgNumber: integer;
-  const Args: array of const; const GotDesc, ExpDesc: String; ErrorEl: TPasElement);
+procedure TPasResolver.RaiseIncompatibleTypeDesc(id: TMaxPrecInt; MsgNumber: integer;
+  const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+  const GotDesc, ExpDesc: String; ErrorEl: TPasElement);
 
   function GetString(ArgNo: integer): string;
   begin
     if ArgNo>High(Args) then
       exit('invalid param '+IntToStr(ArgNo));
+    {$ifdef pas2js}
+    if isString(Args[ArgNo]) then
+      Result:=String(Args[ArgNo])
+    else
+      Result:='invalid param '+jsTypeOf(Args[ArgNo]);
+    {$else}
     case Args[ArgNo].VType of
     vtAnsiString: Result:=AnsiString(Args[ArgNo].VAnsiString);
     else
       Result:='invalid param '+IntToStr(Ord(Args[ArgNo].VType));
     end;
+    {$endif}
   end;
 
 begin
@@ -15323,8 +22582,9 @@ begin
   end;
 end;
 
-procedure TPasResolver.RaiseIncompatibleType(id: int64; MsgNumber: integer;
-  const Args: array of const; GotType, ExpType: TPasType; ErrorEl: TPasElement);
+procedure TPasResolver.RaiseIncompatibleType(id: TMaxPrecInt; MsgNumber: integer;
+  const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+  GotType, ExpType: TPasType; ErrorEl: TPasElement);
 var
   DescA, DescB: String;
 begin
@@ -15338,8 +22598,9 @@ begin
   RaiseIncompatibleTypeDesc(id,MsgNumber,Args,DescA,DescB,ErrorEl);
 end;
 
-procedure TPasResolver.RaiseIncompatibleTypeRes(id: int64; MsgNumber: integer;
-  const Args: array of const; const GotType, ExpType: TPasResolverResult;
+procedure TPasResolver.RaiseIncompatibleTypeRes(id: TMaxPrecInt; MsgNumber: integer;
+  const Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
+  const GotType, ExpType: TPasResolverResult;
   ErrorEl: TPasElement);
 var
   GotDesc, ExpDesc: String;
@@ -15351,22 +22612,29 @@ begin
   RaiseIncompatibleTypeDesc(id,MsgNumber,Args,GotDesc,ExpDesc,ErrorEl);
 end;
 
-procedure TPasResolver.RaiseInvalidProcTypeModifier(id: int64;
+procedure TPasResolver.RaiseHelpersCannotBeUsedAsType(id: TMaxPrecInt;
+  ErrorEl: TPasElement);
+begin
+  RaiseMsg(id,nHelpersCannotBeUsedAsTypes,sHelpersCannotBeUsedAsTypes,[],ErrorEl);
+end;
+
+procedure TPasResolver.RaiseInvalidProcTypeModifier(id: TMaxPrecInt;
   ProcType: TPasProcedureType; ptm: TProcTypeModifier; ErrorEl: TPasElement);
 begin
   RaiseMsg(id,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(ProcType),
     ProcTypeModifiers[ptm]],ErrorEl);
 end;
 
-procedure TPasResolver.RaiseInvalidProcModifier(id: int64; Proc: TPasProcedure;
+procedure TPasResolver.RaiseInvalidProcModifier(id: TMaxPrecInt; Proc: TPasProcedure;
   pm: TProcedureModifier; ErrorEl: TPasElement);
 begin
   RaiseMsg(id,nInvalidXModifierY,sInvalidXModifierY,[GetElementTypeName(Proc),
     ModifierNames[pm]],ErrorEl);
 end;
 
-procedure TPasResolver.LogMsg(const id: int64; MsgType: TMessageType;
-  MsgNumber: integer; const Fmt: String; Args: array of const;
+procedure TPasResolver.LogMsg(const id: TMaxPrecInt; MsgType: TMessageType;
+  MsgNumber: integer; const Fmt: String;
+  Args: array of {$ifdef pas2js}jsvalue{$else}const{$endif};
   PosEl: TPasElement);
 var
   Scanner: TPascalScanner;
@@ -15537,14 +22805,20 @@ function TPasResolver.CheckCallProcCompatibility(ProcType: TPasProcedureType;
 var
   ProcArgs: TFPList;
   i, ParamCnt, ParamCompatibility: Integer;
-  Param: TPasExpr;
-  ParamResolved: TPasResolverResult;
+  Param, Value: TPasExpr;
+  ParamResolved, ArgResolved: TPasResolverResult;
   Flags: TPasResolverComputeFlags;
 begin
   Result:=cExact;
   ProcArgs:=ProcType.Args;
+
+  Value:=Params.Value;
+  if Value is TBinaryExpr then
+    Value:=TBinaryExpr(Value).right;
+
   // check args
   ParamCnt:=length(Params.Params);
+  ArgResolved.BaseType:=btNone;;
   i:=0;
   while i<ParamCnt do
     begin
@@ -15563,18 +22837,32 @@ begin
       begin
       if ptmVarargs in ProcType.Modifiers then
         begin
-        if SetReferenceFlags then
-          Flags:=[rcNoImplicitProcType,rcSetReferenceFlags]
-        else
-          Flags:=[rcNoImplicitProcType];
-        ComputeElement(Param,ParamResolved,Flags,Param);
-        if not (rrfReadable in ParamResolved.Flags) then
+        if ProcType.VarArgsType<>nil then
           begin
-          if RaiseOnError then
-            RaiseVarExpected(20180712001415,Param,ParamResolved.IdentEl);
-          exit(cIncompatible);
+          if ArgResolved.BaseType=btNone then
+            ComputeElement(ProcType.VarArgsType,ArgResolved,[rcType]);
+          ComputeArgumentExpr(ArgResolved,argConst,
+                                 Param,ParamResolved,SetReferenceFlags);
+          ParamCompatibility:=CheckParamResCompatibility(Param,ParamResolved,
+                                   ArgResolved,i,RaiseOnError,SetReferenceFlags);
+          if ParamCompatibility=cIncompatible then
+            exit(cIncompatible);
+          end
+        else
+          begin
+          if SetReferenceFlags then
+            Flags:=[rcNoImplicitProcType,rcSetReferenceFlags]
+          else
+            Flags:=[rcNoImplicitProcType];
+          ComputeElement(Param,ParamResolved,Flags,Param);
+          if not (rrfReadable in ParamResolved.Flags) then
+            begin
+            if RaiseOnError then
+              RaiseVarExpected(20180712001415,Param,ParamResolved.IdentEl);
+            exit(cIncompatible);
+            end;
+          ParamCompatibility:=cExact;
           end;
-        ParamCompatibility:=cExact;
         end
       else
         begin
@@ -15585,7 +22873,10 @@ begin
         exit(cIncompatible);
         end;
       end;
-    inc(Result,ParamCompatibility);
+    if Result<cTypeConversion then
+      inc(Result,ParamCompatibility)
+    else
+      Result:=Max(Result,ParamCompatibility);
     inc(i);
     end;
   if (i<ProcArgs.Count) then
@@ -15674,10 +22965,12 @@ begin
         exit(CheckRaiseTypeArgNo(20170216152417,ArgNo,Param,ParamResolved,'integer',RaiseOnError));
       if EmitHints then
         begin
-        ParamValue:=Eval(Param,[refAutoConst]);
+        ParamValue:=Eval(Param,[refAutoConstExt]);
         if ParamValue<>nil then
           try // has const value -> check range
-            if (ParamValue.Kind<>revkInt)
+            if ParamValue.Kind=revkExternal then
+              // ignore
+            else if (ParamValue.Kind<>revkInt)
                 or (TResEvalInt(ParamValue).Int<DynArrayMinIndex)
                 or (TResEvalInt(ParamValue).Int>DynArrayMaxIndex) then
               fExprEvaluator.EmitRangeCheckConst(20170520202212,ParamValue.AsString,
@@ -15761,21 +23054,37 @@ begin
         [],Params);
     ArrayEl:=TPasArrayType(NextType);
   until false;
+  Result:=cIncompatible;
 end;
 
-function TPasResolver.CheckOverloadProcCompatibility(Proc1, Proc2: TPasProcedure
-  ): boolean;
+function TPasResolver.CheckProcOverloadCompatibility(Proc1, Proc2: TPasProcedure): boolean;
 // returns if number and type of arguments fit
 // does not check calling convention
 var
-  ProcArgs1, ProcArgs2: TFPList;
-  i: Integer;
+  ProcArgs1, ProcArgs2, TemplTypes1, TemplTypes2: TFPList;
+  i, Comp: Integer;
 begin
   Result:=false;
+
+  if (Proc1.NameParts<>nil) or (Proc2.NameParts<>nil) then
+    begin
+    TemplTypes1:=GetProcTemplateTypes(Proc1);
+    TemplTypes2:=GetProcTemplateTypes(Proc2);
+    if TemplTypes1=nil then
+      begin
+      if TemplTypes2<>nil then
+        exit;
+      end
+    else if TemplTypes2=nil then
+      exit
+    else if TemplTypes1.Count<>TemplTypes2.Count then
+      exit;
+    end;
+
   ProcArgs1:=Proc1.ProcType.Args;
   ProcArgs2:=Proc2.ProcType.Args;
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.CheckOverloadProcCompatibility START Count=',ProcArgs1.Count,' ',ProcArgs2.Count);
+  writeln('TPasResolver.CheckProcOverloadCompatibility START Count=',ProcArgs1.Count,' ',ProcArgs2.Count);
   {$ENDIF}
   // check args
   if ProcArgs1.Count<>ProcArgs2.Count then
@@ -15783,9 +23092,10 @@ begin
   for i:=0 to ProcArgs1.Count-1 do
     begin
     {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.CheckOverloadProcCompatibility ',i,'/',ProcArgs1.Count);
+    writeln('TPasResolver.CheckProcOverloadCompatibility ',i,'/',ProcArgs1.Count);
     {$ENDIF}
-    if not CheckProcArgCompatibility(TPasArgument(ProcArgs1[i]),TPasArgument(ProcArgs2[i])) then
+    Comp:=CheckProcArgCompatibility(TPasArgument(ProcArgs1[i]),TPasArgument(ProcArgs2[i]));
+    if Comp>cExact then
       exit;
     end;
   Result:=true;
@@ -15832,6 +23142,14 @@ begin
     else
       ; // AnyProc = aRefTo -> ok
     end
+  else if Proc2.Parent is TPasAnonymousProcedure then
+    begin
+    if IsAssign then
+      // NonRefTo := AnonymousProc  -> not possible
+      exit(ModifierError(ptmReferenceTo))
+    else
+      ; // AnyProc = AnonymousProc -> ok
+    end
   else
     begin
     // neither Proc1 nor Proc2 is a reference-to  -> check isNested and OfObject
@@ -15867,11 +23185,11 @@ begin
   for i:=0 to ProcArgs1.Count-1 do
     begin
     {$IFDEF VerbosePasResolver}
-    writeln('TPasResolver.CheckProcAssignCompatibility ',i,'/',ProcArgs1.Count);
+    writeln('TPasResolver.CheckProcTypeCompatibility ',i,'/',ProcArgs1.Count);
     {$ENDIF}
     ExpectedArg:=TPasArgument(ProcArgs1[i]);
     ActualArg:=TPasArgument(ProcArgs2[i]);
-    if not CheckProcArgCompatibility(ExpectedArg,ActualArg) then
+    if CheckProcArgCompatibility(ExpectedArg,ActualArg)>cGenericExact then
       begin
       if RaiseOnIncompatible then
         begin
@@ -15902,65 +23220,90 @@ begin
   Result:=true;
 end;
 
-function TPasResolver.CheckProcArgCompatibility(Arg1, Arg2: TPasArgument): boolean;
+function TPasResolver.CheckProcArgCompatibility(Arg1, Arg2: TPasArgument
+  ): integer;
 begin
-  Result:=false;
-
   // check access: var, const, ...
-  if Arg1.Access<>Arg2.Access then exit;
-
-  // check untyped
-  if Arg1.ArgType=nil then
-    exit(Arg2.ArgType=nil);
-  if Arg2.ArgType=nil then exit;
+  if Arg1.Access<>Arg2.Access then exit(cIncompatible);
 
   Result:=CheckElTypeCompatibility(Arg1.ArgType,Arg2.ArgType,prraSimple);
 end;
 
 function TPasResolver.CheckElTypeCompatibility(Arg1, Arg2: TPasType;
-  ResolveAlias: TPRResolveAlias): boolean;
+  ResolveAlias: TPRResolveAlias): integer;
 var
   Arg1Resolved, Arg2Resolved: TPasResolverResult;
   C: TClass;
   Arr1, Arr2: TPasArrayType;
+  TemplType1, TemplType2: TPasGenericTemplateType;
+  Templates1, Templates2: TFPList;
+  i: Integer;
 begin
+  if Arg1=Arg2 then exit(cExact);
   ComputeElement(Arg1,Arg1Resolved,[rcType]);
   ComputeElement(Arg2,Arg2Resolved,[rcType]);
   {$IFDEF VerbosePasResolver}
-  //writeln('TPasResolver.CheckElTypeCompatibility Arg1=',GetResolverResultDbg(Arg1Resolved),' Arg2=',GetResolverResultDbg(Arg2Resolved));
+  writeln('TPasResolver.CheckElTypeCompatibility Arg1=',GetResolverResultDbg(Arg1Resolved),' Arg2=',GetResolverResultDbg(Arg2Resolved));
   {$ENDIF}
+
+  if IsGenericTemplType(Arg1Resolved) then
+    begin
+    Result:=cGenericExact;
+    if Arg1Resolved.LoTypeEl=Arg2Resolved.LoTypeEl then
+      exit(cExact)
+    else if IsGenericTemplType(Arg2Resolved) then
+      begin
+      TemplType1:=TPasGenericTemplateType(Arg1Resolved.LoTypeEl);
+      TemplType2:=TPasGenericTemplateType(Arg2Resolved.LoTypeEl);
+      if (TemplType1.Parent is TPasProcedure)
+          and (TemplType2.Parent is TPasProcedure) then
+        begin
+        Templates1:=GetProcTemplateTypes(TPasProcedure(TemplType1.Parent));
+        Templates2:=GetProcTemplateTypes(TPasProcedure(TemplType2.Parent));
+        i:=Templates1.IndexOf(TemplType1);
+        if (i>=0) and (i=Templates2.IndexOf(TemplType2)) then
+          exit(cExact);
+        end;
+      end;
+    exit;
+    end
+  else if IsGenericTemplType(Arg2Resolved) then
+    exit(cGenericExact);
 
   if (Arg1Resolved.BaseType<>Arg2Resolved.BaseType)
       or (Arg1Resolved.LoTypeEl=nil)
       or (Arg2Resolved.LoTypeEl=nil) then
-    exit(false);
-  if Arg1Resolved.BaseType=Arg2Resolved.BaseType then
+    exit(cIncompatible);
+
+  if ResolveAlias=prraSimple then
     begin
-    if ResolveAlias=prraSimple then
+    if IsSameType(Arg1Resolved.HiTypeEl,Arg2Resolved.HiTypeEl,prraSimple) then
+      exit(cExact);
+    end
+  else
+    begin
+    if IsSameType(Arg1Resolved.LoTypeEl,Arg2Resolved.LoTypeEl,prraNone) then
+      exit(cExact);
+    end;
+  if Arg1Resolved.BaseType=btContext then
+    begin
+    C:=Arg1Resolved.LoTypeEl.ClassType;
+    if C<>Arg2Resolved.LoTypeEl.ClassType then
+      exit(cIncompatible);
+    if C=TPasArrayType then
       begin
-      if IsSameType(Arg1Resolved.HiTypeEl,Arg2Resolved.HiTypeEl,prraSimple) then
-        exit(true);
-      end
-    else
-      begin
-      if IsSameType(Arg1Resolved.LoTypeEl,Arg2Resolved.LoTypeEl,prraNone) then
-        exit(true);
+      Arr1:=TPasArrayType(Arg1Resolved.LoTypeEl);
+      Arr2:=TPasArrayType(Arg2Resolved.LoTypeEl);
+      if length(Arr1.Ranges)<>length(Arr2.Ranges) then
+        exit(cIncompatible);
+      if length(Arr1.Ranges)>0 then
+        RaiseNotYetImplemented(20170328093733,Arr1.Ranges[0],'anonymous static array');
+      Result:=CheckElTypeCompatibility(GetArrayElType(Arr1),GetArrayElType(Arr2),ResolveAlias);
+      exit;
       end;
     end;
-  C:=Arg1Resolved.LoTypeEl.ClassType;
-  if (C=TPasArrayType) and (Arg2Resolved.LoTypeEl.ClassType=TPasArrayType) then
-    begin
-    Arr1:=TPasArrayType(Arg1Resolved.LoTypeEl);
-    Arr2:=TPasArrayType(Arg2Resolved.LoTypeEl);
-    if length(Arr1.Ranges)<>length(Arr2.Ranges) then
-      exit(false);
-    if length(Arr1.Ranges)>0 then
-      RaiseNotYetImplemented(20170328093733,Arr1.Ranges[0],'anonymous static array');
-    Result:=CheckElTypeCompatibility(Arr1.ElType,Arr2.ElType,ResolveAlias);
-    exit;
-    end;
 
-  Result:=false;
+  Result:=cIncompatible;
 end;
 
 function TPasResolver.CheckCanBeLHS(const ResolvedEl: TPasResolverResult;
@@ -16035,13 +23378,11 @@ procedure TPasResolver.CheckAssignExprRange(
 // if RHS is a constant check if it fits into range LeftResolved
 var
   LRangeValue, RValue: TResEvalValue;
-  MinVal, MaxVal: int64;
+  Int, MinVal, MaxVal: TMaxPrecInt;
   RangeExpr: TBinaryExpr;
-  Int: MaxPrecInt;
   C: TClass;
   EnumType: TPasEnumType;
   bt: TResolverBaseType;
-  w: WideChar;
   LTypeEl: TPasType;
 begin
   LTypeEl:=LeftResolved.LoTypeEl;
@@ -16051,7 +23392,7 @@ begin
     exit; // arrays and records are checked by element, not by the whole value
   if LTypeEl is TPasClassOfType then
     exit; // class-of are checked only by type, not by value
-  RValue:=Eval(RHS,[refAutoConst]);
+  RValue:=Eval(RHS,[refAutoConstExt]);
   if RValue=nil then
     exit; // not a const expression
   {$IFDEF VerbosePasResEval}
@@ -16059,7 +23400,9 @@ begin
   {$ENDIF}
   LRangeValue:=nil;
   try
-    if LeftResolved.BaseType=btCustom then
+    if RValue.Kind=revkExternal then
+      // skip
+    else if LeftResolved.BaseType=btCustom then
       CheckAssignExprRangeToCustom(LeftResolved,RValue,RHS)
     else if LeftResolved.BaseType=btSet then
       begin
@@ -16074,7 +23417,7 @@ begin
         begin
         EnumType:=TPasEnumType(LTypeEl);
         LRangeValue:=TResEvalRangeInt.CreateValue(revskEnum,EnumType,
-          0,EnumType.Values.Count-1);
+          0,TMaxPrecInt(EnumType.Values.Count)-1);
         end
       else if C=TPasUnresolvedSymbolRef then
         begin
@@ -16082,13 +23425,14 @@ begin
         if LTypeEl.CustomData is TResElDataBaseType then
           begin
           bt:=GetActualBaseType(TResElDataBaseType(LTypeEl.CustomData).BaseType);
-          if (bt in (btAllInteger-[btQWord]))
-              and GetIntegerRange(bt,MinVal,MaxVal) then
+          if (bt in btAllIntegerNoQWord) and GetIntegerRange(bt,MinVal,MaxVal) then
             LRangeValue:=TResEvalRangeInt.CreateValue(revskInt,nil,MinVal,MaxVal)
           else if bt=btBoolean then
             LRangeValue:=TResEvalRangeInt.CreateValue(revskBool,nil,0,1)
+          {$ifdef FPC_HAS_CPSTRING}
           else if bt=btAnsiChar then
             LRangeValue:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ff)
+          {$endif}
           else if bt=btWideChar then
             LRangeValue:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ffff)
           else
@@ -16110,7 +23454,7 @@ begin
       else
         fExprEvaluator.IsInRange(RValue,RHS,LRangeValue,RangeExpr,true);
       end
-    else if (LeftResolved.BaseType in (btAllInteger-[btQWord]))
+    else if (LeftResolved.BaseType in btAllIntegerNoQWord)
         and GetIntegerRange(LeftResolved.BaseType,MinVal,MaxVal) then
       case RValue.Kind of
       revkInt:
@@ -16119,9 +23463,9 @@ begin
           fExprEvaluator.EmitRangeCheckConst(20170530093126,
             IntToStr(TResEvalInt(RValue).Int),MinVal,MaxVal,RHS);
       revkUInt:
-        if (TResEvalUInt(RValue).UInt>High(MaxPrecInt))
-            or (MinVal>MaxPrecInt(TResEvalUInt(RValue).UInt))
-            or (MaxVal<MaxPrecInt(TResEvalUInt(RValue).UInt)) then
+        if (TResEvalUInt(RValue).UInt>High(TMaxPrecInt))
+            or (MinVal>TMaxPrecInt(TResEvalUInt(RValue).UInt))
+            or (MaxVal<TMaxPrecInt(TResEvalUInt(RValue).UInt)) then
           fExprEvaluator.EmitRangeCheckConst(20170530093616,
             IntToStr(TResEvalUInt(RValue).UInt),IntToStr(MinVal),IntToStr(MaxVal),RHS);
       revkFloat:
@@ -16134,7 +23478,7 @@ begin
         else
           begin
           {$IFDEF VerbosePasResEval}
-          writeln('TPasResolver.CheckAssignExprRange ',Frac(TResEvalFloat(RValue).FloatValue),' ',TResEvalFloat(RValue).FloatValue<MaxPrecFloat(low(MaxPrecInt)),' ',TResEvalFloat(RValue).FloatValue>MaxPrecFloat(high(MaxPrecInt)),' ',TResEvalFloat(RValue).FloatValue,' ',high(MaxPrecInt));
+          writeln('TPasResolver.CheckAssignExprRange ',Frac(TResEvalFloat(RValue).FloatValue),' ',TResEvalFloat(RValue).FloatValue<TMaxPrecFloat(low(TMaxPrecInt)),' ',TResEvalFloat(RValue).FloatValue>TMaxPrecFloat(high(TMaxPrecInt)),' ',TResEvalFloat(RValue).FloatValue,' ',high(TMaxPrecInt));
           {$ENDIF}
           RaiseRangeCheck(20170802133750,RHS);
           end;
@@ -16148,7 +23492,7 @@ begin
         else
           begin
           {$IFDEF VerbosePasResEval}
-          writeln('TPasResolver.CheckAssignExprRange ',Frac(TResEvalCurrency(RValue).Value),' ',TResEvalCurrency(RValue).Value,' ',high(MaxPrecInt));
+          writeln('TPasResolver.CheckAssignExprRange ',Frac(TResEvalCurrency(RValue).Value),' ',TResEvalCurrency(RValue).Value,' ',high(TMaxPrecInt));
           {$ENDIF}
           RaiseRangeCheck(20180421171438,RHS);
           end;
@@ -16158,6 +23502,7 @@ begin
         {$ENDIF}
         RaiseNotYetImplemented(20170530092731,RHS);
       end
+    {$ifdef HasInt64}
     else if LeftResolved.BaseType=btQWord then
       case RValue.Kind of
       revkInt:
@@ -16168,6 +23513,7 @@ begin
       else
         RaiseNotYetImplemented(20170530094311,RHS);
       end
+    {$endif}
     else if RValue.Kind in [revkNil,revkBool] then
       // simple type check is enough
     else if LeftResolved.BaseType in [btSingle,btDouble,btCurrency] then
@@ -16176,26 +23522,18 @@ begin
     else if LeftResolved.BaseType in btAllChars then
       begin
       case RValue.Kind of
-      revkString:
-        if length(TResEvalString(RValue).S)<>1 then
-          begin
-          if fExprEvaluator.GetWideChar(TResEvalString(RValue).S,w) then
-            Int:=ord(w)
-          else
-            RaiseXExpectedButYFound(20170714171352,'char','string',RHS);
-          end
-        else
-          Int:=ord(TResEvalString(RValue).S[1]);
+      {$ifdef FPC_HAS_CPSTRING}
+      revkString,
+      {$endif}
       revkUnicodeString:
-        if length(TResEvalUTF16(RValue).S)<>1 then
-          RaiseXExpectedButYFound(20170714171534,'char','string',RHS)
-        else
-          Int:=ord(TResEvalUTF16(RValue).S[1]);
+        Int:=fExprEvaluator.StringToOrd(RValue,RHS);
       else
         RaiseNotYetImplemented(20170714171218,RHS);
       end;
       case GetActualBaseType(LeftResolved.BaseType) of
+      {$ifdef FPC_HAS_CPSTRING}
       btAnsiChar: MaxVal:=$ff;
+      {$endif}
       btWideChar: MaxVal:=$ffff;
       end;
       if (Int>MaxVal) then
@@ -16288,6 +23626,24 @@ begin
     begin
     LBT:=GetActualBaseType(LHS.BaseType);
     RBT:=GetActualBaseType(RHS.BaseType);
+    if IsGenericTemplType(LHS) then
+      begin
+      // Template := RHS
+      if not RaiseOnIncompatible then
+        ErrorEl:=nil;
+      Result:=CheckTemplateFitsParamRes(TPasGenericTemplateType(LHS.LoTypeEl),
+         RHS,prtcoAssignToTempl,ErrorEl);
+      exit;
+      end
+    else if IsGenericTemplType(RHS) then
+      begin
+      // LHS := Template
+      if not RaiseOnIncompatible then
+        ErrorEl:=nil;
+      Result:=CheckTemplateFitsParamRes(TPasGenericTemplateType(RHS.LoTypeEl),
+         LHS,prtcoAssignFromTempl,ErrorEl);
+      exit;
+      end;
     if LHS.LoTypeEl=nil then
       begin
       if LBT=btUntyped then
@@ -16319,12 +23675,16 @@ begin
       begin
       if (RBT in btAllChars) then
         case LBT of
+        {$ifdef FPC_HAS_CPSTRING}
         btAnsiChar:
           Result:=cLossyConversion;
+        {$endif}
         btWideChar:
+          {$ifdef FPC_HAS_CPSTRING}
           if RBT=btAnsiChar then
             Result:=cCompatible
           else
+          {$endif}
             Result:=cLossyConversion;
         else
           RaiseNotYetImplemented(20170728132440,ErrorEl,BaseTypeNames[LBT]);
@@ -16333,10 +23693,11 @@ begin
         begin
         if LBT=btWideChar then
           exit(cCompatible);
+        {$ifdef FPC_HAS_CPSTRING}
         // LHS is ansichar
         if GetActualBaseType(RHS.SubType)=btAnsiChar then
           exit(cExact);
-        RValue:=Eval(RHS,[refAutoConst]);
+        RValue:=Eval(RHS,[refAutoConstExt]);
         if RValue<>nil then
           try
             // ansichar:=constvalue
@@ -16350,6 +23711,8 @@ begin
                 exit(cIncompatible);
               wc:=TResEvalUTF16(RValue).S[1];
               end;
+            revkExternal:
+              exit(cCompatible);
             else
               RaiseNotYetImplemented(20171108194650,ErrorEl);
             end;
@@ -16375,6 +23738,7 @@ begin
             ReleaseEvalValue(RValue);
           end;
           end;
+        {$endif}
         RaiseNotYetImplemented(20171108195216,ErrorEl);
         end;
       end
@@ -16382,6 +23746,7 @@ begin
       begin
       if (RBT in btAllStringAndChars) then
         case LBT of
+        {$ifdef FPC_HAS_CPSTRING}
         btAnsiString:
           if RBT in [btAnsiChar,btShortString,btRawByteString] then
             Result:=cCompatible
@@ -16392,14 +23757,18 @@ begin
             Result:=cCompatible
           else
             Result:=cLossyConversion;
-        btWideString,btUnicodeString:
-          Result:=cCompatible;
         btRawByteString:
           if RBT in [btAnsiChar,btAnsiString,btShortString] then
             Result:=cCompatible
           else
             Result:=cLossyConversion;
+        {$endif}
+        btWideString,btUnicodeString:
+          Result:=cCompatible;
         else
+          {$IFDEF VerbosePasResolver}
+          writeln('TPasResolver.CheckAssignResCompatibility ',{$ifdef pas2js}str(LBT){$else}LBT{$ENDIF});
+          {$ENDIF}
           RaiseNotYetImplemented(20170417195208,ErrorEl,BaseTypeNames[LBT]);
         end
       else if RBT=btContext then
@@ -16447,36 +23816,50 @@ begin
       btIntDouble:
         if not (RBT in [btByte,btShortInt,btWord,btSmallInt,btLongWord,btLongint,btUIntDouble]) then
           inc(Result,cLossyConversion);
+      {$ifdef HasInt64}
       btQWord,
       btInt64,btComp:
         if not (RBT in [btByte,btShortInt,btWord,btSmallInt,btUIntSingle,btIntSingle,
             btLongWord,btLongint,btUIntDouble,btIntDouble]) then
           inc(Result,cLossyConversion);
+      {$endif}
       else
         RaiseNotYetImplemented(20170417205301,ErrorEl,BaseTypeNames[LBT]);
       end;
       end
     else if (LBT in btAllFloats)
-        and (RBT in (btAllFloats+btAllInteger)) then
+        and (RBT in btAllFloats) then
       begin
-      Result:=cToFloatConversion+ord(LBT)-ord(RBT);
+      Result:=cFloatToFloatConversion+ord(LBT)-ord(RBT);
       case LBT of
       btSingle:
-        if not (RBT in [btByte,btShortInt,btWord,btSmallInt,
-            btIntSingle,btUIntSingle]) then
+        if RBT>btSingle then
           inc(Result,cLossyConversion);
       btDouble:
-        if not (RBT in [btByte,btShortInt,btWord,btSmallInt,
-            btIntSingle,btUIntSingle,btSingle,
-            btLongWord,btLongint,
-            btIntDouble,btUIntDouble]) then
+        if RBT>btDouble then
           inc(Result,cLossyConversion);
       btExtended,btCExtended:
-        if not (RBT in [btByte,btShortInt,btWord,btSmallInt,
-            btIntSingle,btUIntSingle,btSingle,
-            btLongWord,btLongint,
-            btInt64,btComp,
-            btIntDouble,btUIntDouble,btDouble]) then
+        if RBT>btCExtended then
+          inc(Result,cLossyConversion);
+      btCurrency:
+        inc(Result,cLossyConversion);
+      else
+        RaiseNotYetImplemented(20170417205910,ErrorEl,BaseTypeNames[LBT]);
+      end;
+      end
+    else if (LBT in btAllFloats)
+        and (RBT in btAllInteger) then
+      begin
+      Result:=cIntToFloatConversion+ord(LBT)-ord(RBT);
+      case LBT of
+      btSingle:
+        if RBT>btUIntSingle then
+          inc(Result,cLossyConversion);
+      btDouble:
+        if RBT>btUIntDouble then
+          inc(Result,cLossyConversion);
+      btExtended,btCExtended:
+        if RBT>btCExtended then
           inc(Result,cLossyConversion);
       btCurrency:
         if not (RBT in [btByte,btShortInt,btWord,btSmallInt,
@@ -16484,7 +23867,7 @@ begin
             btLongWord,btLongint]) then
           inc(Result,cLossyConversion);
       else
-        RaiseNotYetImplemented(20170417205910,ErrorEl,BaseTypeNames[LBT]);
+        RaiseNotYetImplemented(20170417205911,ErrorEl,BaseTypeNames[LBT]);
       end;
       end
     else if LBT=btNil then
@@ -16523,7 +23906,7 @@ begin
             revskInt:
               if RHS.BaseType in btAllInteger then
                 begin
-                RValue:=Eval(RHS,[refAutoConst]);
+                RValue:=Eval(RHS,[refAutoConstExt]);
                 if RValue<>nil then
                   begin
                   // ToDo: check range
@@ -16533,19 +23916,23 @@ begin
             revskChar:
               if RHS.BaseType in btAllStringAndChars then
                 begin
-                RValue:=Eval(RHS,[refAutoConst]);
+                RValue:=Eval(RHS,[refAutoConstExt]);
                 if RValue<>nil then
                   begin
                   case RValue.Kind of
+                  {$ifdef FPC_HAS_CPSTRING}
                   revkString:
                     if not fExprEvaluator.GetWideChar(TResEvalString(RValue).S,wc) then
                       exit(cIncompatible);
+                  {$endif}
                   revkUnicodeString:
                     begin
                     if length(TResEvalUTF16(RValue).S)<>1 then
                       exit(cIncompatible);
                     wc:=TResEvalUTF16(RValue).S[1];
                     end;
+                  revkExternal:
+                    exit(cCompatible);
                   else
                     RaiseNotYetImplemented(20171108192232,ErrorEl);
                   end;
@@ -16558,7 +23945,7 @@ begin
             revskBool:
               if RHS.BaseType=btBoolean then
                 begin
-                RValue:=Eval(RHS,[refAutoConst]);
+                RValue:=Eval(RHS,[refAutoConstExt]);
                 if RValue<>nil then
                   begin
                   // ToDo: check range
@@ -16637,7 +24024,15 @@ begin
         if CheckProcTypeCompatibility(TPasProcedureType(LHS.LoTypeEl),
             TPasProcedure(RHS.IdentEl).ProcType,true,ErrorEl,RaiseOnIncompatible) then
           exit(cExact);
-        end;
+        end
+      else if (LHS.LoTypeEl is TPasProcedureType)
+          and (RHS.ExprEl is TProcedureExpr) then
+        begin
+        // for example  ProcVar:=anonymous-procedure...
+        if CheckProcTypeCompatibility(TPasProcedureType(LHS.LoTypeEl),
+            TProcedureExpr(RHS.ExprEl).Proc.ProcType,true,ErrorEl,RaiseOnIncompatible) then
+          exit(cExact);
+        end
       end
     else if LBT=btPointer then
       begin
@@ -16677,7 +24072,10 @@ begin
             end
           else if (C=TPasProcedureType) or (C=TPasFunctionType) then
             // UntypedPointer:=procvar
-            Result:=cLossyConversion;
+            Result:=cLossyConversion
+          else if C=TPasPointerType then
+            // UntypedPointer:=TypedPointer
+            Result:=cExact;
           end;
         end;
       end
@@ -16709,7 +24107,7 @@ begin
             and (rrfReadable in RHS.Flags) then
           begin
           // GUIDVar := string, e.g. IObjectInstance: TGuid = '{D91C9AF4-3C93-420F-A303-BF5BA82BFD23}'
-          Value:=Eval(RHS,[refConst]);
+          Value:=Eval(RHS,[refConstExt]);
           try
             if Value=nil then
               if RaiseOnIncompatible then
@@ -16910,6 +24308,19 @@ begin
         end;
       end;
     RaiseMsg(20170216152440,nNotReadable,sNotReadable,[],RErrorEl);
+    end;
+
+  if IsGenericTemplType(LHS) then
+    begin
+    // TemplateVar = x
+    Result:=CheckTemplateFitsParamRes(TPasGenericTemplateType(LHS.LoTypeEl),RHS,prtcoEqual,nil);
+    if Result<>cIncompatible then exit;
+    end
+  else if IsGenericTemplType(RHS) then
+    begin
+    // x = TemplateVar
+    Result:=CheckTemplateFitsParamRes(TPasGenericTemplateType(RHS.LoTypeEl),LHS,prtcoEqual,nil);
+    if Result<>cIncompatible then exit;
     end;
 
   if (LHS.BaseType=btCustom) or (RHS.BaseType=btCustom) then
@@ -17250,7 +24661,7 @@ begin
     exit(NotLocked(IdentEl));
 end;
 
-function TPasResolver.ResolvedElIsClassInstance(
+function TPasResolver.ResolvedElIsClassOrRecordInstance(
   const ResolvedEl: TPasResolverResult): boolean;
 var
   TypeEl: TPasType;
@@ -17259,12 +24670,23 @@ begin
   if ResolvedEl.BaseType<>btContext then exit;
   TypeEl:=ResolvedEl.LoTypeEl;
   if TypeEl=nil then exit;
-  if TypeEl.ClassType<>TPasClassType then exit;
-  if TPasClassType(TypeEl).ObjKind<>okClass then exit;
+  if TypeEl.ClassType=TPasClassType then
+    begin
+    if TPasClassType(TypeEl).ObjKind<>okClass then exit;
+    end
+  else if TypeEl.ClassType=TPasRecordType then
+  else
+    exit;
   if (ResolvedEl.IdentEl is TPasVariable)
       or (ResolvedEl.IdentEl.ClassType=TPasArgument)
       or (ResolvedEl.IdentEl.ClassType=TPasResultElement) then
     exit(true);
+end;
+
+function TPasResolver.ElHasModeSwitch(El: TPasElement; ms: TModeSwitch
+  ): boolean;
+begin
+  Result:=ms in GetElModeSwitches(El);
 end;
 
 function TPasResolver.GetElModeSwitches(El: TPasElement): TModeSwitches;
@@ -17284,6 +24706,12 @@ begin
     El:=El.Parent;
     end;
   Result:=CurrentParser.CurrentModeswitches;
+end;
+
+function TPasResolver.ElHasBoolSwitch(El: TPasElement; bs: TBoolSwitch
+  ): boolean;
+begin
+  Result:=bs in GetElBoolSwitches(El);
 end;
 
 function TPasResolver.GetElBoolSwitches(El: TPasElement): TBoolSwitches;
@@ -17310,21 +24738,29 @@ end;
 function TPasResolver.GetProcTypeDescription(ProcType: TPasProcedureType;
   Flags: TPRProcTypeDescFlags): string;
 var
-  Args: TFPList;
+  Args, Templates: TFPList;
   i: Integer;
   Arg: TPasArgument;
   ArgType: TPasType;
+  Proc: TPasProcedure;
 begin
   if ProcType=nil then exit('nil');
   Result:=ProcType.TypeName;
   if ProcType.IsReferenceTo then
     Result:=ProcTypeModifiers[ptmReferenceTo]+' '+Result;
-  if (prptdUseName in Flags) and (ProcType.Parent is TPasProcedure) then
+  if ProcType.Parent is TPasProcedure then
     begin
-    if prptdAddPaths in Flags then
-      Result:=Result+' '+ProcType.Parent.FullName
-    else
-      Result:=Result+' '+ProcType.Parent.Name;
+    Proc:=TPasProcedure(ProcType.Parent);
+    if (prptdUseName in Flags) then
+      begin
+      if prptdAddPaths in Flags then
+        Result:=Result+' '+Proc.FullName
+      else
+        Result:=Result+' '+Proc.Name;
+      end;
+    Templates:=GetProcTemplateTypes(Proc);
+    if Templates<>nil then
+      Result:=Result+GetGenericParamCommas(Templates.Count);
     end;
   Args:=ProcType.Args;
   if Args.Count>0 then
@@ -17394,9 +24830,14 @@ begin
       ArrayEl:=TPasArrayType(T.LoTypeEl);
       if length(ArrayEl.Ranges)=0 then
         begin
-        Result:='array of '+ArrayEl.ElType.Name;
-        if IsOpenArray(ArrayEl) then
-          Result:='open '+Result;
+        if ArrayEl.ElType=nil then
+          Result:='array of const'
+        else
+          begin
+          Result:='array of '+ArrayEl.ElType.Name;
+          if IsOpenArray(ArrayEl) then
+            Result:='open '+Result;
+          end;
         end
       else
         Result:='static array[] of '+ArrayEl.ElType.Name;
@@ -17422,6 +24863,11 @@ function TPasResolver.GetTypeDescription(aType: TPasType; AddPath: boolean): str
   function GetName: string;
   var
     s: String;
+    Spec: TPasSpecializeType;
+    P: TPasElement;
+    i: Integer;
+    GenScope: TPasGenericScope;
+    Params: TPasTypeArray;
   begin
     Result:=aType.Name;
     if Result='' then
@@ -17430,13 +24876,53 @@ function TPasResolver.GetTypeDescription(aType: TPasType; AddPath: boolean): str
         begin
         if length(TPasArrayType(aType).Ranges)>0 then
           Result:='static array'
+        else if TPasArrayType(aType).ElType=nil then
+          Result:='array of const'
         else if IsOpenArray(aType) then
           Result:='open array'
         else
           Result:='dynamic array';
         end
+      else if aType is TPasSpecializeType then
+        begin
+        Spec:=TPasSpecializeType(aType);
+        if Spec.CustomData is TPasSpecializeTypeData then
+          exit(GetTypeDescription(TPasSpecializeTypeData(Spec.CustomData).SpecializedType));
+        Result:=GetTypeDescription(Spec.DestType,true)+'<';
+        for i:=0 to Spec.Params.Count-1 do
+          begin
+          P:=TPasElement(Spec.Params[i]);
+          if P is TPasType then
+            Result:=Result+GetTypeDescription(TPasType(P));
+          if i>0 then
+            Result:=Result+',';
+          end;
+        Result:=Result+'>';
+        end
       else
         Result:=GetElementTypeName(aType);
+      end
+    else if aType is TPasGenericType then
+      begin
+      i:=GetTypeParameterCount(TPasGenericType(aType));
+      if i>0 then
+        Result:=Result+GetGenericParamCommas(GetTypeParameterCount(TPasGenericType(aType)))
+      else if aType.CustomData is TPasGenericScope then
+        begin
+        GenScope:=TPasGenericScope(aType.CustomData);
+        if GenScope.SpecializedFromItem<>nil then
+          begin
+          Params:=GenScope.SpecializedFromItem.Params;
+          Result:=Result+'<';
+          for i:=0 to length(Params)-1 do
+            begin
+            Result:=Result+GetTypeDescription(Params[i]);
+            if i>0 then
+              Result:=Result+',';
+            end;
+          Result:=Result+'>';
+          end
+        end;
       end;
     if AddPath then
       begin
@@ -17494,19 +24980,74 @@ begin
   Result:=nil;
   if Proc=nil then exit;
   if Proc.Body<>nil then
-    Body:=Proc.Body.Body;
+    Body:=Proc.Body.Body
+  else
+    Body:=nil;
   if Body=nil then
     begin
     if Proc.CustomData=nil then exit;
     Scope:=Proc.CustomData as TPasProcedureScope;
-    if Scope.ImplProc=nil then exit;
     Proc:=Scope.ImplProc;
-    if Proc.Body<>nil then
-      Body:=Proc.Body.Body;
+    if Proc=nil then exit;
+    if Proc.Body=nil then exit;
+    Body:=Proc.Body.Body;
     if Body=nil then exit;
     end;
+  if Body.Elements=nil then exit;
   if Body.Elements.Count=0 then exit;
   Result:=TPasImplElement(Body.Elements[0]);
+end;
+
+function TPasResolver.GetProcTemplateTypes(Proc: TPasProcedure): TFPList;
+var
+  NameParts: TProcedureNamePart;
+begin
+  if Proc.NameParts=nil then
+    exit(nil);
+  NameParts:=TProcedureNamePart(Proc.NameParts[Proc.NameParts.Count-1]);
+  Result:=NameParts.Templates;
+  if (Result<>nil) and (Result.Count=0) then
+    exit(nil);
+end;
+
+function TPasResolver.GetProcName(Proc: TPasProcedure; WithTemplates: boolean
+  ): string;
+var
+  NameParts: TProcedureNameParts;
+  i, j: Integer;
+  NamePart: TProcedureNamePart;
+  TemplType: TPasGenericTemplateType;
+  Templates: TFPList;
+begin
+  if Proc=nil then exit('(nil)');
+  Result:=Proc.Name;
+  if WithTemplates then
+    begin
+    NameParts:=Proc.NameParts;
+    if NameParts=nil then exit;
+    Result:='';
+    for i:=0 to NameParts.Count-1 do
+      begin
+      NamePart:=TProcedureNamePart(NameParts[i]);
+      if i>0 then
+        Result:=Result+'.';
+      Result:=Result+NamePart.Name;
+      Templates:=NamePart.Templates;
+      if (Templates<>nil) and (Templates.Count>0) then
+        begin
+        for j:=0 to Templates.Count-1 do
+          begin
+          TemplType:=TPasGenericTemplateType(NamePart.Templates[j]);
+          if j=0 then
+            Result:=Result+'<'
+          else
+            Result:=Result+',';
+          Result:=Result+TemplType.Name;
+          end;
+        Result:=Result+'>';
+        end;
+      end;
+    end;
 end;
 
 function TPasResolver.GetPasPropertyAncestor(El: TPasProperty;
@@ -17629,35 +25170,13 @@ function TPasResolver.CheckParamCompatibility(Expr: TPasExpr;
   SetReferenceFlags: boolean): integer;
 var
   ExprResolved, ParamResolved: TPasResolverResult;
-  NeedVar, UseAssignError: Boolean;
-  RHSFlags: TPasResolverComputeFlags;
+  NeedVar: Boolean;
 begin
   Result:=cIncompatible;
 
+  ComputeArgumentAndExpr(Param,ParamResolved,Expr,ExprResolved,SetReferenceFlags);
+
   NeedVar:=Param.Access in [argVar, argOut];
-
-  ComputeElement(Param,ParamResolved,[]);
-  {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.CheckParamCompatibility Param=',GetTreeDbg(Param,2),' ParamResolved=',GetResolverResultDbg(ParamResolved));
-  {$ENDIF}
-  if (ParamResolved.LoTypeEl=nil) and (Param.ArgType<>nil) then
-    RaiseInternalError(20160922163628,'GetResolvedType returned TypeEl=nil for '+GetTreeDbg(Param));
-
-  RHSFlags:=[];
-  if NeedVar then
-    Include(RHSFlags,rcNoImplicitProc)
-  else if IsProcedureType(ParamResolved,true)
-      or (ParamResolved.BaseType=btPointer)
-      or (Param.ArgType=nil)  then
-    Include(RHSFlags,rcNoImplicitProcType);
-  if SetReferenceFlags then
-    Include(RHSFlags,rcSetReferenceFlags);
-  ComputeElement(Expr,ExprResolved,RHSFlags);
-
-  {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.CheckParamCompatibility Expr=',GetTreeDbg(Expr,2),' ResolvedExpr=',GetResolverResultDbg(ExprResolved),' RHSFlags=',dbgs(RHSFlags));
-  {$ENDIF}
-
   if NeedVar then
     begin
     // Expr must be a variable
@@ -17675,18 +25194,36 @@ begin
         end;
       exit;
       end;
+    if (Param.ArgType=nil) then
+      exit(cExact); // untyped argument
     if (ParamResolved.BaseType=ExprResolved.BaseType) then
       begin
       if msDelphi in CurrentParser.CurrentModeswitches then
         begin
+        // Delphi allows passing alias, but not type alias to a var arg
         if IsSameType(ParamResolved.HiTypeEl,ExprResolved.HiTypeEl,prraSimple) then
           exit(cExact);
         end
       else if IsSameType(ParamResolved.LoTypeEl,ExprResolved.LoTypeEl,prraNone) then
-        exit(cExact);
+        begin
+        // ObjFPC allows passing type alias to a var arg, but simple alias wins
+        if IsSameType(ParamResolved.HiTypeEl,ExprResolved.HiTypeEl,prraSimple) then
+          exit(cExact)
+        else
+          exit(cAliasExact);
+        end;
+      if (ParamResolved.BaseType=btContext)
+          and (ParamResolved.LoTypeEl.ClassType=TPasArrayType)
+          and (ExprResolved.LoTypeEl.ClassType=TPasArrayType) then
+        begin
+        Result:=CheckAssignResCompatibility(ParamResolved,ExprResolved,Expr,false);
+        if Result<>cIncompatible then exit;
+        end;
       end;
-    if (Param.ArgType=nil) then
-      exit(cExact); // untyped argument
+    if IsGenericTemplType(ParamResolved) then
+      exit(cGenericExact);
+
+    //writeln('TPasResolver.CheckParamCompatibility NeedVar ParamResolved=',GetResolverResultDbg(ParamResolved),' ExprResolved=',GetResolverResultDbg(ExprResolved));
     if RaiseOnError then
       RaiseIncompatibleTypeRes(20170216152452,nIncompatibleTypeArgNoVarParamMustMatchExactly,
         [IntToStr(ParamNo+1)],ExprResolved,ParamResolved,
@@ -17694,6 +25231,16 @@ begin
     exit(cIncompatible);
     end;
 
+  Result:=CheckParamResCompatibility(Expr,ExprResolved,ParamResolved,ParamNo,
+                                     RaiseOnError,SetReferenceFlags);
+end;
+
+function TPasResolver.CheckParamResCompatibility(Expr: TPasExpr;
+  const ExprResolved, ParamResolved: TPasResolverResult; ParamNo: integer;
+  RaiseOnError: boolean; SetReferenceFlags: boolean): integer;
+var
+  UseAssignError: Boolean;
+begin
   UseAssignError:=false;
   if RaiseOnError and (ExprResolved.BaseType in [btArrayLit,btArrayOrSet]) then
     // e.g. Call([1,2]) -> on mismatch jump to the wrong param expression
@@ -17717,11 +25264,13 @@ var
   SrcResolved, DstResolved: TPasResolverResult;
   LArray, RArray: TPasArrayType;
   GotDesc, ExpDesc: String;
+  CurTVarRec: TPasRecordType;
 
-  function RaiseIncompatType: integer;
+  function RaiseIncompatType(Id: TMaxPrecInt): integer;
   begin
-    if not RaiseOnIncompatible then exit(cIncompatible);
-    RaiseIncompatibleTypeRes(20170216152505,nIncompatibleTypesGotExpected,
+    Result:=cIncompatible;
+    if not RaiseOnIncompatible then exit;
+    RaiseIncompatibleTypeRes(Id,nIncompatibleTypesGotExpected,
       [],RHS,LHS,ErrorEl);
   end;
 
@@ -17748,9 +25297,9 @@ begin
       begin
       Result:=cIncompatible;
       if not (rrfReadable in RHS.Flags) then
-        exit(RaiseIncompatType);
+        exit(RaiseIncompatType(20190215112914));
       if TPasClassType(LTypeEl).ObjKind=TPasClassType(RTypeEl).ObjKind then
-        Result:=CheckSrcIsADstType(RHS,LHS,ErrorEl)
+        Result:=CheckSrcIsADstType(RHS,LHS)
       else if TPasClassType(LTypeEl).ObjKind=okInterface then
         begin
         if (TPasClassType(RTypeEl).ObjKind=okClass)
@@ -17766,7 +25315,7 @@ begin
           [],RTypeEl,LTypeEl,ErrorEl);
       end
     else
-      exit(RaiseIncompatType);
+      exit(RaiseIncompatType(20190215112919));
     end
   else if LTypeEl.ClassType=TPasClassOfType then
     begin
@@ -17791,7 +25340,7 @@ begin
         begin
         // e.g. ImageClass:=AnotherImageClass;
         Result:=CheckClassIsClass(TPasClassOfType(RTypeEl).DestType,
-          TPasClassOfType(LTypeEl).DestType,ErrorEl);
+          TPasClassOfType(LTypeEl).DestType);
         if (Result=cIncompatible) and RaiseOnIncompatible then
           RaiseMsg(20170216152500,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
             ['class of '+TPasClassOfType(RTypeEl).DestType.PathName,'class of '+TPasClassOfType(LTypeEl).DestType.PathName],ErrorEl);
@@ -17801,7 +25350,7 @@ begin
         and (ResolveAliasType(TPasType(RHS.IdentEl)).ClassType=TPasClassType) then
       begin
       // e.g. ImageClass:=TFPMemoryImage;
-      Result:=CheckClassIsClass(RTypeEl,TPasClassOfType(LTypeEl).DestType,ErrorEl);
+      Result:=CheckClassIsClass(RTypeEl,TPasClassOfType(LTypeEl).DestType);
       if (Result=cIncompatible) and RaiseOnIncompatible then
         RaiseMsg(20170216152501,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
           [RTypeEl.Name,'class of '+TPasClassOfType(LTypeEl).DestType.PathName],ErrorEl);
@@ -17836,15 +25385,7 @@ begin
       begin
       // DynOrOpenArr:=array
       RArray:=TPasArrayType(RTypeEl);
-      if length(RArray.Ranges)>1 then
-        begin
-        // DynOrOpenArr:=MultiDimStaticArr  -> no
-        if RaiseOnIncompatible then
-          RaiseIncompatibleTypeDesc(20180620115235,nIncompatibleTypesGotExpected,
-            [],'multi dimensional static array','dynamic array',ErrorEl);
-        exit(cIncompatible);
-        end
-      else if length(RArray.Ranges)>0 then
+      if length(RArray.Ranges)=1 then
         begin
         // DynOrOpenArr:=SingleDimStaticArr
         if (msDelphi in CurrentParser.CurrentModeswitches)
@@ -17857,6 +25398,14 @@ begin
               [],'static array','dynamic array',ErrorEl);
           exit(cIncompatible);
           end;
+        end
+      else if length(RArray.Ranges)>1 then
+        begin
+        // DynOrOpenArr:=MultiDimStaticArr  -> no
+        if RaiseOnIncompatible then
+          RaiseIncompatibleTypeDesc(20180620115235,nIncompatibleTypesGotExpected,
+            [],'multi dimensional static array','dynamic array',ErrorEl);
+        exit(cIncompatible);
         end
       else if not (proOpenAsDynArrays in Options) then
         begin
@@ -17877,26 +25426,46 @@ begin
               and (LArray<>RArray) then
             begin
             // Delphi does not allow assigning arrays with same element types
-            if RaiseOnIncompatible then
-              RaiseIncompatibleTypeRes(20180620115515,nIncompatibleTypesGotExpected,
-                [],RHS,LHS,ErrorEl);
-            exit(cIncompatible);
+            exit(RaiseIncompatType(20190215112626));
             end;
           end;
         end;
 
       // check element type
-      if CheckElTypeCompatibility(LArray.ElType,RArray.ElType,prraAlias) then
-        Result:=cExact
-      else if RaiseOnIncompatible then
+      if LArray.ElType=nil then
         begin
-        GetIncompatibleTypeDesc(LArray.ElType,RArray.ElType,GotDesc,ExpDesc);
-        RaiseMsg(20170328110050,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          ['array of '+GotDesc,
-           'array of '+ExpDesc],ErrorEl)
+        // ArrayOfConst:=SingleDimArr
+        if RArray.ElType=nil then
+          // ArrayOfConst:=ArrayOfConst
+          Result:=cExact
+        else
+          begin
+          CurTVarRec:=GetTVarRec(LArray);
+          if ResolveAliasType(RArray.ElType)=CurTVarRec then
+            // ArrayOfConst:=ArrayOfTVarRec
+            Result:=cExact
+          else
+            // ArrayOfConst:=SingleDimArr
+            exit(RaiseIncompatType(20190215112715));
+          end;
         end
+      else if RArray.ElType=nil then
+        // ArrayOfNonConst:=ArrayOfConst
+        exit(RaiseIncompatType(20190215112907))
       else
-        exit(cIncompatible);
+        begin
+        Result:=CheckElTypeCompatibility(LArray.ElType,RArray.ElType,prraAlias);
+        if Result=cIncompatible then
+          if RaiseOnIncompatible then
+            begin
+            GetIncompatibleTypeDesc(LArray.ElType,RArray.ElType,GotDesc,ExpDesc);
+            RaiseMsg(20170328110050,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
+              ['array of '+GotDesc,
+               'array of '+ExpDesc],ErrorEl)
+            end
+          else
+            exit(cIncompatible);
+        end;
       end;
     end
   else if LTypeEl.ClassType=TPasRecordType then
@@ -17934,7 +25503,7 @@ begin
         exit(cIncompatible);
       end
     else
-      exit(RaiseIncompatType);
+      exit(RaiseIncompatType(20190215112924));
     end
   else if LTypeEl.ClassType=TPasPointerType then
     begin
@@ -17944,7 +25513,7 @@ begin
       Result:=CheckAssignCompatibilityPointerType(TPasPointerType(LTypeEl).DestType,
         TPasPointerType(RTypeEl).DestType,ErrorEl,false);
       if Result=cIncompatible then
-        exit(RaiseIncompatType);
+        exit(RaiseIncompatType(20190215112927));
       end;
     end
   else
@@ -17955,9 +25524,9 @@ begin
     {$ENDIF}
 
   if Result=-1 then
-    exit(RaiseIncompatType);
+    exit(RaiseIncompatType(20190215112931));
   if not (rrfReadable in RHS.Flags) then
-    exit(RaiseIncompatType);
+    exit(RaiseIncompatType(20190215112934));
 end;
 
 function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
@@ -17972,8 +25541,10 @@ function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
     Value: TResEvalValue;
     ElBT: TResolverBaseType;
     l: Integer;
-    US: UnicodeString;
     S: String;
+    {$ifdef FPC_HAS_CPSTRING}
+    US: UnicodeString;
+    {$endif}
   begin
     if Expr=nil then exit;
     ElBT:=GetActualBaseType(ElTypeResolved.BaseType);
@@ -17985,9 +25556,10 @@ function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
       exit;
       end;
     // static array -> check length of string
-    Value:=Eval(Expr,[refAutoConst]);
+    Value:=Eval(Expr,[refAutoConst]); // no external const allowed
     try
       case Value.Kind of
+      {$ifdef FPC_HAS_CPSTRING}
       revkString:
         if ElBT=btAnsiChar then
           l:=length(TResEvalString(Value).S)
@@ -17996,6 +25568,7 @@ function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
           US:=fExprEvaluator.GetUnicodeStr(TResEvalString(Value).S,ErrorEl);
           l:=length(US);
           end;
+      {$endif}
       revkUnicodeString:
         begin
         if ElBT=btWideChar then
@@ -18168,9 +25741,9 @@ function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
           exit;
           end;
         // dynarr:=dynarr -> check element type
-        ComputeElement(ArrType.ElType,ElTypeResolved,[rcType]);
+        ComputeElement(GetArrayElType(ArrType),ElTypeResolved,[rcType]);
         Include(ElTypeResolved.Flags,rrfWritable);
-        ComputeElement(RArrayType.ElType,ValueResolved,[rcType]);
+        ComputeElement(GetArrayElType(RArrayType),ValueResolved,[rcType]);
         Include(ValueResolved.Flags,rrfReadable);
         Result:=CheckAssignResCompatibility(ElTypeResolved,ValueResolved,ErrorEl,RaiseOnIncompatible);
         exit;
@@ -18352,6 +25925,12 @@ begin
   if (LHS.BaseType<>btContext) or (not (LHS.LoTypeEl is TPasArrayType)) then
     RaiseInternalError(20170222230012);
   LArrType:=TPasArrayType(LHS.LoTypeEl);
+  if (LArrType.ElType=nil) and (rrfReadable in RHS.Flags)
+      and (RHS.BaseType in [btArrayLit,btArrayOrSet]) then
+    begin
+    // ArrayOfConst:=[]
+    exit(cExact);
+    end;
 
   CheckRange(LArrType,0,RHS,ErrorEl);
 
@@ -18403,9 +25982,9 @@ begin
     if RTypeEl.ClassType=TPasClassType then
       begin
       // e.g. if Sender=Button1 then
-      Result:=CheckSrcIsADstType(LHS,RHS,ErrorEl);
+      Result:=CheckSrcIsADstType(LHS,RHS);
       if Result=cIncompatible then
-        Result:=CheckSrcIsADstType(RHS,LHS,ErrorEl);
+        Result:=CheckSrcIsADstType(RHS,LHS);
       if (Result=cIncompatible) and RaiseOnIncompatible then
         RaiseIncompatibleTypeRes(20180324190757,nTypesAreNotRelatedXY,[],LHS,RHS,ErrorEl);
       exit;
@@ -18425,10 +26004,10 @@ begin
       begin
       // for example: if ImageClass=ImageClass then
       Result:=CheckClassIsClass(TPasClassOfType(LTypeEl).DestType,
-                                TPasClassOfType(RTypeEl).DestType,ErrorEl);
+                                TPasClassOfType(RTypeEl).DestType);
       if Result=cIncompatible then
         Result:=CheckClassIsClass(TPasClassOfType(RTypeEl).DestType,
-                                  TPasClassOfType(LTypeEl).DestType,ErrorEl);
+                                  TPasClassOfType(LTypeEl).DestType);
       if (Result=cIncompatible) and RaiseOnIncompatible then
         RaiseIncompatibleTypeRes(20180324190804,nTypesAreNotRelatedXY,[],LHS,RHS,ErrorEl);
       exit;
@@ -18527,6 +26106,10 @@ var
   ToTypeBaseType: TResolverBaseType;
   C: TClass;
   ToProcType, FromProcType: TPasProcedureType;
+  TemplType: TPasGenericTemplateType;
+  i: Integer;
+  ConToken: TToken;
+  ConEl: TPasElement;
 begin
   Result:=cIncompatible;
   ToTypeEl:=ToResolved.LoTypeEl;
@@ -18551,7 +26134,7 @@ begin
           Result:=cExact
         else if ToTypeBaseType in btAllInteger then
           begin
-          if FromResolved.BaseType in (btArrayRangeTypes+[btRange]) then
+          if FromResolved.BaseType in (btArrayRangeTypes+[btRange,btCurrency]) then
             Result:=cCompatible
           else if FromResolved.BaseType=btContext then
             begin
@@ -18590,11 +26173,14 @@ begin
         else if ToTypeBaseType in btAllStrings then
           begin
           if FromResolved.BaseType in btAllStringAndChars then
-            Result:=cCompatible;
+            Result:=cCompatible
+          else if (FromResolved.BaseType=btPointer)
+              and (ToTypeBaseType in btAllStringPointer) then
+            Result:=cExact;
           end
         else if ToTypeBaseType=btPointer then
           begin
-          if FromResolved.BaseType=btPointer then
+          if FromResolved.BaseType in ([btPointer]+btAllStringPointer) then
             Result:=cExact
           else if FromResolved.BaseType=btContext then
             begin
@@ -18654,9 +26240,9 @@ begin
           if TPasClassType(FromTypeEl).ObjKind=TPasClassType(ToTypeEl).ObjKind then
             begin
             // type cast upwards or downwards
-            Result:=CheckSrcIsADstType(FromResolved,ToResolved,ErrorEl);
+            Result:=CheckSrcIsADstType(FromResolved,ToResolved);
             if Result=cIncompatible then
-              Result:=CheckSrcIsADstType(ToResolved,FromResolved,ErrorEl);
+              Result:=CheckSrcIsADstType(ToResolved,FromResolved);
             end
           else if TPasClassType(ToTypeEl).ObjKind=okInterface then
             begin
@@ -18679,11 +26265,68 @@ begin
           if Result=cIncompatible then
             Result:=CheckTypeCastClassInstanceToClass(FromResolved,ToResolved,ErrorEl);
           end
+        else if FromTypeEl.ClassType=TPasGenericTemplateType then
+          begin
+          // e.g. aClassType(T)
+          TemplType:=TPasGenericTemplateType(FromTypeEl);
+          if length(TemplType.Constraints)=0 then
+            begin
+            // typecast unconstrained template to a classtype
+            // -> check when specialize
+            Result:=cExact;
+            end
+          else
+            for i:=0 to length(TemplType.Constraints)-1 do
+              begin
+              ConEl:=TemplType.Constraints[i];
+              ConToken:=GetGenericConstraintKeyword(ConEl);
+              case ConToken of
+              tkrecord: ; // invalid type cast
+              tkClass, tkconstructor:
+                Result:=cExact;
+              else
+                // identifier constraint: class or interface -> allow
+                Result:=cExact;
+                break;
+              end;
+              end;
+          end;
         end
       else if FromResolved.BaseType=btPointer then
         begin
         if IsBaseType(FromResolved.LoTypeEl,btPointer) then
           Result:=cExact; // untyped pointer to class instance
+        end
+      else if FromResolved.BaseType=btNil then
+        Result:=cExact; // nil to class or interface
+      end
+    else if C=TPasGenericTemplateType then
+      begin
+      // e.g. T(var)
+      TemplType:=TPasGenericTemplateType(ToTypeEl);
+      FromTypeEl:=FromResolved.LoTypeEl;
+      for i:=0 to length(TemplType.Constraints)-1 do
+        begin
+        ConEl:=TemplType.Constraints[i];
+        ConToken:=GetGenericConstraintKeyword(ConEl);
+        case ConToken of
+        tkrecord:
+          if FromResolved.BaseType=btContext then
+            begin
+            if FromTypeEl.ClassType=TPasRecordType then
+              // typecast record to template record
+              Result:=cExact
+            else if FromTypeEl.ClassType=TPasGenericType then
+              // typecast template to template record
+              Result:=cExact;
+            end;
+        tkClass, tkconstructor:
+          Result:=cExact;
+        else
+          // identifier constraint: class or interface -> allow
+          Result:=cExact;
+          break;
+        end;
         end;
       end
     else if C=TPasClassOfType then
@@ -18698,14 +26341,16 @@ begin
           // type cast  classof(classof-var)  upwards or downwards
           ToClassType:=TPasClassOfType(ToTypeEl).DestType;
           FromClassType:=TPasClassOfType(FromResolved.LoTypeEl).DestType;
-          Result:=CheckClassesAreRelated(ToClassType,FromClassType,ErrorEl);
+          Result:=CheckClassesAreRelated(ToClassType,FromClassType);
           end;
         end
       else if FromResolved.BaseType=btPointer then
         begin
         if IsBaseType(FromResolved.LoTypeEl,btPointer) then
           Result:=cExact; // untyped pointer to class-of
-        end;
+        end
+      else if FromResolved.BaseType=btNil then
+        Result:=cExact; // nil to class-of
       end
     else if C=TPasRecordType then
       begin
@@ -18736,7 +26381,12 @@ begin
         begin
         if IsDynArray(ToResolved.LoTypeEl)
             and IsBaseType(FromResolved.LoTypeEl,btPointer) then
-          Result:=cExact; // untyped pointer to dynnamic array
+          Result:=cExact; // untyped pointer to dynamic array
+        end
+      else if FromResolved.BaseType=btNil then
+        begin
+        if IsDynArray(ToResolved.LoTypeEl) then
+          Result:=cExact; // nil to dynamic array
         end;
       end
     else if (C=TPasProcedureType) or (C=TPasFunctionType) then
@@ -18802,7 +26452,46 @@ begin
           else
             Result:=cCompatible;
           end
-        end;
+        end
+      else if FromResolved.BaseType=btProc then
+        begin
+        FromTypeEl:=FromResolved.LoTypeEl;
+        if FromTypeEl is TPasProcedureType then
+          begin
+          // typecast procedure (or anonymous procedure) to proctype
+          FromProcType:=TPasProcedureType(FromTypeEl);
+          if (msDelphi in CurrentParser.CurrentModeswitches)
+              and (FromResolved.IdentEl=nil)
+              and (FromResolved.LoTypeEl.Name<>'') then
+            // Delphi forbids typecast (non anonymous) procedure to proctype
+          else if ToProcType.IsReferenceTo then
+            Result:=cCompatible
+          else if FromResolved.IdentEl=nil then
+            // anonymous proc to proctype
+            Result:=cCompatible
+          else if (FromProcType.IsOfObject<>ToProcType.IsOfObject)
+              and not (proMethodAddrAsPointer in Options) then
+            begin
+            // e.g. TProcedure(Obj.DoIt)
+            if RaiseOnError then
+              RaiseMsg(20181210151058,nIllegalTypeConversionTo,sIllegalTypeConversionTo,
+                [GetElementTypeName(FromProcType)+BoolToStr(FromProcType.IsOfObject,' '+ProcTypeModifiers[ptmOfObject],''),
+                 ToProcType.ElementTypeName+BoolToStr(ToProcType.IsOfObject,' '+ProcTypeModifiers[ptmOfObject],'')],ErrorEl);
+            end
+          else if FromProcType.IsNested<>ToProcType.IsNested then
+            begin
+            if RaiseOnError then
+              RaiseMsg(20181210151102,nIllegalTypeConversionTo,sIllegalTypeConversionTo,
+                [GetElementTypeName(FromProcType)+BoolToStr(FromProcType.IsNested,' '+ProcTypeModifiers[ptmIsNested],''),
+                 ToProcType.ElementTypeName+BoolToStr(ToProcType.IsNested,' '+ProcTypeModifiers[ptmIsNested],'')],ErrorEl);
+            end
+          else
+            Result:=cCompatible;
+          end;
+        end
+      else if FromResolved.BaseType=btNil then
+        // typecast nil to procedure type
+        Result:=cExact;
       end
     else if C=TPasPointerType then
       begin
@@ -18839,7 +26528,7 @@ begin
           // for example  class-of(Self) in a class function
           ToClassType:=TPasClassOfType(ToTypeEl).DestType;
           FromClassType:=TPasClassType(FromTypeEl);
-          Result:=CheckClassesAreRelated(ToClassType,FromClassType,ErrorEl);
+          Result:=CheckClassesAreRelated(ToClassType,FromClassType);
           end;
         end;
       end;
@@ -18874,7 +26563,7 @@ function TPasResolver.CheckTypeCastArray(FromType, ToType: TPasArrayType;
       ElTypeResolved.BaseType:=btNone;
       exit(true);
       end;
-    ComputeElement(ArrType.ElType,ElTypeResolved,[rcType]);
+    ComputeElement(GetArrayElType(ArrType),ElTypeResolved,[rcType]);
     if (ElTypeResolved.BaseType<>btContext)
         or (ElTypeResolved.LoTypeEl.ClassType<>TPasArrayType) then
       exit(false);
@@ -18953,7 +26642,6 @@ procedure TPasResolver.ComputeElement(El: TPasElement; out
     Ref: TResolvedReference;
     Proc: TPasProcedure;
     ProcType: TPasProcedureType;
-    aClass: TPasClassType;
   begin
     Ref:=TResolvedReference(Expr.CustomData);
     ComputeElement(Ref.Declaration,ResolvedEl,Flags+[rcNoImplicitProc],StartEl);
@@ -18967,8 +26655,8 @@ procedure TPasResolver.ComputeElement(El: TPasElement; out
       writeln('TPasResolver.ComputeElement.ComputeIdentifier "',GetObjName(Expr),'" ',GetResolverResultDbg(ResolvedEl),' Flags=',dbgs(Flags));
     {AllowWriteln-}
     {$ENDIF}
-    if (Expr is TPrimitiveExpr) and (Expr.Parent is TParamsExpr) and (TPrimitiveExpr(Expr).Value='FA') then
-      //RaiseNotYetImplemented(20180621235200,Expr);
+    //if (Expr is TPrimitiveExpr) and (Expr.Parent is TParamsExpr) and (TPrimitiveExpr(Expr).Value='FA') then
+    //  RaiseNotYetImplemented(20180621235200,Expr);
 
     if not (rcSetReferenceFlags in Flags)
         and (rrfNoImplicitCallWithoutParams in Ref.Flags) then
@@ -18994,15 +26682,11 @@ procedure TPasResolver.ComputeElement(El: TPasElement; out
             // function => return result
             ComputeElement(TPasFunction(ResolvedEl.IdentEl).FuncType.ResultEl,
               ResolvedEl,Flags+[rcType],StartEl);
-            Exclude(ResolvedEl.Flags,rrfWritable);
             end
-          else if (ResolvedEl.IdentEl.ClassType=TPasConstructor)
-              and (rrfNewInstance in Ref.Flags) then
+          else if (ResolvedEl.IdentEl.ClassType=TPasConstructor) then
             begin
-            // new instance constructor -> return value of type class
-            aClass:=GetReference_NewInstanceClass(Ref);
-            SetResolverValueExpr(ResolvedEl,btContext,aClass,aClass,
-                                 TPrimitiveExpr(Expr),[rrfReadable]);
+            // constructor -> return value of type class
+            ResolvedEl:=GetReference_ConstructorType(Ref,Expr);
             end
           else if ParentNeedsExprResult(Expr) then
             begin
@@ -19047,11 +26731,75 @@ procedure TPasResolver.ComputeElement(El: TPasElement; out
       end;
   end;
 
+  procedure ComputeInherited(Expr: TInheritedExpr);
+  var
+    Ref: TResolvedReference;
+    Proc: TPasProcedure;
+    TypeEl: TPasProcedureType;
+    HasName: Boolean;
+  begin
+    // "inherited;"
+    Ref:=TResolvedReference(El.CustomData);
+    Proc:=NoNil(Ref.Declaration) as TPasProcedure;
+    TypeEl:=TPasProcedure(Proc).ProcType;
+    SetResolverIdentifier(ResolvedEl,btProc,Proc,
+      TypeEl,TypeEl,[rrfCanBeStatement]);
+    HasName:=(El.Parent.ClassType=TBinaryExpr)
+       and (TBinaryExpr(El.Parent).OpCode=eopNone); // true if 'inherited Proc;'
+    if HasName or (rcNoImplicitProc in Flags) then
+      exit;
+
+    // inherited;  -> implicit call possible
+    if Proc is TPasFunction then
+      begin
+      // function => return result
+      ComputeElement(TPasFunction(Proc).FuncType.ResultEl,
+        ResolvedEl,Flags+[rcType],StartEl);
+      Exclude(ResolvedEl.Flags,rrfWritable);
+      end
+    else if (Proc.ClassType=TPasConstructor)
+        and (rrfNewInstance in Ref.Flags) then
+      begin
+      // new instance constructor -> return value of type class
+      ResolvedEl:=GetReference_ConstructorType(Ref,Expr);
+      end
+    else if ParentNeedsExprResult(Expr) then
+      begin
+      // a procedure
+      exit;
+      end;
+    if rcSetReferenceFlags in Flags then
+      Include(Ref.Flags,rrfImplicitCallWithoutParams);
+    Include(ResolvedEl.Flags,rrfCanBeStatement);
+  end;
+
+  procedure ComputeSpecializeType(SpecType: TPasSpecializeType);
+  var
+    TypeEl: TPasType;
+  begin
+    if SpecType.CustomData is TPasSpecializeTypeData then
+      begin
+      TypeEl:=TPasSpecializeTypeData(SpecType.CustomData).SpecializedType;
+      if TypeEl=nil then
+        RaiseNotYetImplemented(20190908153503,El);
+      SetResolverIdentifier(ResolvedEl,btContext,TypeEl,TypeEl,TypeEl,[]);
+      end
+    else
+      begin
+      TypeEl:=SpecType.DestType;
+      if TypeEl=nil then
+        RaiseNotYetImplemented(20190908153434,El);
+      SetResolverIdentifier(ResolvedEl,btContext,SpecType,TypeEl,SpecType,[]);
+      end;
+  end;
+
 var
   DeclEl: TPasElement;
   ElClass: TClass;
   bt: TResolverBaseType;
   TypeEl: TPasType;
+  Value: TResEvalValue;
+  Int: TMaxPrecInt;
 begin
   if StartEl=nil then StartEl:=El;
   ResolvedEl:=Default(TPasResolverResult);
@@ -19071,14 +26819,38 @@ begin
         ComputeIdentifier(TPrimitiveExpr(El));
         end;
       pekNumber:
-        if Pos('.',TPrimitiveExpr(El).Value)>0 then
-          SetResolverValueExpr(ResolvedEl,BaseTypeExtended,
-                      FBaseTypes[BaseTypeExtended],FBaseTypes[BaseTypeExtended],
-                      TPrimitiveExpr(El),[rrfReadable])
-        else
-          SetResolverValueExpr(ResolvedEl,btLongint,
-                      FBaseTypes[btLongint],FBaseTypes[btLongint],
-                      TPrimitiveExpr(El),[rrfReadable]);
+        begin
+          if NumberIsFloat(TPrimitiveExpr(El).Value) then
+            bt:=BaseTypeExtended
+          else if length(TPrimitiveExpr(El).Value)<9 then
+            bt:=btLongint
+          else
+            begin
+            // with 9+ it could be longword: e.g. $87654321
+            Value:=Eval(TPrimitiveExpr(El),[]);
+            if Value=nil then
+              RaiseNotYetImplemented(20190130162601,El);
+            try
+              case Value.Kind of
+              revkInt:
+                begin
+                Int:=TResEvalInt(Value).Int;
+                bt:=GetSmallestIntegerBaseType(Int,Int);
+                end;
+              {$IFDEF HasInt64}
+              revkUInt:
+                bt:=btQWord;
+              {$ENDIF}
+              else
+                bt:=BaseTypeExtended;
+              end;
+            finally
+              ReleaseEvalValue(Value);
+            end;
+            end;
+        SetResolverValueExpr(ResolvedEl,bt,FBaseTypes[bt],FBaseTypes[bt],
+                    TPrimitiveExpr(El),[rrfReadable])
+        end;
       pekString:
         begin
         {$IFDEF VerbosePasResolver}
@@ -19106,13 +26878,6 @@ begin
     else
       RaiseNotYetImplemented(20160922163701,El);
     end;
-    end
-  else if ElClass=TSelfExpr then
-    begin
-    // self is just an identifier
-    if not (El.CustomData is TResolvedReference) then
-      RaiseNotYetImplemented(20170216150017,El,' El="'+GetObjName(El)+'" CustomData='+GetObjName(El.CustomData)+' '+GetElementSourcePosStr(El));
-    ComputeIdentifier(TSelfExpr(El));
     end
   else if ElClass=TPasUnresolvedSymbolRef then
     begin
@@ -19148,6 +26913,8 @@ begin
       eopAdd, eopSubtract:
         if ResolvedEl.BaseType in (btAllInteger+btAllFloats) then
           exit
+        else if IsGenericTemplType(ResolvedEl) then
+          exit
         else
           RaiseMsg(20170216152532,nIllegalQualifierInFrontOf,sIllegalQualifierInFrontOf,
             [OpcodeStrings[TUnaryExpr(El).OpCode],GetResolverResultDescription(ResolvedEl)],El);
@@ -19180,7 +26947,10 @@ begin
         exit;
         end;
       eopMemAddress:
-        if (ResolvedEl.BaseType=btContext) and (ResolvedEl.LoTypeEl is TPasProcedureType) then
+        if (ResolvedEl.BaseType=btContext)
+            and ((ResolvedEl.LoTypeEl is TPasProcedureType)
+              or IsGenericTemplType(ResolvedEl)) then
+          // @@ProcVar
           exit
         else
           RaiseMsg(20180208121549,nIllegalQualifierInFrontOf,sIllegalQualifierInFrontOf,
@@ -19206,13 +26976,7 @@ begin
     begin
     // writeln('TPasResolver.ComputeElement TInheritedExpr El.CustomData=',GetObjName(El.CustomData));
     if El.CustomData is TResolvedReference then
-      begin
-        // "inherited;"
-        DeclEl:=NoNil(TResolvedReference(El.CustomData).Declaration) as TPasProcedure;
-        TypeEl:=TPasProcedure(DeclEl).ProcType;
-        SetResolverIdentifier(ResolvedEl,btProc,DeclEl,
-          TypeEl,TypeEl,[rrfCanBeStatement]);
-      end
+      ComputeInherited(TInheritedExpr(El))
     else
       // no ancestor proc
       SetResolverIdentifier(ResolvedEl,btBuiltInProc,nil,nil,nil,[rrfCanBeStatement]);
@@ -19372,9 +27136,9 @@ begin
     begin
     TypeEl:=TPasProcedure(El).ProcType;
     SetResolverIdentifier(ResolvedEl,btProc,El,TypeEl,TypeEl,[rrfCanBeStatement]);
-    if El is TPasFunction then
+    if (TPasProcedure(El).ProcType is TPasFunctionType)
+        or (ElClass=TPasConstructor) then
       Include(ResolvedEl.Flags,rrfReadable);
-    // Note: the readability of TPasConstructor depends on the context
     // Note: implicit calls are handled in TPrimitiveExpr
     end
   else if El.InheritsFrom(TPasProcedureType) then
@@ -19382,6 +27146,11 @@ begin
     SetResolverIdentifier(ResolvedEl,btContext,El,
                TPasProcedureType(El),TPasProcedureType(El),[rrfCanBeStatement]);
     // Note: implicit calls are handled in TPrimitiveExpr
+    end
+  else if ElClass=TProcedureExpr then
+    begin
+    TypeEl:=TProcedureExpr(El).Proc.ProcType;
+    SetResolverValueExpr(ResolvedEl,btProc,TypeEl,TypeEl,TProcedureExpr(El),[rrfReadable]);
     end
   else if ElClass=TPasArrayType then
     SetResolverIdentifier(ResolvedEl,btContext,El,TPasArrayType(El),TPasArrayType(El),[])
@@ -19391,16 +27160,34 @@ begin
     ComputeRecordValues(TRecordValues(El),ResolvedEl,Flags,StartEl)
   else if ElClass=TPasStringType then
     begin
+    {$ifdef FPC_HAS_CPSTRING}
     SetResolverTypeExpr(ResolvedEl,btShortString,
                BaseTypes[btShortString],BaseTypes[btShortString],[rrfReadable]);
     if BaseTypes[btShortString]=nil then
+    {$endif}
       RaiseMsg(20170419203146,nIllegalQualifier,sIllegalQualifier,['['],El);
     end
   else if ElClass=TPasResString then
     SetResolverIdentifier(ResolvedEl,btString,El,
                         FBaseTypes[btString],FBaseTypes[btString],[rrfReadable])
+  else if ElClass=TPasGenericTemplateType then
+    SetResolverIdentifier(ResolvedEl,btContext,El,TPasGenericTemplateType(El),
+      TPasGenericTemplateType(El),[])
+  else if ElClass=TPasSpecializeType then
+    ComputeSpecializeType(TPasSpecializeType(El))
+  else if ElClass=TInlineSpecializeExpr then
+    ComputeElement(TInlineSpecializeExpr(El).NameExpr,ResolvedEl,Flags,StartEl)
   else
     RaiseNotYetImplemented(20160922163705,El);
+  {$IF defined(nodejs) and defined(VerbosePasResolver)}
+  if not isNumber(ResolvedEl.BaseType) then
+    begin
+    {AllowWriteln}
+    writeln('TPasResolver.ComputeElement ',GetObjName(El),' typeof ResolvedEl.BaseType=',jsTypeOf(ResolvedEl.BaseType),' ResolvedEl=',GetResolverResultDbg(ResolvedEl));
+    RaiseInternalError(20181101123527,jsTypeOf(ResolvedEl.LoTypeEl));
+    {AllowWriteln-}
+    end;
+  {$ENDIF}
 end;
 
 function TPasResolver.Eval(Expr: TPasExpr; Flags: TResEvalFlags;
@@ -19470,17 +27257,70 @@ function TPasResolver.HasExactType(const ResolvedEl: TPasResolverResult
   ): boolean;
 var
   IdentEl: TPasElement;
+  Expr: TPasExpr;
 begin
   IdentEl:=ResolvedEl.IdentEl;
-  if IdentEl=nil then exit(false);
-  if IdentEl is TPasVariable then
-    exit(TPasVariable(IdentEl).VarType<>nil)
-  else if IdentEl.ClassType=TPasArgument then
-    exit(TPasArgument(IdentEl).ArgType<>nil)
-  else if IdentEl.ClassType=TPasResultElement then
-    exit(TPasResultElement(IdentEl).ResultType<>nil)
-  else
-    Result:=false;
+  if IdentEl<>nil then
+    begin
+    if IdentEl is TPasVariable then
+      exit(TPasVariable(IdentEl).VarType<>nil)
+    else if IdentEl.ClassType=TPasArgument then
+      exit(TPasArgument(IdentEl).ArgType<>nil)
+    else if IdentEl.ClassType=TPasResultElement then
+      exit(TPasResultElement(IdentEl).ResultType<>nil)
+    else if IdentEl is TPasType then
+      exit(true)
+    else
+      exit(false);
+    end;
+  Expr:=ResolvedEl.ExprEl;
+  if Expr<>nil then
+    begin
+    if Expr.Kind in [pekNumber,pekString,pekNil,pekBoolConst] then
+      exit(true)
+    else
+      exit(false);
+    end;
+  Result:=false;
+end;
+
+function TPasResolver.IndexOfGenericParam(Params: TPasExprArray): integer;
+var
+  i: Integer;
+  ParamResolved: TPasResolverResult;
+begin
+  for i:=0 to length(Params)-1 do
+    begin
+    ComputeElement(Params[i],ParamResolved,[]);
+    if ParamResolved.LoTypeEl is TPasGenericTemplateType then
+      exit(i);
+    end;
+  Result:=-1;
+end;
+
+procedure TPasResolver.CheckUseAsType(aType: TPasElement; id: TMaxPrecInt;
+  ErrorEl: TPasElement);
+begin
+  if aType=nil then exit;
+  if aType is TPasGenericType then
+    begin
+    if aType.ClassType=TPasClassType then
+      begin
+      if TPasClassType(aType).HelperForType<>nil then
+        RaiseHelpersCannotBeUsedAsType(id,ErrorEl);
+      end;
+    if (TPasGenericType(aType).GenericTemplateTypes<>nil)
+        and (TPasGenericType(aType).GenericTemplateTypes.Count>0) then
+      begin
+      // ref to generic type without specialization
+      if not (msDelphi in CurrentParser.CurrentModeswitches)
+          and (ErrorEl.HasParent(aType)) then
+        // ObjFPC allows referring to parent without type params
+      else
+        RaiseMsg(id,nGenericsWithoutSpecializationAsType,sGenericsWithoutSpecializationAsType,
+            [ErrorEl.ElementTypeName],ErrorEl);
+      end;
+    end;
 end;
 
 function TPasResolver.GetPasClassAncestor(ClassEl: TPasClassType;
@@ -19516,6 +27356,22 @@ begin
     end;
 end;
 
+function TPasResolver.GetParentProcBody(El: TPasElement): TProcedureBody;
+begin
+  while El<>nil do
+    begin
+    if El is TProcedureBody then
+      exit(TProcedureBody(El));
+    El:=El.Parent;
+    end;
+  Result:=nil;
+end;
+
+function TPasResolver.ProcHasImplElements(Proc: TPasProcedure): boolean;
+begin
+  Result:=GetProcFirstImplEl(Proc)<>nil;
+end;
+
 function TPasResolver.IndexOfImplementedInterface(ClassEl: TPasClassType;
   aType: TPasType): integer;
 var
@@ -19544,18 +27400,27 @@ begin
   Result:=nil;
 end;
 
-function TPasResolver.ResolveAliasType(aType: TPasType): TPasType;
+function TPasResolver.ResolveAliasType(aType: TPasType; SkipTypeAlias: boolean
+  ): TPasType;
 var
   C: TClass;
 begin
   while aType<>nil do
     begin
     C:=aType.ClassType;
-    if (C=TPasAliasType) or (C=TPasTypeAliasType) then
+    if C=TPasAliasType then
+      aType:=TPasAliasType(aType).DestType
+    else if (C=TPasTypeAliasType) and SkipTypeAlias then
       aType:=TPasAliasType(aType).DestType
     else if (C=TPasClassType) and TPasClassType(aType).IsForward
         and (aType.CustomData is TResolvedReference) then
       aType:=NoNil(TResolvedReference(aType.CustomData).Declaration) as TPasType
+    else if C=TPasSpecializeType then
+      begin
+      if aType.CustomData is TPasSpecializeTypeData then
+        exit(TPasSpecializeTypeData(aType.CustomData).SpecializedType);
+      aType:=TPasSpecializeType(aType).DestType;
+      end
     else
       exit(aType);
     end;
@@ -19678,10 +27543,83 @@ begin
     Result:=(TPasImplRaise(P).ExceptAddr=El);
 end;
 
-function TPasResolver.GetReference_NewInstanceClass(Ref: TResolvedReference
-  ): TPasClassType;
+function TPasResolver.GetReference_ConstructorType(Ref: TResolvedReference;
+  Expr: TPasExpr): TPasResolverResult;
+var
+  TypeEl: TPasType;
 begin
-  Result:=(Ref.Context as TResolvedRefCtxConstructor).Typ as TPasClassType;
+  TypeEl:=(Ref.Context as TResolvedRefCtxConstructor).Typ;
+  if TypeEl=nil then
+    RaiseNotYetImplemented(20190125205339,Expr)
+  else if TypeEl is TPasMembersType then
+    SetResolverValueExpr(Result,btContext,TypeEl,TypeEl,Expr,[rrfReadable])
+  else
+    begin
+    ComputeElement(TypeEl,Result,[rcType]);
+    Result.ExprEl:=Expr;
+    Result.Flags:=[rrfReadable];
+    end;
+end;
+
+function TPasResolver.GetParamsValueRef(Params: TParamsExpr): TResolvedReference;
+var
+  El: TPasExpr;
+begin
+  Result:=nil;
+  if Params=nil then exit;
+  El:=Params.Value;
+  while El<>nil do
+    begin
+    if El.CustomData is TResolvedReference then
+      exit(TResolvedReference(El.CustomData));
+    if El.ClassType=TInlineSpecializeExpr then
+      El:=TInlineSpecializeExpr(El).NameExpr
+    else if (El.ClassType=TBinaryExpr)
+        and (TBinaryExpr(El).OpCode=eopSubIdent) then
+      El:=TBinaryExpr(El).right
+    else
+      exit;
+    end;
+end;
+
+function TPasResolver.GetSetType(const ResolvedSet: TPasResolverResult
+  ): TPasSetType;
+var
+  IdentEl: TPasElement;
+  aType: TPasType;
+  C: TClass;
+begin
+  Result:=nil;
+  if ResolvedSet.BaseType=btSet then
+    begin
+    IdentEl:=ResolvedSet.IdentEl;
+    if IdentEl=nil then exit;
+    C:=IdentEl.ClassType;
+    if (C=TPasVariable)
+        or (C=TPasConst) then
+      aType:=TPasVariable(IdentEl).VarType
+    else if C=TPasProperty then
+      aType:=GetPasPropertyType(TPasProperty(IdentEl))
+    else if C=TPasArgument then
+      aType:=TPasArgument(IdentEl).ArgType
+    else if C.InheritsFrom(TPasProcedure)
+        and (TPasProcedure(IdentEl).ProcType is TPasFunctionType) then
+      aType:=TPasFunctionType(TPasProcedure(IdentEl).ProcType).ResultEl.ResultType
+    else if C=TPasSetType then
+      exit(TPasSetType(IdentEl))
+    else
+      exit;
+    if aType.ClassType=TPasSetType then
+      Result:=TPasSetType(aType);
+    end
+  else if ResolvedSet.BaseType=btContext then
+    begin
+    if ResolvedSet.LoTypeEl.ClassType=TPasSetType then
+      if ResolvedSet.HiTypeEl.ClassType=TPasSetType then
+        Result:=TPasSetType(ResolvedSet.HiTypeEl)
+      else
+        Result:=TPasSetType(ResolvedSet.LoTypeEl);
+    end;
 end;
 
 function TPasResolver.IsDynArray(TypeEl: TPasType; OptionalOpenArray: boolean
@@ -19692,6 +27630,7 @@ begin
     exit(false);
   if length(TPasArrayType(TypeEl).Ranges)<>0 then
     exit(false);
+  // Note: Array of Const is an open array of TVarRec
   if OptionalOpenArray and (proOpenAsDynArrays in Options) then
     Result:=true
   else
@@ -19712,6 +27651,19 @@ begin
   TypeEl:=ResolveAliasType(TypeEl);
   Result:=(TypeEl<>nil) and (TypeEl.ClassType=TPasArrayType)
       and (length(TPasArrayType(TypeEl).Ranges)=0);
+end;
+
+function TPasResolver.IsArrayOfConst(TypeEl: TPasType): boolean;
+begin
+  Result:=(TypeEl<>nil) and (TypeEl.ClassType=TPasArrayType)
+      and (TPasArrayType(TypeEl).ElType=nil);
+end;
+
+function TPasResolver.GetArrayElType(ArrType: TPasArrayType): TPasType;
+begin
+  Result:=ArrType.ElType;
+  if Result=nil then
+    Result:=GetTVarRec(ArrType);
 end;
 
 function TPasResolver.IsVarInit(Expr: TPasExpr): boolean;
@@ -19747,6 +27699,62 @@ begin
        or (C=TPasClassOperator);
 end;
 
+function TPasResolver.IsClassField(El: TPasElement): boolean;
+var
+  C: TClass;
+begin
+  if ((El.ClassType=TPasVariable) or (El.ClassType=TPasConst))
+      and ([vmClass,vmStatic]*TPasVariable(El).VarModifiers<>[]) then
+    begin
+    C:=El.Parent.ClassType;
+    Result:=(C=TPasClassType) or (C=TPasRecordType);
+    end
+  else
+    Result:=false;
+end;
+
+function TPasResolver.GetFunctionType(El: TPasElement): TPasFunctionType;
+var
+  ProcType: TPasProcedureType;
+begin
+  if not (El is TPasProcedure) then exit(nil);
+  ProcType:=TPasProcedure(El).ProcType;
+  if ProcType is TPasFunctionType then
+    Result:=TPasFunctionType(ProcType)
+  else
+    Result:=nil;
+end;
+
+function TPasResolver.MethodIsStatic(El: TPasProcedure): boolean;
+begin
+  Result:=(ptmStatic in El.ProcType.Modifiers)
+    or (El.ClassType=TPasClassConstructor)
+    or (El.ClassType=TPasClassDestructor);
+end;
+
+function TPasResolver.IsMethod(El: TPasProcedure): boolean;
+var
+  ProcScope: TPasProcedureScope;
+begin
+  Result:=false;
+  if El=nil then exit;
+  if El.Parent is TPasMembersType then exit(true);
+  if not (El.CustomData is TPasProcedureScope) then exit;
+  ProcScope:=TPasProcedureScope(El.CustomData);
+  Result:=IsMethod(ProcScope.DeclarationProc);
+end;
+
+function TPasResolver.IsHelperMethod(El: TPasElement): boolean;
+begin
+  Result:=(El is TPasProcedure) and (El.Parent is TPasClassType)
+          and (TPasClassType(El.Parent).HelperForType<>nil);
+end;
+
+function TPasResolver.IsHelper(El: TPasElement): boolean;
+begin
+  Result:=(El<>nil) and (El.ClassType=TPasClassType) and (TPasClassType(El).HelperForType<>nil);
+end;
+
 function TPasResolver.IsExternalClass_Name(aClass: TPasClassType;
   const ExtName: string): boolean;
 var
@@ -19760,7 +27768,7 @@ begin
     AncestorScope:=(aClass.CustomData as TPasClassScope).AncestorScope;
     if AncestorScope=nil then exit;
     aClass:=NoNil(AncestorScope.Element) as TPasClassType;
-  end;
+    end;
 end;
 
 function TPasResolver.IsProcedureType(const ResolvedEl: TPasResolverResult;
@@ -19800,7 +27808,7 @@ end;
 function TPasResolver.IsArrayOperatorAdd(Expr: TPasExpr): boolean;
 begin
   Result:=(Expr<>nil) and (Expr.ClassType=TBinaryExpr) and (Expr.OpCode=eopAdd)
-          and (msArrayOperators in GetElModeSwitches(Expr));
+          and ElHasModeSwitch(Expr,msArrayOperators);
 end;
 
 function TPasResolver.IsTypeCast(Params: TParamsExpr): boolean;
@@ -19829,11 +27837,89 @@ begin
     exit(true)
   else if (C=TPasClassType)
       or (C=TPasClassOfType)
-      or (C=TPasEnumType) then
+      or (C=TPasEnumType)
+      or (C=TPasRecordType)
+      or (C=TPasArrayType)
+      or (C=TPasSpecializeType)
+      or (C=TPasGenericTemplateType) then
     exit(true)
   else if (C=TPasUnresolvedSymbolRef)
       and (Decl.CustomData is TResElDataBaseType) then
     exit(true);
+end;
+
+function TPasResolver.GetTypeParameterCount(aType: TPasGenericType): integer;
+begin
+  if aType=nil then exit(0);
+  if aType.GenericTemplateTypes=nil then exit(0);
+  Result:=aType.GenericTemplateTypes.Count;
+end;
+
+function TPasResolver.GetGenericConstraintKeyword(El: TPasElement): TToken;
+var
+  Prim: TPrimitiveExpr;
+begin
+  if (El=nil) or (El.ClassType<>TPrimitiveExpr) then
+    exit(tkEOF);
+  Prim:=TPrimitiveExpr(El);
+  if Prim.Kind<>pekIdent then
+    exit(tkEOF);
+  case lowercase(Prim.Value) of
+  'record': Result:=tkrecord;
+  'class': Result:=tkclass;
+  'constructor': Result:=tkconstructor;
+  else Result:=tkEOF;
+  end;
+end;
+
+function TPasResolver.GetGenericConstraintErrorEl(ConstraintEl,
+  TemplType: TPasElement): TPasElement;
+begin
+  if (ConstraintEl is TPasExpr) or (ConstraintEl.Parent=TemplType) then
+    Result:=ConstraintEl
+  else
+    Result:=TemplType;
+end;
+
+function TPasResolver.IsFullySpecialized(El: TPasGenericType): boolean;
+var
+  GenScope: TPasGenericScope;
+  Params: TPasTypeArray;
+  i: Integer;
+begin
+  if (El.GenericTemplateTypes<>nil) and (El.GenericTemplateTypes.Count>0) then
+    exit(false);
+  if not (El.CustomData is TPasGenericScope) then exit(true);
+  GenScope:=TPasGenericScope(El.CustomData);
+  if GenScope.SpecializedFromItem=nil then exit(true);
+  Params:=GenScope.SpecializedFromItem.Params;
+  for i:=0 to length(Params)-1 do
+    if Params[i] is TPasGenericTemplateType then exit(false);
+  Result:=true;
+end;
+
+function TPasResolver.IsFullySpecialized(Proc: TPasProcedure): boolean;
+var
+  Templates: TFPList;
+  ProcScope: TPasProcedureScope;
+  Params: TPasTypeArray;
+  i: Integer;
+begin
+  if Proc.CustomData=nil then exit(false);
+  ProcScope:=TPasProcedureScope(Proc.CustomData);
+  if ProcScope.DeclarationProc<>nil then
+    begin
+    Proc:=ProcScope.DeclarationProc;
+    ProcScope:=TPasProcedureScope(Proc.CustomData);
+    end;
+  Templates:=GetProcTemplateTypes(Proc);
+  if (Templates<>nil) and (Templates.Count>0) then
+    exit(false);
+  if ProcScope.SpecializedFromItem=nil then exit(true);
+  Params:=ProcScope.SpecializedFromItem.Params;
+  for i:=0 to length(Params)-1 do
+    if Params[i] is TPasGenericTemplateType then exit(false);
+  Result:=true;
 end;
 
 function TPasResolver.IsInterfaceType(const ResolvedEl: TPasResolverResult;
@@ -19913,6 +27999,122 @@ begin
   Result:=false;
 end;
 
+function TPasResolver.IsCustomAttribute(El: TPasElement): boolean;
+var
+  ClassEl: TPasClassType;
+  ClassScope: TPasClassScope;
+  aModule: TPasModule;
+begin
+  Result:=false;
+  if (El=nil)
+      or (El.ClassType<>TPasClassType) then exit;
+  ClassEl:=TPasClassType(El);
+  if (ClassEl.IsExternal) or (ClassEl.ObjKind<>okClass) then exit;
+  while not SameText(ClassEl.Name,'TCustomAttribute') do
+    begin
+    ClassScope:=ClassEl.CustomData as TPasClassScope;
+    if ClassScope.AncestorScope=nil then exit;
+    ClassEl:=TPasClassType(ClassScope.AncestorScope.Element);
+    end;
+  if not (ClassEl.Parent is TPasSection) then
+    exit; // this TCustomAttribute is not top level
+  aModule:=ClassEl.GetModule;
+  Result:=IsSystemUnit(aModule);
+end;
+
+function TPasResolver.IsSystemUnit(El: TPasModule): boolean;
+var
+  Section: TPasSection;
+begin
+  Result:=false;
+  if El=nil then exit;
+  if SameText(El.Name,'system') then exit(true);
+
+  // tests and scripts are their own system unit: check if this is the root module
+  if El.ClassType=TPasProgram then
+    Section:=TPasProgram(El).ProgramSection
+  else if El.ClassType=TPasLibrary then
+    Section:=TPasLibrary(El).LibrarySection
+  else
+    Section:=El.InterfaceSection;
+  Result:=length(Section.UsesClause)=0;
+end;
+
+function TPasResolver.GetAttributeCallsEl(El: TPasElement): TPasExprArray;
+var
+  Parent: TPasElement;
+  C: TClass;
+  Members: TFPList;
+  i: Integer;
+begin
+  Result:=nil;
+  if El=nil then exit;
+  // find El in El.Parent members
+  Parent:=El.Parent;
+  if Parent=nil then exit;
+  C:=Parent.ClassType;
+  if C.InheritsFrom(TPasDeclarations) then
+    Members:=TPasDeclarations(Parent).Declarations
+  else if C.InheritsFrom(TPasMembersType) then
+    Members:=TPasMembersType(Parent).Members
+  else
+    exit;
+  i:=Members.IndexOf(El);
+  if i<0 then exit;
+  Result:=GetAttributeCalls(Members,i);
+end;
+
+function TPasResolver.GetAttributeCalls(Members: TFPList; Index: integer
+  ): TPasExprArray;
+
+  procedure AddAttributesInFront(Members: TFPList; i: integer);
+  var
+    j, l, k: Integer;
+    Calls: TPasExprArray;
+  begin
+    // find attributes in front
+    j:=i;
+    while (j>0) and (TPasElement(Members[j-1]).ClassType=TPasAttributes) do
+      dec(j);
+    // collect all attribute calls
+    l:=0;
+    while j<i do
+      begin
+      Calls:=TPasAttributes(Members[j]).Calls;
+      SetLength(Result,l+length(Calls));
+      for k:=0 to length(Calls)-1 do
+        begin
+        Result[l]:=Calls[k];
+        inc(l);
+        end;
+      inc(j);
+      end;
+  end;
+
+var
+  El, CurEl: TPasElement;
+begin
+  Result:=nil;
+  El:=TPasElement(Members[Index]);
+  AddAttributesInFront(Members,Index);
+  if (El.ClassType=TPasClassType) and (not TPasClassType(El).IsForward) then
+    repeat
+      dec(Index);
+      if Index<1 then break;
+      CurEl:=TPasElement(Members[Index]);
+      if (CurEl.ClassType=TPasClassType)
+          and TPasClassType(CurEl).IsForward
+          and (TPasClassType(CurEl).CustomData is TResolvedReference)
+          and (TResolvedReference(TPasClassType(CurEl).CustomData).Declaration=El)
+      then
+        begin
+        // class has a forward declaration -> add attributes
+        AddAttributesInFront(Members,Index);
+        break;
+        end;
+    until false;
+end;
+
 function TPasResolver.ProcNeedsParams(El: TPasProcedureType): boolean;
 begin
   Result:=(El.Args.Count>0) and (TPasArgument(El.Args[0]).ValueExpr=nil);
@@ -19945,7 +28147,7 @@ begin
     end;
 end;
 
-function TPasResolver.GetRangeLength(RangeExpr: TPasExpr): MaxPrecInt;
+function TPasResolver.GetRangeLength(RangeExpr: TPasExpr): TMaxPrecInt;
 var
   Range: TResEvalValue;
 begin
@@ -20003,12 +28205,22 @@ begin
         else
           Result:=TResEvalInt.CreateValue(TResEvalRangeInt(Range).RangeEnd);
       revskChar:
-        if EvalLow then
-          Result:=TResEvalString.CreateValue(chr(TResEvalRangeInt(Range).RangeStart))
-        else if TResEvalRangeInt(Range).RangeEnd<256 then
-          Result:=TResEvalString.CreateValue(chr(TResEvalRangeInt(Range).RangeEnd))
+        {$ifdef FPC_HAS_CPSTRING}
+        if TResEvalRangeInt(Range).RangeEnd<256 then
+          begin
+          if EvalLow then
+            Result:=TResEvalString.CreateValue(chr(TResEvalRangeInt(Range).RangeStart))
+          else
+            Result:=TResEvalString.CreateValue(chr(TResEvalRangeInt(Range).RangeEnd));
+          end
         else
-          Result:=TResEvalUTF16.CreateValue(widechar(TResEvalRangeInt(Range).RangeEnd));
+        {$endif}
+          begin
+          if EvalLow then
+            Result:=TResEvalUTF16.CreateValue(widechar(TResEvalRangeInt(Range).RangeStart))
+          else
+            Result:=TResEvalUTF16.CreateValue(widechar(TResEvalRangeInt(Range).RangeEnd));
+          end;
       revskBool:
         if EvalLow then
           Result:=TResEvalBool.CreateValue(TResEvalRangeInt(Range).RangeStart<>0)
@@ -20051,7 +28263,7 @@ begin
   else if C=TPasEnumType then
     begin
     Result:=TResEvalRangeInt.CreateValue(revskEnum,TPasEnumType(Decl),
-                                         0,TPasEnumType(Decl).Values.Count-1);
+                              0,TMaxPrecInt(TPasEnumType(Decl).Values.Count)-1);
     Result.IdentEl:=Decl;
     exit;
     end
@@ -20066,16 +28278,20 @@ begin
         Result:=TResEvalRangeInt.Create;
         TResEvalRangeInt(Result).ElKind:=revskChar;
         TResEvalRangeInt(Result).RangeStart:=0;
+        {$ifdef FPC_HAS_CPSTRING}
         if BaseTypeChar in [btChar,btAnsiChar] then
           TResEvalRangeInt(Result).RangeEnd:=$ff
         else
+        {$endif}
           TResEvalRangeInt(Result).RangeEnd:=$ffff;
         end;
+      {$ifdef FPC_HAS_CPSTRING}
       btAnsiChar:
         Result:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ff);
+      {$endif}
       btWideChar:
         Result:=TResEvalRangeInt.CreateValue(revskChar,nil,0,$ffff);
-      btBoolean,btByteBool,btWordBool,btQWordBool:
+      btBoolean,btByteBool,btWordBool{$ifdef HasInt64},btQWordBool{$endif}:
         Result:=TResEvalRangeInt.CreateValue(revskBool,nil,0,1);
       btByte,
       btShortInt,
@@ -20083,8 +28299,10 @@ begin
       btSmallInt,
       btLongWord,
       btLongint,
+      {$ifdef HasInt64}
       btInt64,
       btComp,
+      {$endif}
       btIntSingle,
       btUIntSingle,
       btIntDouble,
@@ -20107,7 +28325,14 @@ begin
   if El.CustomData is TResElDataBaseType then
     exit(true); // base type
   if El.Parent=nil then exit;
-  if (El.Parent is TPasType) and not HasTypeInfo(TPasType(El.Parent)) then
+  if El.Parent is TPasType then
+    begin
+    if not HasTypeInfo(TPasType(El.Parent)) then
+      exit;
+    end
+  else if ElHasModeSwitch(El,msOmitRTTI) then
+    exit
+  else if El.Parent is TPasAnonymousProcedure then
     exit;
   Result:=true;
 end;
@@ -20132,7 +28357,9 @@ begin
   btByteBool: if Bool2<>btBoolean then Result:=Bool2;
   btWordBool: if not (Bool2 in [btBoolean,btByteBool]) then Result:=Bool2;
   btLongBool: if not (Bool2 in [btBoolean,btByteBool,btWordBool]) then Result:=Bool2;
+  {$ifdef HasInt64}
   btQWordBool: if not (Bool2 in [btBoolean,btByteBool,btWordBool,btLongBool]) then Result:=Bool2;
+  {$endif}
   else
     RaiseNotYetImplemented(20170420093805,ErrorEl);
   end;
@@ -20169,15 +28396,17 @@ begin
   btLongint: begin Precision:=32; Signed:=true; end;
   btIntDouble: begin Precision:=53; Signed:=true; end;
   btUIntDouble: begin Precision:=52; Signed:=false; end;
+  {$ifdef HasInt64}
   btQWord: begin Precision:=64; Signed:=false; end;
   btInt64,btComp: begin Precision:=64; Signed:=true; end;
+  {$endif}
   else
     RaiseInternalError(20170420095727);
   end;
 end;
 
 function TPasResolver.GetIntegerRange(bt: TResolverBaseType; out MinVal,
-  MaxVal: MaxPrecInt): boolean;
+  MaxVal: TMaxPrecInt): boolean;
 begin
   Result:=true;
   if bt=btExtended then bt:=BaseTypeExtended;
@@ -20188,7 +28417,10 @@ begin
   btSmallInt: begin MinVal:=low(SmallInt); MaxVal:=high(SmallInt); end;
   btLongWord: begin MinVal:=low(LongWord); MaxVal:=high(LongWord); end;
   btLongint: begin MinVal:=low(LongInt); MaxVal:=high(LongInt); end;
-  btInt64,btComp: begin MinVal:=low(int64); MaxVal:=high(int64); end;
+  {$ifdef HasInt64}
+  btInt64,
+  btComp: begin MinVal:=low(int64); MaxVal:=high(int64); end;
+  {$endif}
   btSingle,btIntSingle: begin MinVal:=MinSafeIntSingle; MaxVal:=MaxSafeIntSingle; end;
   btUIntSingle: begin MinVal:=0; MaxVal:=MaxSafeIntSingle; end;
   btDouble,btIntDouble: begin MinVal:=MinSafeIntDouble; MaxVal:=MaxSafeIntDouble; end;
@@ -20234,6 +28466,7 @@ begin
     exit(btUIntDouble);
   if (Precision<=53) and Signed and (BaseTypes[btIntDouble]<>nil) then
     exit(btIntDouble);
+  {$ifdef HasInt64}
   if Precision<=64 then
     begin
     if Signed then
@@ -20242,13 +28475,18 @@ begin
       Result:=btQWord;
     if BaseTypes[Result]<>nil then exit;
     end;
-  RaiseRangeCheck(20170420100336,ErrorEl);
+  {$endif}
+  if ErrorEl<>nil then
+    RaiseRangeCheck(20170420100336,ErrorEl)
+  else
+    Result:=btNone;
 end;
 
-function TPasResolver.GetSmallestIntegerBaseType(MinVal, MaxVal: MaxPrecInt
+function TPasResolver.GetSmallestIntegerBaseType(MinVal, MaxVal: TMaxPrecInt
   ): TResolverBaseType;
+// returns BaseTypeExtended if too big
 var
-  V: MaxPrecInt;
+  V: TMaxPrecInt;
 begin
   if MinVal>MaxVal then
     MinVal:=MaxVal;
@@ -20262,14 +28500,18 @@ begin
       Result:=btShortInt
     else if V<=high(SmallInt) then
       Result:=btSmallInt
-    else if (BaseTypes[btIntSingle]<>nil) and (V<MaxSafeIntSingle) then
+    else if (BaseTypes[btIntSingle]<>nil) and (V<=MaxSafeIntSingle) then
       Result:=btIntSingle
     else if V<=High(Longint) then
       Result:=btLongint
-    else if (BaseTypes[btIntDouble]<>nil) and (V<MaxSafeIntDouble) then
+    else if (BaseTypes[btIntDouble]<>nil) and (V<=MaxSafeIntDouble) then
       Result:=btIntDouble
     else
-      Result:=btInt64;
+      begin
+      Result:=btIntMax;
+      if BaseTypes[Result]=nil then
+        Result:=BaseTypeExtended;
+      end;
     end
   else
     begin
@@ -20278,14 +28520,18 @@ begin
       Result:=btByte
     else if V<=high(Word) then
       Result:=btWord
-    else if (BaseTypes[btUIntSingle]<>nil) and (V<MaxSafeIntSingle) then
+    else if (BaseTypes[btUIntSingle]<>nil) and (V<=MaxSafeIntSingle) then
       Result:=btUIntSingle
     else if V<=High(LongWord) then
       Result:=btLongWord
-    else if (BaseTypes[btUIntDouble]<>nil) and (V<MaxSafeIntDouble) then
+    else if (BaseTypes[btUIntDouble]<>nil) and (V<=MaxSafeIntDouble) then
       Result:=btUIntDouble
     else
-      Result:=btInt64;
+      begin
+      Result:=btIntMax;
+      if BaseTypes[Result]=nil then
+        Result:=BaseTypeExtended;
+      end;
     end;
 end;
 
@@ -20314,19 +28560,26 @@ begin
   bt2:=GetActualBaseType(Str2.BaseType);
   if bt1=bt2 then exit(bt1);
   case bt1 of
-  btChar,btAnsiChar:
+  {$ifdef FPC_HAS_CPSTRING}
+  btAnsiChar:
     case bt2 of
     btChar: Result:=btChar;
     btWideChar: Result:=btWideChar;
     else Result:=bt2;
     end;
+  {$endif}
   btWideChar:
     case bt2 of
+    {$ifdef FPC_HAS_CPSTRING}
     btAnsiChar: Result:=btWideChar;
+    {$endif}
     btWideString: Result:=btWideString;
-    btString,btShortString,btAnsiString,btRawByteString,btUnicodeString: Result:=btUnicodeString;
+    btString,btUnicodeString
+    {$ifdef FPC_HAS_CPSTRING},btShortString,btAnsiString,btRawByteString{$endif}:
+        Result:=btUnicodeString;
     else RaiseNotYetImplemented(20170420103808,ErrorEl);
     end;
+  {$ifdef FPC_HAS_CPSTRING}
   btShortString:
     case bt2 of
     btChar,btAnsiChar: Result:=btShortString;
@@ -20336,13 +28589,17 @@ begin
     btWideString: Result:=btWideString;
     else RaiseNotYetImplemented(20170420120937,ErrorEl);
     end;
-  btString,btAnsiString:
+  {$endif}
+  btString{$ifdef FPC_HAS_CPSTRING},btAnsiString{$endif}:
     case bt2 of
+    {$ifdef FPC_HAS_CPSTRING}
     btChar,btAnsiChar,btString,btShortString,btRawByteString: Result:=btAnsiString;
+    {$endif}
     btWideChar,btUnicodeString: Result:=btUnicodeString;
     btWideString: Result:=btWideString;
     else RaiseNotYetImplemented(20170420121201,ErrorEl);
     end;
+  {$ifdef FPC_HAS_CPSTRING}
   btRawByteString:
     case bt2 of
     btChar,btAnsiChar,btRawByteString,btShortString: Result:=btRawByteString;
@@ -20351,10 +28608,13 @@ begin
     btWideString: Result:=btWideString;
     else RaiseNotYetImplemented(20170420121352,ErrorEl);
     end;
+  {$endif}
   btWideString:
     case bt2 of
-    btChar,btAnsiChar,btWideChar,btShortString,btWideString: Result:=btWideString;
-    btString,btAnsiString,btUnicodeString: Result:=btUnicodeString;
+    btChar,btWideChar,{$ifdef FPC_HAS_CPSTRING}btAnsiChar,btShortString,{$endif}btWideString:
+      Result:=btWideString;
+    btString,{$ifdef FPC_HAS_CPSTRING}btAnsiString,{$endif}btUnicodeString:
+      Result:=btUnicodeString;
     else RaiseNotYetImplemented(20170420121532,ErrorEl);
     end;
   btUnicodeString:
@@ -20366,6 +28626,34 @@ begin
     Result:=btChar
   else if Result=BaseTypeString then
     Result:=btString;
+end;
+
+function TPasResolver.GetCombinedBaseType(const A, B: TPasResolverResult;
+  ErrorEl: TPasElement): TResolverBaseType;
+begin
+  Result:=btNone;
+  if A.BaseType in btAllBooleans then
+    begin
+    if B.BaseType in btAllBooleans then
+      Result:=GetCombinedBoolean(A.BaseType,B.BaseType,ErrorEl);
+    end
+  else if A.BaseType in btAllInteger then
+    begin
+    if B.BaseType in btAllInteger then
+      Result:=GetCombinedInt(A,B,ErrorEl);
+    end
+  else if A.BaseType in btAllChars then
+    begin
+    if B.BaseType in btAllChars then
+      Result:=GetCombinedChar(A,B,ErrorEl)
+    else if B.BaseType in btAllStrings then
+      Result:=GetCombinedString(A,B,ErrorEl);
+    end
+  else if A.BaseType in btAllStrings then
+    begin
+    if B.BaseType in btAllStringAndChars then
+      Result:=GetCombinedString(A,B,ErrorEl);
+    end;
 end;
 
 function TPasResolver.IsElementSkipped(El: TPasElement): boolean;
@@ -20405,24 +28693,64 @@ begin
     Result:=Module.InterfaceSection;
 end;
 
-function TPasResolver.CheckSrcIsADstType(const ResolvedSrcType,
-  ResolvedDestType: TPasResolverResult; ErrorEl: TPasElement): integer;
-// finds distance between classes SrcType and DestType
+function TPasResolver.GetShiftAndMaskForLoHiFunc(BaseType: TResolverBaseType;
+  isLoFunc: Boolean; out Mask: LongWord): Integer;
+const
+  SHIFT_SIZE: array[btByte..{$IFDEF HasInt64}btComp{$ELSE}btIntDouble{$ENDIF}] of Integer = (
+    4, // btByte
+    8, // btShortInt FPC lo/hi(shortint) works like SmallInt
+    8, 8, // btWord, btSmallInt
+    16, 16, 16, 16, // btUIntSingle, btIntSingle, btLongWord, btLongint
+    32, 32 // btUIntDouble, btIntDouble
+    {$IFDEF HasInt64}
+    , 32, 32, 32 // btQWord, btInt64, btComp
+    {$endif}
+  );
 begin
-  Result:=CheckClassIsClass(ResolvedSrcType.LoTypeEl,ResolvedDestType.LoTypeEl,ErrorEl);
+  if (BaseType >= Low(SHIFT_SIZE)) and (BaseType <= High(SHIFT_SIZE)) then
+    begin
+    if msDelphi in CurrentParser.CurrentModeswitches then
+      Result := 8
+    else
+      Result := SHIFT_SIZE[BaseType];
+    case Result of
+      8: Mask := $FF;
+      16: Mask := $FFFF;
+      32: Mask := $FFFFFFFF;
+    else
+      {4} Mask := $F;
+    end;
+    if isLoFunc then
+      Result := 0;
+    end
+  else
+    begin
+    RaiseInternalError(20190130122300);
+    Result := -1;
+    end;
 end;
 
-function TPasResolver.CheckClassIsClass(SrcType, DestType: TPasType;
-  ErrorEl: TPasElement): integer;
+function TPasResolver.CheckSrcIsADstType(const ResolvedSrcType,
+  ResolvedDestType: TPasResolverResult): integer;
+// finds distance between classes SrcType and DestType
+begin
+  Result:=CheckClassIsClass(ResolvedSrcType.LoTypeEl,ResolvedDestType.LoTypeEl);
+end;
+
+function TPasResolver.CheckClassIsClass(SrcType, DestType: TPasType): integer;
 // check if Src is equal or descends from Dest
 var
   ClassEl: TPasClassType;
+  DestScope: TPasClassScope;
+  GenericType: TPasGenericType;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.CheckClassIsClass SrcType=',GetObjName(SrcType),' DestType=',GetObjName(DestType));
   {$ENDIF}
   if DestType=nil then exit(cIncompatible);
   DestType:=ResolveAliasType(DestType);
+  if DestType.ClassType<>TPasClassType then
+    exit(cIncompatible);
 
   Result:=cExact;
   while SrcType<>nil do
@@ -20437,9 +28765,17 @@ begin
       SrcType:=TPasAliasType(SrcType).DestType
     else if SrcType.ClassType=TPasTypeAliasType then
       begin
-      // type alias -> increases distance
+      // type alias -> increase distance
       SrcType:=TPasAliasType(SrcType).DestType;
       inc(Result);
+      end
+    else if SrcType.ClassType=TPasSpecializeType then
+      begin
+      // specialize -> skip
+      if SrcType.CustomData is TPasSpecializeTypeData then
+        SrcType:=TPasSpecializeTypeData(SrcType.CustomData).SpecializedType
+      else
+        SrcType:=TPasSpecializeType(SrcType).DestType;
       end
     else if SrcType.ClassType=TPasClassType then
       begin
@@ -20449,6 +28785,21 @@ begin
         SrcType:=(ClassEl.CustomData as TResolvedReference).Declaration as TPasType
       else
         begin
+        if (ClassEl.GenericTemplateTypes<>nil) and (ClassEl.GenericTemplateTypes.Count>0) then
+          begin
+          // SrcType is a generic
+          DestScope:=DestType.CustomData as TPasClassScope;
+          if DestScope.SpecializedFromItem<>nil then
+            begin
+            // DestType is specialized
+            GenericType:=TPasGenericType(DestScope.SpecializedFromItem.GenericEl);
+            {$IFDEF VerbosePasResolver}
+            writeln(' DestType is specialized from ',GetObjName(GenericType));
+            {$ENDIF}
+            if SrcType=GenericType then
+              exit; // DestType is a specialized SrcType
+            end;
+          end;
         // class ancestor -> increase distance
         SrcType:=(ClassEl.CustomData as TPasClassScope).DirectAncestor;
         inc(Result);
@@ -20457,16 +28808,14 @@ begin
     else
       exit(cIncompatible);
     end;
-  if ErrorEl=nil then ;
   Result:=cIncompatible;
 end;
 
-function TPasResolver.CheckClassesAreRelated(TypeA, TypeB: TPasType;
-  ErrorEl: TPasElement): integer;
+function TPasResolver.CheckClassesAreRelated(TypeA, TypeB: TPasType): integer;
 begin
-  Result:=CheckClassIsClass(TypeA,TypeB,ErrorEl);
+  Result:=CheckClassIsClass(TypeA,TypeB);
   if Result<>cIncompatible then exit;
-  Result:=CheckClassIsClass(TypeB,TypeA,ErrorEl);
+  Result:=CheckClassIsClass(TypeB,TypeA);
 end;
 
 function TPasResolver.GetClassImplementsIntf(ClassEl, Intf: TPasClassType

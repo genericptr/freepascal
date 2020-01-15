@@ -44,7 +44,11 @@ type
 {$endif FPC_HAS_FEATURE_TEXTIO}
 
 const
+{$ifdef CPUAVR}
+  STACK_MARGIN = 64;    { Stack size margin for stack checking }
+{$else}
   STACK_MARGIN = 16384;    { Stack size margin for stack checking }
+{$endif}
 { Random / Randomize constants }
   OldRandSeed : Cardinal = 0;
 
@@ -277,6 +281,22 @@ function do_isdevice(handle:thandle):boolean;forward;
   {$define SYSPROCDEFINED}
 {$endif cpuaarch64}
 
+{$ifdef cpuriscv32}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i riscv32.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpuriscv32}
+
+{$ifdef cpuriscv64}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i riscv64.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpuriscv64}
+
 {$ifndef SYSPROCDEFINED}
   {$Error Can't determine processor type !}
 {$endif}
@@ -436,6 +456,28 @@ function aligntoqword(p : pointer) : pointer;inline;
     result:=p;
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
   end;
+
+
+function AlignTypeData(p : pointer) : pointer; inline;
+  begin
+{$if defined(CPUM68K) and not defined(VER3_0)}
+    result := aligntoqword(p);
+{$else CPUM68K and not VER3_0}
+    result := aligntoptr(p);
+{$endif CPUM68K and not VER3_0}
+  end;
+
+
+{$if not defined(VER3_0) and not defined(VER3_2)}
+type
+  TRttiDataCommon =
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  packed
+{$endif}
+  record
+    Attrs: Pointer;
+  end;
+{$endif not VER3_0 and not VER3_2}
 
 
 {****************************************************************************
@@ -650,16 +692,37 @@ begin
 end;
 
 function random(l:int64): int64;
+var
+ a, b, c, d: cardinal;
+ q, bd, ad, bc, ac: qword;
+ carry: qword;
 begin
-  { always call random, so the random generator cycles (TP-compatible) (JM) }
-  { also do it in two separate steps, so the order in which the two calls
-    are performed is predictable (JM) }
-  random:=mtwist_u32rand;
-  random:=random or ((qword(mtwist_u32rand) shl 32) and high(int64));
-  if (l<>0) then
-    random := random mod l
+  if (l < 0) then
+    begin
+      inc(l);
+      q:=qword(-l)
+    end
   else
-    random := 0;
+    q:=qword(l);
+
+  a:=mtwist_u32rand;
+  b:=mtwist_u32rand;
+
+  c:=q shr 32;
+  d:=cardinal(q);
+
+  bd:=qword(b)*d;
+  ad:=qword(a)*d;
+  bc:=qword(b)*c;
+  ac:=qword(a)*c;
+
+  // We only need the carry bit
+  carry:=((bd shr 32)+cardinal(ad)+cardinal(bc)) shr 32;
+
+  // Calculate the final result
+  result:=int64(carry+(ad shr 32)+(bc shr 32)+ac);
+  if l<0 then
+    result:=-result;
 end;
 
 {$ifndef FPUNONE}
@@ -717,7 +780,11 @@ End;
 {$ifndef FPC_SYSTEM_HAS_STACKTOP}
 function StackTop: pointer;
 begin
-  result:=StackBottom+StackLength;
+  { Avoid wrap to zero on 32-bit }
+  if ptruint(StackBottom) > high(ptruint) - StackLength then
+    result:=pointer(ptruint(high(ptruint)))
+  else
+    result:=StackBottom + StackLength;
 end;
 {$endif FPC_SYSTEM_HAS_STACKTOP}
 
@@ -884,15 +951,27 @@ begin
   { Avoid recursive calls when called from the exit routines }
   if StackError then
    exit;
-  { don't use sack_size, since the stack pointer has already been
+  { check stack alignment }
+{$ifdef CPUI386}
+{$ifdef FPC_STACKALIGNMENT}
+{$if FPC_STACKALIGNMENT=16}
+  if ((PtrUInt(Sptr)+4) mod 16)<>0 then
+    begin
+      StackError:=true;
+      HandleError(202);
+    end;
+{$endif FPC_STACKALIGNMENT=16}
+{$endif FPC_STACKALIGNMENT}
+{$endif CPUI386}
+  { don't use stack_size, since the stack pointer has already been
     decreased when this routine is called
   }
   c := Sptr - STACK_MARGIN;
   if (c <= StackBottom) then
-   begin
-     StackError:=true;
-     HandleError(202);
-   end;
+    begin
+      StackError:=true;
+      HandleError(202);
+    end;
 end;
 {$POP}
 
@@ -929,23 +1008,16 @@ var
 procedure fpc_InitializeUnits;[public,alias:'FPC_INITIALIZEUNITS']; compilerproc;
 var
   i : ALUUInt;
-{$ifdef DEBUG}
   pt : PInitFinalTable;
-{$endif}
 begin
   { call cpu/fpu initialisation routine }
   fpc_cpuinit;
 {$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
-{$ifdef DEBUG}
   pt := PInitFinalTable(EntryInformation.InitFinalTable);
-{$endif}
-  with PInitFinalTable(EntryInformation.InitFinalTable)^ do
 {$else FPC_HAS_INDIRECT_ENTRY_INFORMATION}
-{$ifdef DEBUG}
   pt := @InitFinalTable;
-{$endif}
-  with InitFinalTable do
 {$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+  with pt^ do
    begin
      for i:=1 to ALUUInt(TableCount) do
       begin
@@ -972,10 +1044,10 @@ begin
 end;
 
 
-{$ifdef CPUAVR}
+{$ifdef FPC_INIT_FINAL_UNITS_BY_CALLS}
 procedure FinalizeUnits; external name 'FPC_FINALIZE_FUNC_TABLE';
 
-{$else CPUAVR}
+{$else FPC_INIT_FINAL_UNITS_BY_CALLS}
 procedure FinalizeUnits;[public,alias:'FPC_FINALIZEUNITS'];
 begin
 {$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
@@ -994,13 +1066,14 @@ begin
       end;
    end;
 end;
-{$endif CPUAVR}
+{$endif FPC_INIT_FINAL_UNITS_BY_CALLS}
 
 {*****************************************************************************
                           Error / Exit / ExitProc
 *****************************************************************************}
 
-Procedure system_exit;forward;
+Procedure system_exit;forward;{$ifdef FPC_SYSTEM_EXIT_NO_RETURN}noreturn;{$endif}
+
 {$ifdef FPC_HAS_FEATURE_HEAP}
 {$ifndef HAS_MEMORYMANAGER}
 //not needed if independant memory manager
@@ -1121,7 +1194,7 @@ end;
 procedure internal_do_exit; external name 'FPC_DO_EXIT';
 
 
-Procedure lib_exit;[Public,Alias:'FPC_LIB_EXIT'];
+Procedure fpc_lib_exit;[Public,Alias:'FPC_LIB_EXIT'];
 begin
   InternalExit;
 end;
@@ -1557,10 +1630,8 @@ end;
 { Generic threadmanager }
 {$i thread.inc}
 
-{$ifndef FPC_SECTION_THREADVARS}
 { Generic threadvar support }
 {$i threadvr.inc}
-{$endif FPC_SECTION_THREADVARS}
 
 {$ifdef DISABLE_NO_THREAD_MANAGER}
 { OS Dependent implementation }

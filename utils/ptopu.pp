@@ -72,7 +72,7 @@ TYPE
                notsym,nilsym,orsym,setsym,tosym,virtualsym,usessym,
                casevarsym,ofobjectsym,
                { other symbols }
-               becomes,delphicomment,dopencomment,dclosecomment,opencomment,closecomment,semicolon,colon,equals,
+               becomes,notequal,lessorequal,greaterorequal,delphicomment,dopencomment,dclosecomment,opencomment,closecomment,semicolon,colon,equals,
                openparen,closeparen,period,endoffile,othersym);
 
   { Formatting options }
@@ -190,7 +190,7 @@ Type
     Procedure PPSymbol;
     Procedure Gobble(terminators: keysymset);
     Procedure RShift(currmsym: keysymbol);
-    Procedure RShiftIndent(currmsym: keysymbol);
+    Procedure RShiftIndent{$ifdef debug}(currmsym: keysymbol){$endif debug};
     Function ReadConfigFile: Boolean;
   Public
     Constructor Create;
@@ -252,7 +252,7 @@ CONST
                'and','arr','div','down','file','goto',
                'in','mod','not','nil','or','set','to','virtual','uses',
                'casevar','ofobject',
-               'becomes','delphicomment','dopencomment','dclosecomment',
+               'becomes','notequal','lessorequal','greaterorequal','delphicomment','dopencomment','dclosecomment',
                'opencomment','closecomment','semicolon',
                'colon','equals',
                'openparen','closeparen','period','endoffile','other');
@@ -265,7 +265,7 @@ CONST
 
 
   DblChar : DblCharTable =
-     ( ':=', '//','(*','*)' );
+     ( ':=', '<>', '<=', '>=',  '//','(*','*)' );
 
   SglChar : SglCharTable =
     ('{', '}', ';', ':', '=', '(', ')', '.' );
@@ -959,7 +959,7 @@ Procedure TprettyPrinter.RShift(currmsym: keysymbol);
 {$endif debug}
   END; { of RShift }
 
-Procedure TprettyPrinter.RShiftIndent(currmsym: keysymbol);
+Procedure TprettyPrinter.RShiftIndent{$ifdef debug}(currmsym: keysymbol){$endif debug};
   { Move right, stacking margin positions }
   BEGIN
 {$ifdef debug}
@@ -1384,7 +1384,7 @@ Begin
     IF inbytab IN sets^.selected THEN
       RShift(currsym^.name)
     else IF inbyindent IN sets^.selected THEN
-      RShiftIndent(currsym^.name);
+      RShiftIndent{$ifdef debug}(currsym^.name){$endif debug};
     IF gobsym IN sets^.selected THEN Gobble(sets^.terminators);
     IF crafter IN sets^.selected THEN CrPending := TRUE
   END;
@@ -1411,5 +1411,5 @@ End;
 
 
 Begin
-  dblch := [becomes, opencomment];
+  dblch := [becomes, notequal, lessorequal, greaterorequal, opencomment];
 end.

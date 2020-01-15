@@ -26,7 +26,7 @@ Unit aoptcpu;
 {$i fpcdefs.inc}
 
 { $define DEBUG_PREREGSCHEDULER}
-{ $define DEBUG_AOPTCPU}
+{$define DEBUG_AOPTCPU}
 
 Interface
 
@@ -34,6 +34,9 @@ uses cgbase, cgutils, cpubase, aasmtai, aasmcpu,aopt, aoptobj;
 
 Type
   TCpuAsmOptimizer = class(TAsmOptimizer)
+    { Can't be done in some cases due to the limited range of jumps }
+    function CanDoJumpOpts: Boolean; override;
+
     { uses the same constructor as TAopObj }
     function PeepHoleOptPass1Cpu(var p: tai): boolean; override;
     procedure PeepHoleOptPass2;override;
@@ -83,6 +86,10 @@ Implementation
     cgobj,procinfo,
     aasmbase,aasmdata;
 
+{ Range check must be disabled explicitly as conversions between signed and unsigned
+  32-bit values are done without explicit typecasts }
+{$R-}
+
   function CanBeCond(p : tai) : boolean;
     begin
       result:=
@@ -113,7 +120,9 @@ Implementation
         (r1.signindex = r2.signindex) and
         (r1.shiftimm = r2.shiftimm) and
         (r1.addressmode = r2.addressmode) and
-        (r1.shiftmode = r2.shiftmode);
+        (r1.shiftmode = r2.shiftmode) and
+        (r1.volatility=[]) and
+        (r2.volatility=[]);
     end;
 
   function MatchInstruction(const instr: tai; const op: TCommonAsmOps; const cond: TAsmConds; const postfix: TOpPostfixes): boolean;
@@ -235,6 +244,8 @@ Implementation
               instructionLoadsFromReg :=
                 (p.oper[I]^.ref^.base = reg) or
                 (p.oper[I]^.ref^.index = reg);
+            else
+              ;
           end;
           if instructionLoadsFromReg then exit; {Bailout if we found something}
           Inc(I);
@@ -294,6 +305,8 @@ Implementation
         A_POP:
           Result := (getsupreg(reg) in p.oper[0]^.regset^) or
                                    (reg=NR_STACK_POINTER_REG);
+        else
+          ;
       end;
 
       if Result then
@@ -310,6 +323,8 @@ Implementation
           Result :=
             (taicpu(p).oper[0]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
             (taicpu(p).oper[0]^.ref^.base = reg);
+        else
+          ;
       end;
     end;
 
@@ -366,6 +381,16 @@ Implementation
     begin
     end;
 {$endif DEBUG_AOPTCPU}
+
+
+  function TCpuAsmOptimizer.CanDoJumpOpts: Boolean;
+    begin
+      { Cannot perform these jump optimisations if the ARM architecture has 16-bit thumb codes }
+      Result := not (
+        (current_settings.instructionset = is_thumb) and not (CPUARM_HAS_THUMB2 in cpu_capabilities[current_settings.cputype])
+      );
+    end;
+
 
   function TCpuAsmOptimizer.RemoveSuperfluousMove(const p: tai; movp: tai; const optimizer: string):boolean;
     var
@@ -433,6 +458,19 @@ Implementation
 
               { finally get rid of the mov }
               taicpu(p).loadreg(0,taicpu(movp).oper[0]^.reg);
+              { Remove preindexing and postindexing for LDR in some cases.
+                For example:
+                  ldr	reg2,[reg1, xxx]!
+                  mov reg1,reg2
+                must be translated to:
+                  ldr	reg1,[reg1, xxx]
+
+                Preindexing must be removed there, since the same register is used as the base and as the target.
+                Such case is not allowed for ARM CPU and produces crash. }
+              if (taicpu(p).opcode = A_LDR) and (taicpu(p).oper[1]^.typ = top_ref)
+                and (taicpu(movp).oper[0]^.reg = taicpu(p).oper[1]^.ref^.base)
+              then
+                taicpu(p).oper[1]^.ref^.addressmode:=AM_OFFSET;
               asml.remove(movp);
               movp.free;
             end;
@@ -447,9 +485,11 @@ Implementation
       hp1 : tai;
     begin
       Result:=false;
-      if (MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [taicpu(p).oppostfix]) or
-          ((taicpu(p).oppostfix in [PF_F64F32,PF_F64S16,PF_F64S32,PF_F64U16,PF_F64U32]) and MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [PF_F64])) or
-          ((taicpu(p).oppostfix in [PF_F32F64,PF_F32S16,PF_F32S32,PF_F32U16,PF_F32U32]) and MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [PF_F32]))
+      if ((MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [taicpu(p).oppostfix]) and
+           ((getregtype(taicpu(movp).oper[0]^.reg)=R_MMREGISTER) or (taicpu(p).opcode=A_VLDR))
+          ) or
+          (((taicpu(p).oppostfix in [PF_F64F32,PF_F64S16,PF_F64S32,PF_F64U16,PF_F64U32]) or (getsubreg(taicpu(p).oper[0]^.reg)=R_SUBFD)) and MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [PF_F64])) or
+          (((taicpu(p).oppostfix in [PF_F32F64,PF_F32S16,PF_F32S32,PF_F32U16,PF_F32U32]) or (getsubreg(taicpu(p).oper[0]^.reg)=R_SUBFS)) and MatchInstruction(movp, A_VMOV, [taicpu(p).condition], [PF_F32]))
          ) and
          (taicpu(movp).ops=2) and
          MatchOperand(taicpu(movp).oper[1]^, taicpu(p).oper[0]^.reg) and
@@ -493,6 +533,17 @@ Implementation
                   { adjust used regs }
                   IncludeRegInUsedRegs(taicpu(movp).oper[0]^.reg,UsedRegs);
                 end;
+
+              { change
+                  vldr reg0,[reg1]
+                  vmov reg2,reg0
+                into
+                  ldr reg2,[reg1]
+
+                if reg2 is an int register
+              }
+              if (taicpu(p).opcode=A_VLDR) and (getregtype(taicpu(movp).oper[0]^.reg)=R_INTREGISTER) then
+                taicpu(p).opcode:=A_LDR;
 
               { finally get rid of the mov }
               taicpu(p).loadreg(0,taicpu(movp).oper[0]^.reg);
@@ -627,7 +678,6 @@ Implementation
     var
       hp1,hp2,hp3,hp4: tai;
       i, i2: longint;
-      TmpUsedRegs: TAllUsedRegs;
       tempop: tasmop;
       oldreg: tregister;
       dealloc: tai_regalloc;
@@ -913,7 +963,7 @@ Implementation
                           MatchInstruction(hp2, A_STR, [taicpu(p).condition], [PF_H]) and
                           MatchOperand(taicpu(hp2).oper[0]^, taicpu(p).oper[0]^.reg) then
                           begin
-                            CopyUsedRegs(TmpUsedRegs);
+                            TransferUsedRegs(TmpUsedRegs);
                             UpdateUsedRegs(TmpUsedRegs, tai(p.next));
                             UpdateUsedRegs(TmpUsedRegs, tai(hp1.next));
                             if not(RegUsedAfterInstruction(taicpu(p).oper[0]^.reg,hp2,TmpUsedRegs)) then
@@ -927,7 +977,6 @@ Implementation
                                 p:=hp2;
                                 Result:=true;
                               end;
-                            ReleaseUsedRegs(TmpUsedRegs);
                           end
                         { fold
                           mov reg1,reg0, shift imm1
@@ -1331,7 +1380,7 @@ Implementation
                         if taicpu(hp1).oper[1]^.ref^.index = taicpu(p).oper[0]^.reg then
                           taicpu(hp1).oper[1]^.ref^.index := taicpu(p).oper[1]^.reg;
 
-                        dealloc:=FindRegDeAlloc(taicpu(p).oper[1]^.reg, taicpu(p.Next));
+                        dealloc:=FindRegDeAlloc(taicpu(p).oper[1]^.reg, tai(p.Next));
                         if Assigned(dealloc) then
                           begin
                             asml.remove(dealloc);
@@ -1547,7 +1596,14 @@ Implementation
                 A_ORR,
                 A_MLA,
                 A_MLS,
-                A_MUL:
+                A_MUL,
+                A_QADD,A_QADD16,A_QADD8,
+                A_QSUB,A_QSUB16,A_QSUB8,
+                A_QDADD,A_QDSUB,A_QASX,A_QSAX,
+                A_SHADD16,A_SHADD8,A_UHADD16,A_UHADD8,
+                A_SHSUB16,A_SHSUB8,A_UHSUB16,A_UHSUB8,
+                A_PKHTB,A_PKHBT,
+                A_SMUAD,A_SMUSD:
                   begin
                         {
                           optimize
@@ -1951,6 +2007,7 @@ Implementation
                       strb reg1,[...]
                     }
                     if MatchInstruction(p, taicpu(p).opcode, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_STR, [C_None], [PF_B]) and
                       assigned(FindRegDealloc(taicpu(p).oper[0]^.reg,tai(hp1.Next))) and
@@ -1976,6 +2033,7 @@ Implementation
                       uxtb reg3,reg1
                     }
                     else if MatchInstruction(p, A_UXTB, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_UXTH, [C_None], [PF_None]) and
                       (taicpu(hp1).ops = 2) and
@@ -1999,6 +2057,7 @@ Implementation
                       uxtb reg3,reg1
                     }
                     else if MatchInstruction(p, A_UXTB, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_UXTB, [C_None], [PF_None]) and
                       (taicpu(hp1).ops = 2) and
@@ -2022,8 +2081,8 @@ Implementation
                       uxtb reg3,reg1
                     }
                     else if MatchInstruction(p, A_UXTB, [C_None], [PF_None]) and
-                      GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       (taicpu(p).ops=2) and
+                      GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_AND, [C_None], [PF_None]) and
                       (taicpu(hp1).ops=3) and
                       (taicpu(hp1).oper[2]^.typ=top_const) and
@@ -2058,6 +2117,7 @@ Implementation
                       strh reg1,[...]
                     }
                     if MatchInstruction(p, taicpu(p).opcode, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_STR, [C_None], [PF_H]) and
                       RegEndofLife(taicpu(p).oper[0]^.reg,taicpu(hp1)) and
@@ -2083,6 +2143,7 @@ Implementation
                       uxth reg3,reg1
                     }
                     else if MatchInstruction(p, A_UXTH, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_UXTH, [C_None], [PF_None]) and
                       (taicpu(hp1).ops=2) and
@@ -2109,6 +2170,7 @@ Implementation
                       uxth reg3,reg1
                     }
                     else if MatchInstruction(p, A_UXTH, [C_None], [PF_None]) and
+                      (taicpu(p).ops=2) and
                       GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
                       MatchInstruction(hp1, A_AND, [C_None], [PF_None]) and
                       (taicpu(hp1).ops=3) and
@@ -2216,6 +2278,31 @@ Implementation
                         DebugMsg('Peephole Bl2B done', p);
                       end;
                   end;
+                A_VMOV:
+                  begin
+                    {
+                      change
+                      vmov reg0,reg1,reg2
+                      vmov reg1,reg2,reg0
+                      into
+                      vmov reg0,reg1,reg2
+
+                      can be applied regardless if reg0 or reg2 is the vfp register
+                    }
+                    if (taicpu(p).ops = 3) and
+                      GetNextInstruction(p, hp1) and
+                      MatchInstruction(hp1, A_VMOV, [taicpu(p).condition], [taicpu(p).oppostfix]) and
+                      (taicpu(hp1).ops = 3) and
+                      MatchOperand(taicpu(p).oper[0]^, taicpu(hp1).oper[2]^) and
+                      MatchOperand(taicpu(p).oper[1]^, taicpu(hp1).oper[0]^) and
+                      MatchOperand(taicpu(p).oper[2]^, taicpu(hp1).oper[1]^) then
+                      begin
+                        asml.Remove(hp1);
+                        hp1.free;
+                        DebugMsg('Peephole VMovVMov2VMov done', p);
+                      end;
+                  end;
+                A_VLDR,
                 A_VADD,
                 A_VMUL,
                 A_VDIV,
@@ -2229,8 +2316,12 @@ Implementation
                       RemoveSuperfluousVMov(p, hp1, 'VOpVMov2VOp') then
                       Result:=true;
                   end
+                else
+                  ;
               end;
           end;
+        else
+          ;
       end;
     end;
 
@@ -2280,7 +2371,9 @@ Implementation
                            (l<=4) and
                            CanBeCond(hp1) and
                            { stop on labels }
-                           not(hp1.typ=ait_label) do
+                           not(hp1.typ=ait_label) and
+                           { avoid that we cannot recognize the case BccB2Cond }
+                           not((hp1.typ=ait_instruction) and (taicpu(hp1).opcode=A_B)) do
                            begin
                               inc(l);
                               if MustBeLast(hp1) then
@@ -2315,6 +2408,7 @@ Implementation
                                       until not(assigned(hp1)) or
                                         not(CanBeCond(hp1)) or
                                         (hp1.typ=ait_label);
+                                      DebugMsg('Peephole Bcc2Cond done',hp2);
                                       { wait with removing else GetNextInstruction could
                                         ignore the label if it was the only usage in the
                                         jump moved away }
@@ -2350,17 +2444,24 @@ Implementation
                                     (taicpu(hp2).condition=C_None) and
                                     { real label and jump, no further references to the
                                       label are allowed }
-                                    (tasmlabel(taicpu(p).oper[0]^.ref^.symbol).getrefs=2) and
+                                    (tasmlabel(taicpu(p).oper[0]^.ref^.symbol).getrefs=1) and
                                     FindLabel(tasmlabel(taicpu(p).oper[0]^.ref^.symbol),hp1) then
                                      begin
                                        l:=0;
                                        { skip hp1 to <several moves 2> }
                                        GetNextInstruction(hp1, hp1);
                                        while assigned(hp1) and
-                                         CanBeCond(hp1) do
+                                         CanBeCond(hp1) and
+                                         (l<=3) do
                                          begin
                                            inc(l);
-                                           GetNextInstruction(hp1, hp1);
+                                           if MustBeLast(hp1) then
+                                             begin
+                                               GetNextInstruction(hp1, hp1);
+                                               break;
+                                             end
+                                           else
+                                             GetNextInstruction(hp1, hp1);
                                          end;
                                        { hp1 points to yyy: }
                                        if assigned(hp1) and
@@ -2373,32 +2474,35 @@ Implementation
                                             repeat
                                               if hp1.typ=ait_instruction then
                                                 taicpu(hp1).condition:=condition;
-                                              GetNextInstruction(hp1,hp1);
+                                              if MustBeLast(hp1) then
+                                                begin
+                                                  GetNextInstruction(hp1, hp1);
+                                                  break;
+                                                end
+                                              else
+                                                GetNextInstruction(hp1, hp1);
                                             until not(assigned(hp1)) or
-                                              not(CanBeCond(hp1));
+                                              not(CanBeCond(hp1)) or
+                                              ((hp1.typ=ait_instruction) and (taicpu(hp1).opcode=A_B));
                                             { hp2 is still at jmp yyy }
                                             GetNextInstruction(hp2,hp1);
-                                            { hp2 is now at xxx: }
+                                            { hp1 is now at xxx: }
                                             condition:=inverse_cond(condition);
                                             GetNextInstruction(hp1,hp1);
                                             { hp1 is now at <several movs 2> }
                                             repeat
-                                              taicpu(hp1).condition:=condition;
+                                              if hp1.typ=ait_instruction then
+                                                taicpu(hp1).condition:=condition;
                                               GetNextInstruction(hp1,hp1);
                                             until not(assigned(hp1)) or
                                               not(CanBeCond(hp1)) or
                                               (hp1.typ=ait_label);
-                                            {
-                                            asml.remove(hp1.next)
-                                            hp1.next.free;
-                                            asml.remove(hp1);
-                                            hp1.free;
-                                            }
+                                            DebugMsg('Peephole BccB2Cond done',hp3);
                                             { remove Bcc }
                                             tasmlabel(taicpu(hp3).oper[0]^.ref^.symbol).decrefs;
                                             asml.remove(hp3);
                                             hp3.free;
-                                            { remove jmp }
+                                            { remove B }
                                             tasmlabel(taicpu(hp2).oper[0]^.ref^.symbol).decrefs;
                                             asml.remove(hp2);
                                             hp2.free;
@@ -2408,8 +2512,12 @@ Implementation
                                 end;
                            end;
                       end;
+                  else
+                    ;
                 end;
               end;
+            else
+              ;
           end;
           p := tai(p.next)
         end;
@@ -2446,7 +2554,7 @@ Implementation
           exit;
         regtype:=getregtype(reg);
         supreg:=getsupreg(reg);
-        if (cg.rg[regtype].live_end[supreg]=hp1) and
+        if assigned(cg.rg[regtype]) and (cg.rg[regtype].live_end[supreg]=hp1) and
           RegInInstruction(reg,p) then
           cg.rg[regtype].live_end[supreg]:=p;
       end;
@@ -2461,7 +2569,7 @@ Implementation
           exit;
         regtype:=getregtype(reg);
         supreg:=getsupreg(reg);
-        if (cg.rg[regtype].live_start[supreg]=p) and
+        if assigned(cg.rg[regtype]) and (cg.rg[regtype].live_start[supreg]=p) and
           RegInInstruction(reg,hp1) then
          cg.rg[regtype].live_start[supreg]:=hp1;
       end;
@@ -2489,6 +2597,8 @@ Implementation
             for r:=RS_R0 to RS_R15 do
                if r in p.oper[i]^.regset^ then
                  CheckLiveStart(newreg(R_INTREGISTER,r,R_SUBWHOLE));
+          else
+            ;
         end;
 
       { if live of any reg used by hp1 ends at hp1 and p uses this register then
@@ -2508,6 +2618,8 @@ Implementation
             for r:=RS_R0 to RS_R15 do
                if r in hp1.oper[i]^.regset^ then
                  CheckLiveEnd(newreg(R_INTREGISTER,r,R_SUBWHOLE));
+          else
+            ;
         end;
     end;
 
@@ -2516,6 +2628,15 @@ Implementation
 
   { TODO : schedule also forward }
   { TODO : schedule distance > 1 }
+
+    { returns true if p might be a load of a pc relative tls offset }
+    function PossibleTLSLoad(const p: tai) : boolean;
+      begin
+        Result:=(p.typ=ait_instruction) and (taicpu(p).opcode=A_LDR) and (taicpu(p).oper[1]^.typ=top_ref) and (((taicpu(p).oper[1]^.ref^.base=NR_PC) and
+          (taicpu(p).oper[1]^.ref^.index<>NR_NO)) or ((taicpu(p).oper[1]^.ref^.base<>NR_NO) and
+          (taicpu(p).oper[1]^.ref^.index=NR_PC)));
+      end;
+
     var
       hp1,hp2,hp3,hp4,hp5,insertpos : tai;
       list : TAsmList;
@@ -2556,7 +2677,11 @@ Implementation
             ) and
             GetNextInstruction(hp1,hp2) and
             (hp2.typ=ait_instruction) and
-            { loaded register used by next instruction? }
+            { loaded register used by next instruction?
+
+              if we ever support labels (they could be skipped in theory) here, the gnu2 tls general-dynamic code could get broken (the ldr before
+              the bl may not be scheduled away from the bl) and it needs to be taken care of this case
+            }
             (RegInInstruction(taicpu(hp1).oper[0]^.reg,hp2)) and
             { loaded register not used by previous instruction? }
             not(RegInInstruction(taicpu(hp1).oper[0]^.reg,p)) and
@@ -2572,7 +2697,9 @@ Implementation
             ) and
             { if we modify the basereg AND the first instruction used that reg, we can not schedule }
             ((taicpu(hp1).oper[1]^.ref^.addressmode = AM_OFFSET) or
-             not(instructionLoadsFromReg(taicpu(hp1).oper[1]^.ref^.base,p))) then
+             not(instructionLoadsFromReg(taicpu(hp1).oper[1]^.ref^.base,p))) and
+            not(PossibleTLSLoad(p)) and
+            not(PossibleTLSLoad(hp1)) then
             begin
               hp3:=tai(p.Previous);
               hp5:=tai(p.next);
@@ -2693,7 +2820,11 @@ Implementation
                       A_ITETT:
                         if l=4 then taicpu(hp).opcode := A_ITET;
                       A_ITTTT:
-                        if l=4 then taicpu(hp).opcode := A_ITTT;
+                        begin
+                          if l=4 then taicpu(hp).opcode := A_ITTT;
+                        end
+                      else
+                        ;
                     end;
 
                   break;
@@ -2924,8 +3055,12 @@ Implementation
                                 end;
                            end;
                       end;
+                  else
+                    ;
                 end;
               end;
+            else
+              ;
           end;
           p := tai(p.next)
         end;
@@ -3076,6 +3211,8 @@ Implementation
                 SM_LSR: taicpu(p).opcode:=A_LSR;
                 SM_ASR: taicpu(p).opcode:=A_ASR;
                 SM_ROR: taicpu(p).opcode:=A_ROR;
+                else
+                  internalerror(2019050912);
               end;
 
               if taicpu(p).oper[2]^.shifterop^.rs<>NR_NO then

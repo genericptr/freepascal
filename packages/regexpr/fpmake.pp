@@ -18,8 +18,11 @@ begin
 {$ifdef ALLPACKAGES}
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
-    P.Version:='3.1.1';
+    P.Version:='3.3.1';
     P.OSes:=P.OSes-[embedded,win16,macos,palmos];
+    if Defaults.CPU=jvm then
+      P.OSes := P.OSes - [java,android];
+
     P.Dependencies.Add('rtl-objpas');
     P.SourcePath.Add('src');
 

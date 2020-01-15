@@ -18,7 +18,7 @@
     ./testpas2js --suite=TestUS_Program
     ./testpas2js --suite=TestUS_UsesEmptyFileFail
 }
-unit tcunitsearch;
+unit TCUnitSearch;
 
 {$mode objfpc}{$H+}
 
@@ -29,14 +29,14 @@ uses
   fpcunit, testregistry,
   PScanner, PasTree,
   {$IFDEF CheckPasTreeRefCount}PasResolveEval,{$ENDIF}
-  Pas2jsFileUtils, Pas2jsCompiler, Pas2jsFileCache, Pas2jsLogger,
+  Pas2jsFileUtils, Pas2jsCompiler, Pas2JSPCUCompiler, Pas2jsFileCache, Pas2jsLogger,
   tcmodules;
 
 type
 
   { TTestCompiler }
 
-  TTestCompiler = class(TPas2jsCompiler)
+  TTestCompiler = class(TPas2jsPCUCompiler)
   private
     FExitCode: longint;
   protected
@@ -135,16 +135,25 @@ type
 
   TTestCLI_UnitSearch = class(TCustomTestCLI)
   published
+    procedure TestUS_CreateRelativePath;
+
     procedure TestUS_Program;
     procedure TestUS_UsesEmptyFileFail;
     procedure TestUS_Program_o;
     procedure TestUS_Program_FU;
     procedure TestUS_Program_FU_o;
     procedure TestUS_Program_FE_o;
+    procedure TestUS_IncludeSameDir;
 
+    // uses 'in' modifier
     procedure TestUS_UsesInFile;
     procedure TestUS_UsesInFile_Duplicate;
     procedure TestUS_UsesInFile_IndirectDuplicate;
+    procedure TestUS_UsesInFile_WorkNotEqProgDir;
+    procedure TestUS_UsesInFileTwice;
+
+    procedure TestUS_UseUnitTwiceFail;
+    procedure TestUS_UseUnitTwiceViaNameSpace;
   end;
 
 function LinesToStr(const Lines: array of string): string;
@@ -209,7 +218,7 @@ procedure TCustomTestCLI.SetWorkDir(const AValue: string);
 var
   NewValue: String;
 begin
-  NewValue:=IncludeTrailingPathDelimiter(ResolveDots(AValue));
+  NewValue:=IncludeTrailingPathDelimiter(ExpandFileNamePJ(ResolveDots(AValue)));
   if FWorkDir=NewValue then Exit;
   FWorkDir:=NewValue;
 end;
@@ -221,16 +230,16 @@ begin
   {$ENDIF}
   inherited SetUp;
   FDefaultFileAge:=DateTimeToFileDate(Now);
+  WorkDir:=ExtractFilePath(ParamStr(0));
   {$IFDEF Windows}
-  WorkDir:='P:\test';
   CompilerExe:='P:\bin\pas2js.exe';
   {$ELSE}
-  WorkDir:='/home/user';
   CompilerExe:='/usr/bin/pas2js';
   {$ENDIF}
   FCompiler:=TTestCompiler.Create;
+  //FCompiler.ConfigSupport:=TPas2JSFileConfigSupport.Create(FCompiler);
   Compiler.Log.OnLog:=@DoLog;
-  Compiler.FileCache.DirectoryCache.OnReadDirectory:=@OnReadDirectory;
+  Compiler.FileCache.OnReadDirectory:=@OnReadDirectory;
   Compiler.FileCache.OnReadFile:=@OnReadFile;
   Compiler.FileCache.OnWriteFile:=@OnWriteFile;
 end;
@@ -584,6 +593,49 @@ end;
 
 { TTestCLI_UnitSearch }
 
+procedure TTestCLI_UnitSearch.TestUS_CreateRelativePath;
+
+  procedure DoTest(Filename, BaseDirectory, Expected: string;
+    UsePointDirectory: boolean = false);
+  var
+    Actual: String;
+  begin
+    ForcePathDelims(Filename);
+    ForcePathDelims(BaseDirectory);
+    ForcePathDelims(Expected);
+    if not TryCreateRelativePath(Filename,BaseDirectory,UsePointDirectory,true,Actual) then
+      Actual:=Filename;
+    AssertEquals('TryCreateRelativePath(File='+Filename+',Base='+BaseDirectory+')',
+      Expected,Actual);
+  end;
+
+begin
+  DoTest('/a','/a','');
+  DoTest('/a','/a','.',true);
+  DoTest('/a','/a/','');
+  DoTest('/a/b','/a/b','');
+  DoTest('/a/b','/a/b/','');
+  DoTest('/a','/a/','');
+  DoTest('/a','','/a');
+  DoTest('/a/b','/a','b');
+  DoTest('/a/b','/a/','b');
+  DoTest('/a/b','/a//','b');
+  DoTest('/a','/a/b','..');
+  DoTest('/a','/a/b/','..');
+  DoTest('/a','/a/b//','..');
+  DoTest('/a/','/a/b','..');
+  DoTest('/a','/a/b/c','../..');
+  DoTest('/a','/a/b//c','../..');
+  DoTest('/a','/a//b/c','../..');
+  DoTest('/a','/a//b/c/','../..');
+  DoTest('/a','/b','/a');
+  DoTest('~/bin','/','~/bin');
+  DoTest('$(HOME)/bin','/','$(HOME)/bin');
+  {$IFDEF MSWindows}
+  DoTest('D:\a\b\c.pas','D:\a\d\','..\b\c.pas');
+  {$ENDIF}
+end;
+
 procedure TTestCLI_UnitSearch.TestUS_Program;
 begin
   AddUnit('system.pp',[''],['']);
@@ -649,6 +701,27 @@ begin
   AssertNotNull('foo.js not found',FindFile('foo.js'));
 end;
 
+procedure TTestCLI_UnitSearch.TestUS_IncludeSameDir;
+begin
+  AddUnit('system.pp',[''],['']);
+  AddFile('sub/defines.inc',[
+    '{$Define foo}',
+    '']);
+  AddUnit('sub/unit1.pas',
+  ['{$I defines.inc}',
+   '{$ifdef foo}',
+   'var a: longint;',
+   '{$endif}'],
+  ['']);
+  AddFile('test1.pas',[
+    'uses unit1;',
+    'begin',
+    '  a:=3;',
+    'end.']);
+  AddDir('lib');
+  Compile(['test1.pas','-Fusub','-FElib','-ofoo.js']);
+end;
+
 procedure TTestCLI_UnitSearch.TestUS_UsesInFile;
 begin
   AddUnit('system.pp',[''],['']);
@@ -670,6 +743,7 @@ end;
 
 procedure TTestCLI_UnitSearch.TestUS_UsesInFile_Duplicate;
 begin
+  // check if using two different units with same name
   AddUnit('system.pp',[''],['']);
   AddUnit('unit1.pas',
   ['var a: longint;'],
@@ -684,11 +758,12 @@ begin
     '  a:=b;',
     'end.']);
   Compile(['test1.pas','-Jc'],ExitCodeSyntaxError);
-  AssertEquals('ErrorMsg','Duplicate file found: "/home/user/sub/unit1.pas" and "/home/user/unit1.pas"',ErrorMsg);
+  AssertEquals('ErrorMsg','Duplicate file found: "'+WorkDir+'sub/unit1.pas" and "'+WorkDir+'unit1.pas"',ErrorMsg);
 end;
 
 procedure TTestCLI_UnitSearch.TestUS_UsesInFile_IndirectDuplicate;
 begin
+  // check if using two different units with same name
   AddUnit('system.pp',[''],['']);
   AddUnit('unit1.pas',
   ['var a: longint;'],
@@ -704,7 +779,68 @@ begin
     'begin',
     'end.']);
   Compile(['test1.pas','-Jc'],ExitCodeSyntaxError);
-  AssertEquals('ErrorMsg','Duplicate file found: "/home/user/unit1.pas" and "/home/user/sub/unit1.pas"',ErrorMsg);
+  AssertEquals('ErrorMsg','Duplicate file found: "'+WorkDir+'unit1.pas" and "'+WorkDir+'sub/unit1.pas"',ErrorMsg);
+end;
+
+procedure TTestCLI_UnitSearch.TestUS_UsesInFile_WorkNotEqProgDir;
+begin
+  AddUnit('system.pp',[''],['']);
+  AddUnit('sub/unit2.pas',
+  ['var a: longint;'],
+  ['']);
+  AddUnit('sub/unit1.pas',
+  ['uses unit2;'],
+  ['']);
+  AddFile('sub/test1.pas',[
+    'uses foo in ''unit1.pas'';',
+    'begin',
+    'end.']);
+  Compile(['sub/test1.pas','-Jc']);
+end;
+
+procedure TTestCLI_UnitSearch.TestUS_UsesInFileTwice;
+begin
+  AddUnit('system.pp',[''],['']);
+  AddUnit('unit1.pas',
+  ['var a: longint;'],
+  ['']);
+  AddFile('test1.pas',[
+    'uses foo in ''unit1.pas'', bar in ''unit1.pas'';',
+    'begin',
+    '  bar.a:=foo.a;',
+    '  a:=a;',
+    'end.']);
+  Compile(['test1.pas','-Jc']);
+end;
+
+procedure TTestCLI_UnitSearch.TestUS_UseUnitTwiceFail;
+begin
+  AddUnit('system.pp',[''],['']);
+  AddUnit('sub.unit1.pas',
+  ['var a: longint;'],
+  ['']);
+  AddFile('test1.pas',[
+    'uses sub.Unit1, sub.unit1;',
+    'begin',
+    '  a:=a;',
+    'end.']);
+  Compile(['test1.pas','-FNsub','-Jc'],ExitCodeSyntaxError);
+  AssertEquals('ErrorMsg','Duplicate identifier "sub.unit1"',ErrorMsg);
+end;
+
+procedure TTestCLI_UnitSearch.TestUS_UseUnitTwiceViaNameSpace;
+begin
+  AddUnit('system.pp',[''],['']);
+  AddUnit('sub.unit1.pas',
+  ['var a: longint;'],
+  ['']);
+  AddFile('test1.pas',[
+    'uses unit1, sub.unit1;',
+    'begin',
+    '  unit1.a:=sub.unit1.a;',
+    '  a:=a;',
+    'end.']);
+  Compile(['test1.pas','-FNsub','-Jc']);
 end;
 
 Initialization

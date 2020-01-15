@@ -127,7 +127,8 @@ begin
   typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 {$endif VER3_0}
   Count:=PRecordInfoInit(typeInfo)^.Count;
-  Inc(PRecordInfoInit(typeInfo));
+  { Get element info, hacky, but what else can we do? }
+  typeInfo:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
   { Process elements }
   for i:=1 to count Do
     begin
@@ -138,10 +139,10 @@ end;
 
 
 {$ifndef VER3_0}
-function RecordRTTIInitFlags(ti: Pointer): TRecordInfoInitFlags;
+function RTTIRecordMopInitTable(ti: Pointer): PRTTIRecordOpOffsetTable;
 begin
   ti:=aligntoqword(ti+2+PByte(ti)[1]);
-  Result:=PRecordInfoInit(ti)^.Flags;
+  Result:=PRecordInfoInit(ti)^.InitRecordOpTable;
 end;
 {$endif VER3_0}
 
@@ -261,8 +262,10 @@ begin
         recordrtti(data,typeinfo,@int_finalize);
       end;
 {$endif VER3_0}
+{$ifdef FPC_HAS_FEATURE_CLASSES}
     tkInterface:
       Intf_Decr_Ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_CLASSES}
 {$ifdef FPC_HAS_FEATURE_DYNARRAYS}
     tkDynArray:
       fpc_dynarray_clear(PPointer(Data)^,TypeInfo);
@@ -314,8 +317,10 @@ begin
     tkDynArray:
       fpc_dynarray_incr_ref(PPointer(Data)^);
 {$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_CLASSES}
     tkInterface:
       Intf_Incr_Ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_CLASSES}
 {$ifdef FPC_HAS_FEATURE_VARIANTS}
     tkVariant:
       variant_addref(pvardata(Data)^);
@@ -332,7 +337,7 @@ var
   Temp: pbyte;
   copiedsize,
   expectedoffset,
-  count,
+  EleCount,
   offset,
   i: SizeInt;
   info: pointer;
@@ -365,15 +370,15 @@ begin
         Result:=PArrayInfo(Temp)^.Size*PArrayInfo(Temp)^.ElCount;
       {$else}
         Result:=PArrayInfo(Temp)^.Size;
-        Count:=PArrayInfo(Temp)^.ElCount;
+        EleCount:=PArrayInfo(Temp)^.ElCount;
         { no elements to process => exit }
-        if Count = 0 then
+        if EleCount = 0 then
           Exit;
         Info:=PArrayInfo(Temp)^.ElInfo{$ifndef VER3_0}^{$endif};
-        copiedsize:=Result div Count;
+        copiedsize:=Result div EleCount;
         Offset:=0;
         { Process elements }
-        for I:=1 to Count do
+        for I:=1 to EleCount do
           begin
             fpc_Copy_internal(Src+Offset,Dest+Offset,Info);
             inc(Offset,copiedsize);
@@ -400,16 +405,19 @@ begin
           recordop^.Copy(Src,Dest)
         else
           begin
-            Result:=Size;
-            Inc(PRecordInfoInit(Temp));
+            Result:=PRecordInfoInit(Temp)^.Size;
+            EleCount:=PRecordInfoInit(Temp)^.Count;
+            { Get element info, hacky, but what else can we do? }
+            Temp:=AlignTypeData(Pointer(@PRecordInfoInit(Temp)^.Count)+SizeOf(PRecordInfoInit(Temp)^.Count));
 {$else VER3_0}
             Result:=PRecordInfoFull(Temp)^.Size;
-            Count:=PRecordInfoFull(Temp)^.Count;
-            Inc(PRecordInfoFull(Temp));
+            EleCount:=PRecordInfoFull(Temp)^.Count;
+            { Get element info, hacky, but what else can we do? }
+            Temp:=Pointer(@PRecordInfoFull(Temp)^.Count)+SizeOf(PRecordInfoFull(Temp)^.Count);
 {$endif VER3_0}
             expectedoffset:=0;
             { Process elements with rtti }
-            for i:=1 to Count Do
+            for i:=1 to EleCount Do
               begin
                 Info:=PRecordElement(Temp)^.TypeInfo{$ifndef VER3_0}^{$endif};
                 Offset:=PRecordElement(Temp)^.Offset;
@@ -430,8 +438,10 @@ begin
     tkDynArray:
       fpc_dynarray_assign(PPointer(Dest)^,PPointer(Src)^,typeinfo);
 {$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_CLASSES}
     tkInterface:
       fpc_intf_assign(PPointer(Dest)^,PPointer(Src)^);
+{$endif FPC_HAS_FEATURE_CLASSES}
 {$ifdef FPC_HAS_FEATURE_VARIANTS}
     tkVariant:
       begin

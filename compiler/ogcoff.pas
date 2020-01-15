@@ -133,7 +133,7 @@ interface
          constructor createcoff(const n:string;awin32:boolean;acObjSection:TObjSectionClass);
          procedure CreateDebugSections;override;
          function  sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
-         function  sectiontype2options(atype:TAsmSectiontype):TObjSectionOptions;override;
+         class function sectiontype2options(atype:TAsmSectiontype):TObjSectionOptions;override;
          procedure writereloc(data:aint;len:aword;p:TObjSymbol;reloctype:TObjRelocationType);override;
        end;
 
@@ -592,7 +592,9 @@ implementation
           '.obcj_nlcatlist',
           '.objc_protolist',
           '.stack',
-          '.heap'
+          '.heap',
+          '.gcc_except_table',
+          '.ARM.attributes'
         );
 
 const go32v2stub : array[0..2047] of byte=(
@@ -932,6 +934,8 @@ const pemagic : array[0..3] of byte = (
               RELOC_ABSOLUTE:
                 address_size:=8;
 {$endif cpu64bitaddr}
+              else
+                ;
             end;
 
             address:=0;
@@ -1122,7 +1126,7 @@ const pemagic : array[0..3] of byte = (
       end;
 
 
-    function TCoffObjData.sectiontype2options(aType:TAsmSectionType): TObjSectionOptions;
+    class function TCoffObjData.sectiontype2options(aType:TAsmSectionType): TObjSectionOptions;
       begin
         if (aType in [sec_rodata,sec_rodata_norel]) then
           begin
@@ -1488,7 +1492,8 @@ const pemagic : array[0..3] of byte = (
                if (objsym.bind=AB_LOCAL) then
                  continue;
                case objsym.bind of
-                 AB_GLOBAL :
+                 AB_GLOBAL,
+                 AB_PRIVATE_EXTERN:
                    begin
                      globalval:=COFF_SYM_GLOBAL;
                      sectionval:=objsym.objsection.index;

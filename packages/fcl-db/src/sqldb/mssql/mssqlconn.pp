@@ -317,7 +317,7 @@ end;
 constructor TMSSQLConnection.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  FConnOptions := [sqSupportEmptyDatabaseName, sqEscapeRepeat, sqImplicitTransaction, sqLastInsertID];
+  FConnOptions := [sqSupportEmptyDatabaseName, sqEscapeRepeat, sqImplicitTransaction, sqLastInsertID, sqSequences];
   //FieldNameQuoteChars:=DoubleQuotes; //default
   Ftds := DBTDS_UNKNOWN;
 end;
@@ -410,7 +410,7 @@ end;
 
 procedure TMSSQLConnection.DoInternalConnect;
 const
-  DBVERSION: array[boolean] of BYTE = (DBVER60, DBVERSION_100);
+  DBVERSION: array[boolean] of BYTE = (DBVERSION_73, DBVERSION_100);
   IMPLICIT_TRANSACTIONS_OFF: array[boolean] of shortstring = ('SET IMPLICIT_TRANSACTIONS OFF', 'SET CHAINED OFF');
   ANSI_DEFAULTS_ON: array[boolean] of shortstring = ('SET ANSI_DEFAULTS ON', 'SET QUOTED_IDENTIFIER ON');
   CURSOR_CLOSE_ON_COMMIT_OFF: array[boolean] of shortstring = ('SET CURSOR_CLOSE_ON_COMMIT OFF', 'SET CLOSE ON ENDTRAN OFF');

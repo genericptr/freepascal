@@ -42,7 +42,7 @@ type
 function TCHMHTMLWriter.ResolveLinkIDAbs(const Name: String; Level : Integer = 0): DOMString;
 
 begin
-  Result:=FixHTMLpath(Engine.ResolveLink(Module,Name, True));
+  Result:=UTF8Decode(FixHTMLpath(Engine.ResolveLink(Module,Name, True)));
   // for global index: don't make it relative to the current document.
 end;
 
@@ -81,9 +81,8 @@ end;
 
 function TCHMHTMLWriter.RetrieveOtherFiles(const DataName: String; out
   PathInChm: String; out FileName: String; var Stream: TStream): Boolean;
-var
-  Dir: String;
 begin
+  Result:=True;
   if Stream <> nil then
     Stream.Free;
   Stream := TMemoryStream.Create;
@@ -150,11 +149,9 @@ procedure TCHMHTMLWriter.GenerateTOC;
 var
   TOC: TChmSiteMap;
   Element: TPasElement;
-  k: Integer;
   j: Integer;
   i: Integer;
   AModule: TPasModule;
-  Member: TPasElement;
   Stream: TMemoryStream;
   TmpItem:  TChmSiteMapItem;
   ObjByUnitItem,
@@ -195,12 +192,12 @@ begin
         // by unit
         TmpItem := ObjUnitItem.Children.NewItem;
         TmpItem.Text := Element.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(Element, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(Element, 0)));
         
         //alpha
         TmpItem := GetAlphaItem(AlphaObjItem.Children, UpperCase(Copy(Element.Name, 1, 2))).Children.NewItem;
         TmpItem.Text := Element.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(Element, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(Element, 0)));
         
       end;
       
@@ -211,12 +208,12 @@ begin
         // by unit
         TmpItem := RoutinesUnitItem.Children.NewItem;
         TmpItem.Text := Element.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(Element, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(Element, 0)));
         
         // alpha
         TmpItem := GetAlphaItem(AlphaRoutinesItem.Children, UpperCase(Element.Name[1])).Children.NewItem;
         TmpItem.Text := Element.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(Element, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(Element, 0)));
       end;
     end;
   end;
@@ -292,7 +289,8 @@ var
   ParentElement: TPasElement;
   MemberItem: TChmSiteMapItem;
   Stream: TMemoryStream;
-  s: string;
+  RedirectUrl,Urls: String;
+
 begin
   DoLog('Generating Index...');
 
@@ -307,7 +305,7 @@ begin
         continue;
       ParentItem := Index.Items.NewItem;
       ParentItem.Text := AModule.Name;
-      ParentItem.Local := FixHTMLpath(Allocator.GetFilename(AModule, 0));
+      ParentItem.addLocal(FixHTMLpath(Allocator.GetFilename(AModule, 0)));
 
       //  classes
       for j := 0 to AModule.InterfaceSection.Classes.Count-1 do
@@ -315,18 +313,27 @@ begin
         ParentElement := TPasClassType(AModule.InterfaceSection.Classes[j]);
         ParentItem := Index.Items.NewItem;
         ParentItem.Text := ParentELement.Name;
-        ParentItem.Local := FixHTMLpath(Allocator.GetFilename(ParentElement, 0));
+        ParentItem.addLocal(FixHTMLpath(Allocator.GetFilename(ParentElement, 0)));
         for k := 0 to TPasClassType(ParentElement).Members.Count-1 do
         begin
           TmpElement := TPasElement(TPasClassType(ParentElement).Members.Items[k]);
-          if TmpElement is TPasEnumValue then
-             s := ResolveLinkIDAbs(tmpElement.Parent.PathName)
-           else
-             s := ResolveLinkIDAbs(tmpElement.PathName);
-           if Engine.HidePrivate and(TmpElement.Visibility = visPrivate) then
+          if Engine.HidePrivate and(TmpElement.Visibility = visPrivate) then
             continue;
           if Engine.HideProtected and(TmpElement.Visibility = visProtected) then
             continue;
+          Urls:=FixHTMLpath(Allocator.GetFilename(TmpElement, 0));
+          RedirectUrl:='';
+          if TmpElement is TPasEnumValue then
+             RedirectUrl := UTF8Encode(ResolveLinkIDAbs(tmpElement.Parent.PathName))
+           else
+             RedirectUrl := UTF8Encode(ResolveLinkIDAbs(tmpElement.PathName));
+
+          if(trim(RedirectUrl)<>'') and (RedirectUrl<>urls) then
+            begin
+              writeln('Hint: Index Resolved:',urls,' to ',RedirectUrl);
+              urls:=RedirectUrl;
+            end;
+
           TmpItem := ParentItem.Children.NewItem;
           case ElementType(TmpElement) of
             cmtProcedure   : TmpItem.Text := TmpElement.Name + ' procedure';
@@ -338,13 +345,7 @@ begin
             cmtInterface   : TmpItem.Text := TmpElement.Name + ' interface';
             cmtUnknown     : TmpItem.Text := TmpElement.Name;
           end;
-          TmpItem.Local := FixHTMLpath(Allocator.GetFilename(TmpElement, 0));
-          if (trim(s)<>'') and (tmpitem.local<>s) then
-            begin
-              writeln('Hint: Index: Resolved:',tmpitem.local,' to ',s);
-              tmpitem.local:=s;
-            end;
-
+          TmpItem.addLocal(Urls);
           {
           ParentElement = Class
              TmpElement = Member
@@ -352,11 +353,11 @@ begin
           MemberItem := nil;
           MemberItem := GetAlphaItem(Index.Items, TmpElement.Name);
           // ahh! if MemberItem.Local is empty MemberType is not shown!
-          MemberItem.Local := FixHTMLpath(Allocator.GetFilename(TmpElement, 0));
+          MemberItem.addLocal(Urls);
 
           TmpItem := MemberItem.Children.NewItem;
           TmpItem.Text := ParentElement.Name;
-          TmpITem.Local := FixHTMLpath(Allocator.GetFilename(TmpElement, 0));
+          TmpItem.AddLocal(Urls);
         end;
       end;
       // routines
@@ -365,7 +366,7 @@ begin
         ParentElement := TPasProcedureType(AModule.InterfaceSection.Functions[j]);
         TmpItem := Index.Items.NewItem;
         TmpItem.Text := ParentElement.Name + ' ' + ParentElement.ElementTypeName;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(ParentElement, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(ParentElement, 0)));
       end;
       // consts
       for j := 0 to AModule.InterfaceSection.Consts.Count-1 do
@@ -373,7 +374,7 @@ begin
         ParentElement := TPasElement(AModule.InterfaceSection.Consts[j]);
         TmpItem := Index.Items.NewItem;
         TmpItem.Text := ParentElement.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(ParentElement, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(ParentElement, 0)));
       end;
       // types
       for j := 0 to AModule.InterfaceSection.Types.Count-1 do
@@ -381,7 +382,7 @@ begin
         ParentElement := TPasType(AModule.InterfaceSection.Types[j]);
         TmpItem := Index.Items.NewItem;
         TmpItem.Text := ParentElement.Name;
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(ParentElement, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(ParentElement, 0)));
         // enums
         if ParentELement is TPasEnumType then
         begin
@@ -392,11 +393,11 @@ begin
             // subitem
             TmpItem := ParentItem.Children.NewItem;
             TmpItem.Text := TmpElement.Name;
-            TmpItem.Local := ParentItem.Local;
+            TmpItem.addLocal(ParentItem.Local);
             // root level
             TmpItem := Index.Items.NewItem;
             TmpItem.Text := TmpElement.Name;
-            TmpItem.Local := ParentItem.Local;
+            TmpItem.addLocal(ParentItem.Local);
           end;
         end;
       end;
@@ -406,7 +407,7 @@ begin
         ParentElement := TPasElement(AModule.InterfaceSection.Variables[j]);
         TmpItem := Index.Items.NewItem;
         TmpItem.Text := ParentElement.Name + ' var';
-        TmpItem.Local := FixHTMLpath(Allocator.GetFilename(ParentElement, 0));
+        TmpItem.addLocal(FixHTMLpath(Allocator.GetFilename(ParentElement, 0)));
       end;
       // declarations
       {

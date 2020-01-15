@@ -13,11 +13,11 @@ begin
 {$endif ALLPACKAGES}
 
     P:=AddPackage('fcl-report');
-    P.ShortName:='fpreport';
+    P.ShortName:='fpre';
 {$ifdef ALLPACKAGES}
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
-    P.Version:='3.1.1';
+    P.Version:='3.3.1';
     P.Dependencies.Add('fcl-base');
     P.Dependencies.Add('fcl-image');
     P.Dependencies.Add('fcl-xml');
@@ -31,7 +31,7 @@ begin
     P.Email := '';
     P.Description := 'GUI-independent Reporting Engine';
     P.NeedLibC:= false;
-    P.OSes:=[linux, win32, darwin, freebsd];
+    P.OSes:=[linux, win32, win64, darwin, freebsd];
     P.SourcePath.Add('src');
 {$IFDEF VER2_6}    
     T:=P.Targets.AddUnit('fprepexprpars.pp');

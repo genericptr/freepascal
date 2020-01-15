@@ -26,7 +26,7 @@ unit fgl;
 interface
 
 uses
-  types, sysutils;
+  types, sysutils, sortbase;
 
 {$IF defined(VER2_4)}
   {$DEFINE OldSyntax}
@@ -41,13 +41,16 @@ type
   TFPSList = class;
   TFPSListCompareFunc = function(Key1, Key2: Pointer): Integer of object;
 
+  { TFPSList }
+
   TFPSList = class(TObject)
   protected
     FList: PByte;
     FCount: Integer;
-    FCapacity: Integer; { list is one longer sgthan capacity, for temp }
+    FCapacity: Integer; { list has room for capacity+1 items, contains room for a temporary item }
     FItemSize: Integer;
     procedure CopyItem(Src, Dest: Pointer); virtual;
+    procedure CopyItems(Src, Dest: Pointer; aCount : Integer); virtual;
     procedure Deref(Item: Pointer); virtual; overload;
     procedure Deref(FromIndex, ToIndex: Integer); overload;
     function Get(Index: Integer): Pointer;
@@ -68,6 +71,7 @@ type
   public
     constructor Create(AItemSize: Integer = sizeof(Pointer));
     destructor Destroy; override;
+    class Function ItemIsManaged : Boolean; virtual;
     function Add(Item: Pointer): Integer;
     procedure Clear;
     procedure Delete(Index: Integer);
@@ -85,6 +89,7 @@ type
     function Remove(Item: Pointer): Integer;
     procedure Pack;
     procedure Sort(Compare: TFPSListCompareFunc);
+    procedure Sort(Compare: TFPSListCompareFunc; SortingAlgorithm: PSortingAlgorithm);
     property Capacity: Integer read FCapacity write SetCapacity;
     property Count: Integer read FCount write SetCount;
     property Items[Index: Integer]: Pointer read Get write Put; default;
@@ -113,6 +118,8 @@ type
     property Current: T read GetCurrent;
   end;
 
+  { TFPGList }
+
   generic TFPGList<T> = class(TFPSList)
   private
     type
@@ -136,6 +143,8 @@ type
     Type
       TFPGListEnumeratorSpec = specialize TFPGListEnumerator<T>;
     constructor Create;
+
+    class Function ItemIsManaged : Boolean; override;
     function Add(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     function Extract(const Item: T): T; {$ifdef FGLINLINE} inline; {$endif}
     property First: T read GetFirst write SetFirst;
@@ -149,6 +158,7 @@ type
 {$endif VER2_4}
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
+    procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
   end;
@@ -189,6 +199,7 @@ type
 {$endif VER2_4}
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
+    procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
     property FreeObjects: Boolean read FFreeObjects write FFreeObjects;
@@ -229,6 +240,7 @@ type
 {$endif VER2_4}
     function Remove(const Item: T): Integer; {$ifdef FGLINLINE} inline; {$endif}
     procedure Sort(Compare: TCompareFunc);
+    procedure Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
     property Items[Index: Integer]: T read Get write Put; default;
     property List: PTypeList read GetList;
   end;
@@ -271,6 +283,7 @@ type
     procedure InsertKeyData(Index: Integer; AKey, AData: Pointer);
     function Remove(AKey: Pointer): Integer;
     procedure Sort;
+    procedure Sort(SortingAlgorithm: PSortingAlgorithm);
     property Duplicates: TDuplicates read FDuplicates write FDuplicates;
     property KeySize: Integer read FKeySize;
     property DataSize: Integer read FDataSize;
@@ -455,6 +468,11 @@ begin
   System.Move(Src^, Dest^, FItemSize);
 end;
 
+procedure TFPSList.CopyItems(Src, Dest: Pointer; aCount: Integer);
+begin
+  System.Move(Src^, Dest^, FItemSize*aCount);
+end;
+
 procedure TFPSList.RaiseIndexError(Index : Integer);
 begin
   Error(SListIndexError, Index);
@@ -545,6 +563,11 @@ procedure TFPSList.CheckIndex(AIndex : Integer);
 begin
   if (AIndex < 0) or (AIndex >= FCount) then
     Error(SListIndexError, AIndex);
+end;
+
+class function TFPSList.ItemIsManaged: Boolean;
+begin
+  Result:=False;
 end;
 
 
@@ -790,46 +813,41 @@ begin
   FCount:=NewCount;
 end;
 
-// Needed by Sort method.
+procedure TFPSList.Sort(Compare: TFPSListCompareFunc);
+begin
+  Sort(Compare, SortBase.DefaultSortingAlgorithm);
+end;
+
+type
+  PFPSList_Sort_Comparer_Context = ^TFPSList_Sort_Comparer_Context;
+  TFPSList_Sort_Comparer_Context = record
+    Compare: TFPSListCompareFunc;
+  end;
+
+function TFPSList_Sort_Comparer(Item1, Item2, Context: Pointer): Integer;
+begin
+  Result := PFPSList_Sort_Comparer_Context(Context)^.Compare(Item1, Item2);
+end;
+
+procedure TFPSList.Sort(Compare: TFPSListCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+var
+  Context: TFPSList_Sort_Comparer_Context;
+begin
+  Context.Compare := Compare;
+  SortingAlgorithm^.ItemListSorter_ContextComparer(FList, FCount, FItemSize, @TFPSList_Sort_Comparer, @Context);
+end;
 
 procedure TFPSList.QuickSort(L, R: Integer; Compare: TFPSListCompareFunc);
 var
-  I, J, P: Integer;
-  PivotItem: Pointer;
+  Context: TFPSList_Sort_Comparer_Context;
+  SortingAlgorithm: PSortingAlgorithm;
 begin
-  repeat
-    I := L;
-    J := R;
-    { cast to dword to avoid overflow to a negative number during addition which
-      would result again in a negative number when being divided }
-    P := (dword(L) + dword(R)) div 2;
-    repeat
-      PivotItem := InternalItems[P];
-      while Compare(PivotItem, InternalItems[I]) > 0 do
-        Inc(I);
-      while Compare(PivotItem, InternalItems[J]) < 0 do
-        Dec(J);
-      if I <= J then
-      begin
-        InternalExchange(I, J);
-        if P = I then
-          P := J
-        else if P = J then
-          P := I;
-        Inc(I);
-        Dec(J);
-      end;
-    until I > J;
-    if L < J then
-      QuickSort(L, J, Compare);
-    L := I;
-  until I >= R;
-end;
-
-procedure TFPSList.Sort(Compare: TFPSListCompareFunc);
-begin
-  if not Assigned(FList) or (FCount < 2) then exit;
-  QuickSort(0, FCount-1, Compare);
+  if (R > L) and (L >= 0) then
+  begin
+    Context.Compare := Compare;
+    SortingAlgorithm := SortBase.DefaultSortingAlgorithm;
+    SortingAlgorithm^.ItemListSorter_ContextComparer(FList + FItemSize*L, R-L+1, FItemSize, @TFPSList_Sort_Comparer, @Context);
+  end;
 end;
 
 procedure TFPSList.AddList(Obj: TFPSList);
@@ -838,8 +856,21 @@ var
 begin
   if Obj.ItemSize <> FItemSize then
     Error(SListItemSizeError, 0);
-  for I := 0 to Obj.Count - 1 do
-    Add(Obj[i]);
+  // Do this now.
+  Capacity:=Capacity+Obj.Count;
+  if ItemIsManaged then
+    begin
+    // nothing for it, need to do it manually to give deref a chance.
+    For I:=0 to Obj.Count-1 do
+      Add(Obj[i])
+    end
+  else
+    begin
+    if Obj.Count=0 then
+      exit;
+    CopyItems(Obj.InternalItems[0],InternalItems[FCount],Obj.Count);
+    FCount:=FCount+Obj.Count;
+    end
 end;
 
 procedure TFPSList.Assign(Obj: TFPSList);
@@ -890,7 +921,7 @@ end;
 
 procedure TFPGList.Deref(Item: Pointer);
 begin
-  Finalize(T(Item^));
+ Finalize(T(Item^));
 end;
 
 function TFPGList.Get(Index: Integer): T;
@@ -900,7 +931,7 @@ end;
 
 function TFPGList.GetList: PTypeList;
 begin
-  Result := PTypeList(FList);
+  Result := PTypeList(@FList);
 end;
 
 function TFPGList.ItemPtrCompare(Item1, Item2: Pointer): Integer;
@@ -934,6 +965,19 @@ end;
 procedure TFPGList.SetFirst(const Value: T);
 begin
   inherited SetFirst(@Value);
+end;
+
+class function TFPGList.ItemIsManaged: Boolean;
+begin
+{$IFNDEF VER3_0}
+{$IFNDEF VER3_2}
+  Result:=IsManagedType(T);
+{$ELSE}  
+  Result:=True; // Fallback to old behaviour  
+{$ENDIF}
+{$ELSE}
+  Result:=True; // Fallback to old behaviour  
+{$ENDIF}
 end;
 
 function TFPGList.GetEnumerator: TFPGListEnumeratorSpec;
@@ -976,14 +1020,25 @@ var
   i: Integer;
   
 begin
-  for I := 0 to Source.Count - 1 do
-    Add(Source[i]);
+  if ItemIsManaged then
+    begin
+    Capacity:=Capacity+Source.Count;
+    for I := 0 to Source.Count - 1 do
+      Add(Source[i]);
+    end
+  else
+    Inherited AddList(TFPSList(source))
 end;
 
 procedure TFPGList.Assign(Source: TFPGList);
 begin
-  Clear;
-  AddList(Source);
+  if ItemIsManaged then
+    begin
+    Clear;
+    AddList(Source);
+    end
+  else
+    Inherited Assign(TFPSList(source))
 end;
 {$endif VER2_4}
 
@@ -998,6 +1053,12 @@ procedure TFPGList.Sort(Compare: TCompareFunc);
 begin
   FOnCompare := Compare;
   inherited Sort(@ItemPtrCompare);
+end;
+
+procedure TFPGList.Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := Compare;
+  inherited Sort(@ItemPtrCompare, SortingAlgorithm);
 end;
 
 
@@ -1029,7 +1090,7 @@ end;
 
 function TFPGObjectList.GetList: PTypeList;
 begin
-  Result := PTypeList(FList);
+  Result := PTypeList(@FList);
 end;
 
 function TFPGObjectList.ItemPtrCompare(Item1, Item2: Pointer): Integer;
@@ -1121,6 +1182,12 @@ begin
   inherited Sort(@ItemPtrCompare);
 end;
 
+procedure TFPGObjectList.Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := Compare;
+  inherited Sort(@ItemPtrCompare, SortingAlgorithm);
+end;
+
 
 {****************************************************************************}
 {*                TFPGInterfacedObjectList                                  *}
@@ -1153,7 +1220,7 @@ end;
 
 function TFPGInterfacedObjectList.GetList: PTypeList;
 begin
-  Result := PTypeList(FList);
+  Result := PTypeList(@FList);
 end;
 
 function TFPGInterfacedObjectList.ItemPtrCompare(Item1, Item2: Pointer): Integer;
@@ -1244,6 +1311,12 @@ procedure TFPGInterfacedObjectList.Sort(Compare: TCompareFunc);
 begin
   FOnCompare := Compare;
   inherited Sort(@ItemPtrCompare);
+end;
+
+procedure TFPGInterfacedObjectList.Sort(Compare: TCompareFunc; SortingAlgorithm: PSortingAlgorithm);
+begin
+  FOnCompare := Compare;
+  inherited Sort(@ItemPtrCompare, SortingAlgorithm);
 end;
 
 {****************************************************************************
@@ -1480,6 +1553,11 @@ begin
   inherited Sort(FOnKeyPtrCompare);
 end;
 
+procedure TFPSMap.Sort(SortingAlgorithm: PSortingAlgorithm);
+begin
+  inherited Sort(FOnKeyPtrCompare, SortingAlgorithm);
+end;
+
 {****************************************************************************
                              TFPGMap
  ****************************************************************************}
@@ -1619,11 +1697,7 @@ begin
   if Result then
     AData := TData(inherited GetData(I)^)
   else
-{$IFDEF VER2_6}  
-    FillChar(AData,SizeOf(TData),0);
-{$ELSE}
     AData := Default(TData);
-{$ENDIF}    
 end;
 
 procedure TFPGMap.AddOrSetData(const AKey: TKey; const AData: TData);
@@ -1805,11 +1879,7 @@ begin
   if Result then
     AData := TData(inherited GetData(I)^)
   else
-{$IFDEF VER2_6}
-    FillChar(AData,SizeOf(TData),0);
-{$ELSE}
     AData := Default(TData);
-{$ENDIF}
 end;
 
 procedure TFPGMapObject.AddOrSetData(const AKey: TKey; const AData: TData);
@@ -1987,11 +2057,7 @@ begin
   if Result then
     AData := TData(inherited GetData(I)^)
   else
-{$IFDEF VER2_6}
-    FillChar(AData,SizeOf(TData),0);
-{$ELSE}
     AData := Default(TData);
-{$ENDIF}
 end;
 
 procedure TFPGMapInterfacedObjectData.AddOrSetData(const AKey: TKey;

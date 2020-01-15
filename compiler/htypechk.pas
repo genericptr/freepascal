@@ -37,6 +37,8 @@ interface
         nod : tnodetype;
         inr : tinlinenumber;
         op_overloading_supported : boolean;
+        minargs : longint;
+        maxargs : longint;
       end;
 
       Ttok2opRec=record
@@ -111,33 +113,33 @@ interface
     const
       tok2nodes=27;
       tok2node:array[1..tok2nodes] of ttok2noderec=(
-        (tok:_PLUS       ;nod:addn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_MINUS      ;nod:subn;inr:in_none;op_overloading_supported:true),      { binary and unary overloading supported }
-        (tok:_STAR       ;nod:muln;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_SLASH      ;nod:slashn;inr:in_none;op_overloading_supported:true),    { binary overloading supported }
-        (tok:_EQ         ;nod:equaln;inr:in_none;op_overloading_supported:true),    { binary overloading supported }
-        (tok:_GT         ;nod:gtn;inr:in_none;op_overloading_supported:true),       { binary overloading supported }
-        (tok:_LT         ;nod:ltn;inr:in_none;op_overloading_supported:true),       { binary overloading supported }
-        (tok:_GTE        ;nod:gten;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_LTE        ;nod:lten;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_SYMDIF     ;nod:symdifn;inr:in_none;op_overloading_supported:true),   { binary overloading supported }
-        (tok:_STARSTAR   ;nod:starstarn;inr:in_none;op_overloading_supported:true), { binary overloading supported }
-        (tok:_OP_AS      ;nod:asn;inr:in_none;op_overloading_supported:false),      { binary overloading NOT supported }
-        (tok:_OP_IN      ;nod:inn;inr:in_none;op_overloading_supported:true),       { binary overloading supported }
-        (tok:_OP_IS      ;nod:isn;inr:in_none;op_overloading_supported:false),      { binary overloading NOT supported }
-        (tok:_OP_OR      ;nod:orn;inr:in_none;op_overloading_supported:true),       { binary overloading supported }
-        (tok:_OP_AND     ;nod:andn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_OP_DIV     ;nod:divn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_OP_NOT     ;nod:notn;inr:in_none;op_overloading_supported:true),      { unary overloading supported }
-        (tok:_OP_MOD     ;nod:modn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_OP_SHL     ;nod:shln;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_OP_SHR     ;nod:shrn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_OP_XOR     ;nod:xorn;inr:in_none;op_overloading_supported:true),      { binary overloading supported }
-        (tok:_ASSIGNMENT ;nod:assignn;inr:in_none;op_overloading_supported:true),   { unary overloading supported }
-        (tok:_OP_EXPLICIT;nod:assignn;inr:in_none;op_overloading_supported:true),   { unary overloading supported }
-        (tok:_NE         ;nod:unequaln;inr:in_none;op_overloading_supported:true),  { binary overloading supported }
-        (tok:_OP_INC     ;nod:inlinen;inr:in_inc_x;op_overloading_supported:true),  { unary overloading supported }
-        (tok:_OP_DEC     ;nod:inlinen;inr:in_dec_x;op_overloading_supported:true)   { unary overloading supported }
+        (tok:_PLUS       ;nod:addn;inr:in_none;op_overloading_supported:true;minargs:1;maxargs:2),      { binary overloading supported }
+        (tok:_MINUS      ;nod:subn;inr:in_none;op_overloading_supported:true;minargs:1;maxargs:2),      { binary and unary overloading supported }
+        (tok:_STAR       ;nod:muln;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_SLASH      ;nod:slashn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),    { binary overloading supported }
+        (tok:_EQ         ;nod:equaln;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),    { binary overloading supported }
+        (tok:_GT         ;nod:gtn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),       { binary overloading supported }
+        (tok:_LT         ;nod:ltn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),       { binary overloading supported }
+        (tok:_GTE        ;nod:gten;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_LTE        ;nod:lten;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_SYMDIF     ;nod:symdifn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),   { binary overloading supported }
+        (tok:_STARSTAR   ;nod:starstarn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2), { binary overloading supported }
+        (tok:_OP_AS      ;nod:asn;inr:in_none;op_overloading_supported:false;minargs:0;maxargs:0),      { binary overloading NOT supported }
+        (tok:_OP_IN      ;nod:inn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),       { binary overloading supported }
+        (tok:_OP_IS      ;nod:isn;inr:in_none;op_overloading_supported:false;minargs:0;maxargs:0),      { binary overloading NOT supported }
+        (tok:_OP_OR      ;nod:orn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),       { binary overloading supported }
+        (tok:_OP_AND     ;nod:andn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_OP_DIV     ;nod:divn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_OP_NOT     ;nod:notn;inr:in_none;op_overloading_supported:true;minargs:1;maxargs:1),      { unary overloading supported }
+        (tok:_OP_MOD     ;nod:modn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_OP_SHL     ;nod:shln;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_OP_SHR     ;nod:shrn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_OP_XOR     ;nod:xorn;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),      { binary overloading supported }
+        (tok:_ASSIGNMENT ;nod:assignn;inr:in_none;op_overloading_supported:true;minargs:1;maxargs:1),   { unary overloading supported }
+        (tok:_OP_EXPLICIT;nod:assignn;inr:in_none;op_overloading_supported:true;minargs:1;maxargs:1),   { unary overloading supported }
+        (tok:_NE         ;nod:unequaln;inr:in_none;op_overloading_supported:true;minargs:2;maxargs:2),  { binary overloading supported }
+        (tok:_OP_INC     ;nod:inlinen;inr:in_inc_x;op_overloading_supported:true;minargs:1;maxargs:1),  { unary overloading supported }
+        (tok:_OP_DEC     ;nod:inlinen;inr:in_dec_x;op_overloading_supported:true;minargs:1;maxargs:1)   { unary overloading supported }
       );
 
       tok2ops=4;
@@ -183,7 +185,7 @@ interface
 
     { sets varsym varstate field correctly }
     type
-      tvarstateflag = (vsf_must_be_valid,vsf_use_hints);
+      tvarstateflag = (vsf_must_be_valid,vsf_use_hints,vsf_use_hint_for_string_result);
       tvarstateflags = set of tvarstateflag;
     procedure set_varstate(p:tnode;newstate:tvarstate;varstateflags:tvarstateflags);
 
@@ -192,6 +194,7 @@ interface
     procedure set_unique(p : tnode);
 
     function  valid_for_formal_var(p : tnode; report_errors: boolean) : boolean;
+    function  valid_for_formal_constref(p : tnode; report_errors: boolean) : boolean;
     function  valid_for_formal_const(p : tnode; report_errors: boolean) : boolean;
     function  valid_for_var(p:tnode; report_errors: boolean):boolean;
     function  valid_for_assignment(p:tnode; report_errors: boolean):boolean;
@@ -213,7 +216,7 @@ implementation
     uses
        systems,constexp,globals,
        cutils,verbose,
-       symtable,
+       symtable,symutil,
        defutil,defcmp,
        nbas,ncnv,nld,nmem,ncal,nmat,ninl,nutils,procinfo,
        pgenutil
@@ -330,6 +333,7 @@ implementation
                              (treetyp in order_theoretic_operators)
                            ) or
                            (
+                             (m_mac in current_settings.modeswitches) and
                              is_stringlike(rd) and
                              (ld.typ=orddef) and
                              (treetyp in string_comparison_operators)) or
@@ -602,6 +606,8 @@ implementation
 
               result:=true;
             end;
+          else
+            ;
         end;
       end;
 
@@ -624,7 +630,11 @@ implementation
         while count > 0 do
           begin
             parasym:=tparavarsym(pf.parast.SymList[count-1]);
-            if is_boolean(parasym.vardef) then
+            if parasym.typ<>paravarsym then
+              begin
+                dec(count);
+              end
+            else if is_boolean(parasym.vardef) then
               begin
                 if parasym.name='RANGECHECK' then
                   begin
@@ -696,6 +706,8 @@ implementation
                         begin
                           result:=
                             tok2node[i].op_overloading_supported and
+                            (tok2node[i].minargs<=1) and
+                            (tok2node[i].maxargs>=1) and
                             isunaryoperatoroverloadable(tok2node[i].nod,tok2node[i].inr,ld);
                           break;
                         end;
@@ -712,6 +724,8 @@ implementation
                       rd:=tparavarsym(pf.parast.SymList[1]).vardef;
                       result:=
                         tok2node[i].op_overloading_supported and
+                        (tok2node[i].minargs<=2) and
+                        (tok2node[i].maxargs>=2) and
                         isbinaryoperatoroverloadable(tok2node[i].nod,ld,nothingn,rd,nothingn);
                       break;
                     end;
@@ -762,7 +776,11 @@ implementation
                   optoken:=_OP_INC;
                 in_dec_x:
                   optoken:=_OP_DEC;
+                else
+                  ;
              end;
+           else
+             ;
         end;
         if (optoken=NOTOKEN) then
           begin
@@ -840,7 +858,7 @@ implementation
             exit;
           end;
 
-        addsymref(operpd.procsym);
+        addsymref(operpd.procsym,operpd);
 
         { the nil as symtable signs firstcalln that this is
           an overloaded operator }
@@ -886,6 +904,8 @@ implementation
                     optoken:=_GT;
                   _GTE:
                     optoken:=_LT;
+                  else
+                    ;
                 end;
                 candidates:=tcallcandidates.create_operator(optoken,ppn);
               end;
@@ -1033,7 +1053,7 @@ implementation
             exit;
           end;
 
-        addsymref(operpd.procsym);
+        addsymref(operpd.procsym,operpd);
 
         { the nil as symtable signs firstcalln that this is
           an overloaded operator }
@@ -1248,6 +1268,8 @@ implementation
                          pointer itself is read and never written }
                        newstate := vs_read;
                      end;
+                   else
+                     ;
                end;
                  p:=tunarynode(p).left;
                end;
@@ -1275,6 +1297,9 @@ implementation
                break;
              loadn :
                begin
+                 { the methodpointer/framepointer is read }
+                 if assigned(tunarynode(p).left) then
+                   set_varstate(tunarynode(p).left,vs_read,[vsf_must_be_valid]);
                  if (tloadnode(p).symtableentry.typ in [localvarsym,paravarsym,staticvarsym]) then
                    begin
                      hsym:=tabstractvarsym(tloadnode(p).symtableentry);
@@ -1299,7 +1324,20 @@ implementation
                                begin
                                  if (vo_is_funcret in hsym.varoptions) then
                                    begin
-                                     if (vsf_use_hints in varstateflags) then
+                                     { An uninitialized function Result of a managed type needs special handling.
+                                       When passing it as a var parameter a warning need to be emitted, since a user
+                                       may expect Result to be empty (nil) by default as it happens with local vars
+                                       of a managed type. But this is not true for Result and may lead to serious issues.
+
+                                       The only exception is SetLength(Result, ?) for a string Result. A user always
+                                       expects undefined contents of the string after calling SetLength(). In such
+                                       case a hint need to be emitted.
+                                     }
+                                     if is_managed_type(hsym.vardef) then
+                                       if not ( is_string(hsym.vardef) and (vsf_use_hint_for_string_result in varstateflags) ) then
+                                         exclude(varstateflags,vsf_use_hints);
+
+                                     if vsf_use_hints in varstateflags then
                                        begin
                                          if is_managed_type(hsym.vardef) then
                                            CGMessagePos(p.fileinfo,sym_h_managed_function_result_uninitialized)
@@ -1337,9 +1375,13 @@ implementation
                    vs_readwritten:
                      if not(nf_write in tloadnode(p).flags) then
                        include(tloadnode(p).flags,nf_modify);
+                   else
+                     ;
                  end;
                  break;
                end;
+             addrn:
+               break;
              callparan :
                internalerror(200310081);
              else
@@ -1460,6 +1502,8 @@ implementation
                    gotrecord:=true;
                  stringdef :
                    gotstring:=true;
+                 else
+                   ;
                end;
                if (valid_property in opts) then
                  begin
@@ -1602,6 +1646,8 @@ implementation
                            exit
                          end;
                      end;
+                   else
+                     ;
                  end;
                  hp:=ttypeconvnode(hp).left;
                end;
@@ -1930,6 +1976,13 @@ implementation
       end;
 
 
+    function  valid_for_formal_constref(p : tnode; report_errors: boolean) : boolean;
+      begin
+        valid_for_formal_constref:=(p.resultdef.typ=formaldef) or
+          valid_for_assign(p,[valid_void,valid_range],report_errors);
+      end;
+
+
     function  valid_for_formal_const(p : tnode; report_errors: boolean) : boolean;
       begin
         valid_for_formal_const:=(p.resultdef.typ=formaldef) or
@@ -1964,7 +2017,7 @@ implementation
               { all types can be passed to a formaldef,
                 but it is not the prefered way }
               if not is_constnode(fromnode) then
-                eq:=te_convert_l2
+                eq:=te_convert_l6
               else
                 eq:=te_incompatible;
             end;
@@ -2025,6 +2078,8 @@ implementation
                  (tfiledef(def_to).filetyp = ft_untyped) then
                 eq:=te_convert_l1;
             end;
+          else
+            ;
         end;
       end;
 
@@ -2037,11 +2092,6 @@ implementation
       begin
         { Note: eq must be already valid, it will only be updated! }
         case def_to.typ of
-          formaldef :
-            begin
-              { all types can be passed to a formaldef }
-              eq:=te_equal;
-            end;
           stringdef :
             begin
               { to support ansi/long/wide strings in a proper way }
@@ -2107,6 +2157,8 @@ implementation
                     end
                 end;
             end;
+          else
+            ;
         end;
       end;
 
@@ -2235,6 +2287,33 @@ implementation
             end;
         end;
 
+      function processhelper(hashedid:THashedIDString;helperdef:tobjectdef):boolean;
+        var
+          srsym : tsym;
+          hasoverload,foundanything : boolean;
+        begin
+          result:=false;
+          srsym:=nil;
+          hasoverload:=false;
+          while assigned(helperdef) do
+            begin
+              srsym:=tsym(helperdef.symtable.FindWithHash(hashedid));
+              if assigned(srsym) and
+                  { Delphi allows hiding a property by a procedure with the same name }
+                  (srsym.typ=procsym) then
+                begin
+                  hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+                  { when there is no explicit overload we stop searching }
+                  if foundanything and
+                     not hasoverload then
+                    break;
+                end;
+              helperdef:=helperdef.childof;
+            end;
+          if not hasoverload and assigned(srsym) then
+            exit(true);
+        end;
+
       var
         srsym      : tsym;
         hashedid   : THashedIDString;
@@ -2242,6 +2321,8 @@ implementation
         foundanything : boolean;
         extendeddef : tabstractrecorddef;
         helperdef  : tobjectdef;
+        helperlist : TFPObjectList;
+        i : integer;
       begin
         if FOperator=NOTOKEN then
           hashedid.id:=FProcsym.name
@@ -2261,27 +2342,24 @@ implementation
                )
                and searchhelpers then
              begin
-               if search_last_objectpascal_helper(structdef,nil,helperdef) then
+               if m_multi_helpers in current_settings.modeswitches then
                  begin
-                   srsym:=nil;
-                   while assigned(helperdef) do
+                   helperlist:=get_objectpascal_helpers(structdef);
+                   if assigned(helperlist) and (helperlist.count>0) then
                      begin
-                       srsym:=tsym(helperdef.symtable.FindWithHash(hashedid));
-                       if assigned(srsym) and
-                           { Delphi allows hiding a property by a procedure with the same name }
-                           (srsym.typ=procsym) then
-                         begin
-                           hasoverload:=processprocsym(tprocsym(srsym),foundanything);
-                           { when there is no explicit overload we stop searching }
-                           if foundanything and
-                              not hasoverload then
-                             break;
-                         end;
-                       helperdef:=helperdef.childof;
+                       i:=helperlist.count-1;
+                       repeat
+                         helperdef:=tobjectdef(helperlist[i]);
+                         if (helperdef.owner.symtabletype in [staticsymtable,globalsymtable]) or
+                            is_visible_for_object(helperdef.typesym,helperdef) then
+                              if processhelper(hashedid,helperdef) then
+                                exit;
+                         dec(i);
+                       until (i<0);
                      end;
-                   if not hasoverload and assigned(srsym) then
-                     exit;
-                 end;
+                 end
+               else if search_last_objectpascal_helper(structdef,nil,helperdef) and processhelper(hashedid,helperdef) then
+                  exit;
              end;
            { now search in the type itself }
            srsym:=tsym(structdef.symtable.FindWithHash(hashedid));
@@ -3070,8 +3148,6 @@ implementation
                   inc(hp^.coper_count);
                 te_incompatible :
                   hp^.invalid:=true;
-                else
-                  internalerror(200212072);
               end;
 
               { stop checking when an incompatible parameter is found }
@@ -3122,9 +3198,9 @@ implementation
         variantorddef_cl: array[tordtype] of tvariantequaltype =
           (tve_incompatible,tve_byte,tve_word,tve_cardinal,tve_chari64,tve_incompatible,
            tve_shortint,tve_smallint,tve_longint,tve_chari64,tve_incompatible,
+           tve_boolformal,tve_boolformal,tve_boolformal,tve_boolformal,tve_boolformal,
            tve_boolformal,tve_boolformal,tve_boolformal,tve_boolformal,
-           tve_boolformal,tve_boolformal,tve_boolformal,tve_boolformal,
-           tve_chari64,tve_chari64,tve_dblcurrency);
+           tve_chari64,tve_chari64,tve_dblcurrency,tve_incompatible);
 { TODO: fixme for 128 bit floats }
         variantfloatdef_cl: array[tfloattype] of tvariantequaltype =
           (tve_single,tve_dblcurrency,tve_extended,tve_extended,
@@ -3581,7 +3657,7 @@ implementation
           for i:=0 to def.symtable.symlist.count-1 do
             begin
               sym:=tsym(def.symtable.symlist[i]);
-              if (sym.typ<>fieldvarsym) or (sp_static in sym.symoptions) then
+              if not is_normal_fieldvarsym(sym) then
                 continue;
               if not is_valid_for_default(tfieldvarsym(sym).vardef) then
                 begin

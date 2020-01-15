@@ -1097,34 +1097,34 @@ end;
 
 function TStringHelper.Split(const Separators: array of Char): TStringArray;
 begin
-  Result:=SPlit(Separators,#0,#0,Length,TStringSplitOptions.None);
+  Result:=Split(Separators,#0,#0,Length+1,TStringSplitOptions.None);
 end;
 
 
 function TStringHelper.Split(const Separators: array of Char; ACount: SizeInt
   ): TStringArray;
 begin
-  Result:=SPlit(Separators,#0,#0,ACount,TStringSplitOptions.None);
+  Result:=Split(Separators,#0,#0,ACount,TStringSplitOptions.None);
 end;
 
 
 function TStringHelper.Split(const Separators: array of Char;
   Options: TStringSplitOptions): TStringArray;
 begin
-  Result:=SPlit(Separators,Length,Options);
+  Result:=Split(Separators,Length+1,Options);
 end;
 
 
 function TStringHelper.Split(const Separators: array of Char; ACount: SizeInt;
   Options: TStringSplitOptions): TStringArray;
 begin
-  Result:=SPlit(Separators,#0,#0,ACount,Options);
+  Result:=Split(Separators,#0,#0,ACount,Options);
 end;
 
 
 function TStringHelper.Split(const Separators: array of string): TStringArray;
 begin
-  Result:=Split(Separators,Length);
+  Result:=Split(Separators,Length+1);
 end;
 
 
@@ -1138,7 +1138,7 @@ end;
 function TStringHelper.Split(const Separators: array of string;
   Options: TStringSplitOptions): TStringArray;
 begin
-  Result:=Split(Separators,Length,Options);
+  Result:=Split(Separators,Length+1,Options);
 end;
 
 
@@ -1166,7 +1166,7 @@ end;
 function TStringHelper.Split(const Separators: array of Char; AQuoteStart,
   AQuoteEnd: Char; Options: TStringSplitOptions): TStringArray;
 begin
-  Result:=Split(Separators,AQuoteStart,AQuoteEnd,Length,Options);
+  Result:=Split(Separators,AQuoteStart,AQuoteEnd,Length+1,Options);
 end;
 
 
@@ -1211,7 +1211,7 @@ begin
   While (Sep<>-1) and ((ACount=0) or (Len<ACount)) do
     begin
     T:=SubString(LastSep,Sep-LastSep);
-//    Writeln('Examining >',T,'< at pos,',LastSep,' till pos ',Sep);
+//    Writeln('Examining >',T,'< at pos ',LastSep,', till pos ',Sep);
     If (T<>'') or (not (TStringSplitOptions.ExcludeEmpty=Options)) then
       begin
       MaybeGrow(Len);
@@ -1221,7 +1221,7 @@ begin
     LastSep:=Sep+1;
     Sep:=NextSep(LastSep);
     end;
-  if (LastSep<Length) and ((ACount=0) or (Len<ACount)) then
+  if (LastSep<=Length) and ((ACount=0) or (Len<ACount)) then
     begin
     T:=SubString(LastSep);
 //    Writeln('Examining >',T,'< at pos,',LastSep,' till pos ',Sep);
@@ -1243,14 +1243,14 @@ end;
 function TStringHelper.Split(const Separators: array of string; AQuoteStart,
   AQuoteEnd: Char): TStringArray;
 begin
-  Result:=SPlit(Separators,AQuoteStart,AQuoteEnd,Length,TStringSplitOptions.None);
+  Result:=SPlit(Separators,AQuoteStart,AQuoteEnd,Length+1,TStringSplitOptions.None);
 end;
 
 
 function TStringHelper.Split(const Separators: array of string; AQuoteStart,
   AQuoteEnd: Char; Options: TStringSplitOptions): TStringArray;
 begin
-  Result:=SPlit(Separators,AQuoteStart,AQuoteEnd,Length,Options);
+  Result:=SPlit(Separators,AQuoteStart,AQuoteEnd,Length+1,Options);
 end;
 
 
@@ -1304,7 +1304,7 @@ begin
     LastSep:=Sep+System.Length(Separators[Match]);
     Sep:=NextSep(LastSep,Match);
     end;
-  if (LastSep<Length-1) and ((ACount=0) or (Len<ACount)) then
+  if (LastSep<=Length) and ((ACount=0) or (Len<ACount)) then
     begin
     T:=SubString(LastSep);
 //    Writeln('Examining >',T,'< at pos,',LastSep,' till pos ',Sep);
@@ -1550,6 +1550,7 @@ end;
 
 {$define TORDINALHELPER:=TByteHelper}
 {$define TORDINALTYPE:=Byte}
+{$define TORDINALBITINDEX:=TByteBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1558,6 +1559,7 @@ end;
 
 {$define TORDINALHELPER:=TShortIntHelper}
 {$define TORDINALTYPE:=ShortInt}
+{$define TORDINALBITINDEX:=TShortIntBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1566,6 +1568,7 @@ end;
 
 {$define TORDINALHELPER:=TSmallIntHelper}
 {$define TORDINALTYPE:=SmallInt}
+{$define TORDINALBITINDEX:=TSmallIntBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1574,6 +1577,7 @@ end;
 
 {$define TORDINALHELPER:=TWordHelper}
 {$define TORDINALTYPE:=Word}
+{$define TORDINALBITINDEX:=TWordBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1582,6 +1586,7 @@ end;
 
 {$define TORDINALHELPER:=TCardinalHelper}
 {$define TORDINALTYPE:=Cardinal}
+{$define TORDINALBITINDEX:=TCardinalBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1590,6 +1595,7 @@ end;
 
 {$define TORDINALHELPER:=TIntegerHelper}
 {$define TORDINALTYPE:=Integer}
+{$define TORDINALBITINDEX:=TIntegerBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1598,6 +1604,7 @@ end;
 
 {$define TORDINALHELPER:=TInt64Helper}
 {$define TORDINALTYPE:=Int64}
+{$define TORDINALBITINDEX:=TInt64BitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1606,6 +1613,7 @@ end;
 
 {$define TORDINALHELPER:=TQWordHelper}
 {$define TORDINALTYPE:=QWord}
+{$define TORDINALBITINDEX:=TQwordBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1614,6 +1622,7 @@ end;
 
 {$define TORDINALHELPER:=TNativeIntHelper}
 {$define TORDINALTYPE:=NativeInt}
+{$define TORDINALBITINDEX:=TNativeIntBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------
@@ -1622,6 +1631,7 @@ end;
 
 {$define TORDINALHELPER:=TNativeUIntHelper}
 {$define TORDINALTYPE:=NativeUInt}
+{$define TORDINALBITINDEX:=TNativeUIntBitIndex}
 {$i syshelpo.inc}
 
 { ---------------------------------------------------------------------

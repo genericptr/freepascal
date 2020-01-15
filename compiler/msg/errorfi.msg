@@ -834,7 +834,7 @@ parser_e_function_already_declared_public_forward=03120_E_La fonction "$1" est d
 % declaration in the \var{implmentation} section.
 parser_e_not_external_and_export=03121_E_Impossible d'utiliser à la fois EXPORT et EXTERNAL
 % These two procedure directives are mutually exclusive
-parser_h_not_supported_for_inline=03123_H_"$1" n'est pas encore supporté à l'intérieur de procédures/fonctions INLINE
+parser_n_not_supported_for_inline=03123_N_"$1" n'est pas encore supporté à l'intérieur de procédures/fonctions INLINE
 % Inline procedures don't support this declaration.
 parser_h_inlining_disabled=03124_H_Inlining désactivé
 % Inlining of procedures is disabled.
@@ -3499,7 +3499,7 @@ wpo_cant_create_feedback_file=12019_E_Cannot create specified whole program opti
 # Logo (option -l)
 #
 option_logo=11023_[ Compilateur Free Pascal version $FPCFULLVERSION [$FPCDATE] for $FPCCPU
-Copyright (c) 1993-2018, Florian Klaempfl and others]
+Copyright (c) 1993-2019, Florian Klaempfl and others]
 #
 # Info (option -i)
 #

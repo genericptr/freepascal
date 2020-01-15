@@ -128,9 +128,6 @@ unit cpubase;
       VOLATILE_INTREGISTERS = [RS_R0,RS_R1,RS_R18..RS_R27,RS_R30,RS_R31];
       VOLATILE_FPUREGISTERS = [];
 
-    type
-      totherregisterset = set of tregisterindex;
-
 {*****************************************************************************
                                 Conditions
 *****************************************************************************}
@@ -171,7 +168,7 @@ unit cpubase;
 *****************************************************************************}
 
     const
-      max_operands = 4;
+      max_operands = 2;
 
       maxintregs = 15;
       maxfpuregs = 0;
@@ -303,7 +300,13 @@ unit cpubase;
     function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
+    { Checks if Subset is a subset of c (e.g. "less than" is a subset of "less than or equal" }
+    function condition_in(const Subset, c: TAsmCond): Boolean;
+
     function dwarf_reg(r:tregister):byte;
+    function dwarf_reg_no_error(r:tregister):shortint;
+    function eh_return_data_regno(nr: longint): longint;
+
 
     function is_calljmp(o:tasmop):boolean;{$ifdef USEINLINE}inline;{$endif USEINLINE}
 
@@ -410,6 +413,24 @@ unit cpubase;
       end;
 
 
+    { Checks if Subset is a subset of c (e.g. "less than" is a subset of "less than or equal" }
+    function condition_in(const Subset, c: TAsmCond): Boolean;
+      begin
+        Result := (c = C_None) or conditions_equal(Subset, c);
+
+        { Please update as necessary. [Kit] }
+        if not Result then
+          case Subset of
+            C_EQ:
+              Result := (c in [C_GE]);
+            C_LT:
+              Result := (c in [C_NE]);
+            else
+              Result := False;
+          end;
+      end;
+
+
     function rotl(d : dword;b : byte) : dword;
       begin
          result:=(d shr (32-b)) or (d shl b);
@@ -424,6 +445,16 @@ unit cpubase;
         if reg=-1 then
           internalerror(200603251);
         result:=reg;
+      end;
+
+    function dwarf_reg_no_error(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+      end;
+
+    function eh_return_data_regno(nr: longint): longint;
+      begin
+        result:=-1;
       end;
 
 

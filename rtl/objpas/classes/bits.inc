@@ -107,7 +107,7 @@ begin
    end;
 
    if FSize < MaxBitRec then
-     result := FSize * 32;  {first bit of next record}
+     result := FBSize;  {first bit of next record}
 end;
 
 { ******************** TBits ***************************** }
@@ -171,6 +171,12 @@ begin
    n := bit shr BITSHIFT;
    if (n < FSize) then
       result := (FBits^[n] and (longint(1) shl (bit and MASK))) <> 0;
+end;
+
+procedure TBits.CopyBits(BitSet : TBits);
+begin
+  setSize(bitset.Size);
+  Move(bitset.FBits^,FBits^,FSize*SizeOf(cardinal));
 end;
 
 procedure TBits.andbits(bitset : TBits);

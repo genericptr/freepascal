@@ -45,8 +45,6 @@ interface
       procedure a_load_regconst_subsetreg_intern(list: TAsmList; fromsize, subsetsize: tdef; fromreg: tregister; const sreg: tsubsetregister; slopt: tsubsetloadopt); override;
     end;
 
-  procedure create_hlcodegen;
-
 implementation
 
   uses
@@ -64,7 +62,10 @@ implementation
     begin
       tocgsize:=def_cgsize(tosize);
       if (sreg.startbit<>0) or
-         not(sreg.bitlen in [32,64]) then
+         not((sreg.subsetregsize in [OS_32,OS_S32]) and
+             (sreg.bitlen=32)) or
+         not((sreg.subsetregsize in [OS_64,OS_S64]) and
+             (sreg.bitlen=64)) then
         begin
           if is_signed(subsetsize) then
             op:=A_SBFX
@@ -160,7 +161,7 @@ implementation
       if make_global then
         list.concat(Tai_symbol.Createname_global(labelname,AT_FUNCTION,0,procdef))
       else
-        list.concat(Tai_symbol.Createname(labelname,AT_FUNCTION,0,procdef));
+        list.concat(Tai_symbol.Createname_hidden(labelname,AT_FUNCTION,0,procdef));
 
       { set param1 interface to self  }
       procdef.init_paraloc_info(callerside);
@@ -219,11 +220,14 @@ implementation
     end;
 
 
-  procedure create_hlcodegen;
+  procedure create_hlcodegen_cpu;
     begin
       hlcg:=thlcgaarch64.create;
       create_codegen;
     end;
 
 
+begin
+  chlcgobj:=thlcgaarch64;
+  create_hlcodegen:=@create_hlcodegen_cpu;
 end.

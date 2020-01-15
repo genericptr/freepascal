@@ -275,7 +275,7 @@ implementation
       begin
         { allow passing of a constant to a const formaldef }
         if (parasym.varspez=vs_const) and
-           (left.location.loc in [LOC_CONSTANT,LOC_REGISTER]) then
+           not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
           hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
         push_addr_para;
       end;
@@ -549,6 +549,8 @@ implementation
                  hlcg.g_finalize(current_asmdata.CurrAsmList,resultdef,location.reference);
                tg.ungetiftemp(current_asmdata.CurrAsmList,location.reference);
             end;
+          else
+            ;
         end;
       end;
 
@@ -611,7 +613,7 @@ implementation
             case location.loc of
               LOC_REGISTER :
                 begin
-{$ifndef cpu64bitalu}
+{$if not defined(cpu64bitalu) and not defined(cpuhighleveltarget)}
                   if location.size in [OS_64,OS_S64] then
                     cg64.a_load64_reg_loc(current_asmdata.CurrAsmList,location.register64,funcretnode.location)
                   else
@@ -822,6 +824,10 @@ implementation
                              end;
                            end;
                          end;
+                       LOC_VOID:
+                         ;
+                       else
+                         internalerror(2019050707);
                      end;
                      dec(sizeleft,tcgsize2size[tmpparaloc^.size]);
                      callerparaloc:=callerparaloc^.next;
@@ -923,9 +929,8 @@ implementation
         sym : tasmsymbol;
         vmtoffset : aint;
 {$endif vtentry}
-{$ifdef SUPPORT_SAFECALL}
         cgpara : tcgpara;
-{$endif}
+        tmploc: tlocation;
       begin
          if not assigned(procdefinition) or
             not(procdefinition.has_paraloc_info in [callerside,callbothsides]) then
@@ -1048,8 +1053,6 @@ implementation
                    begin
                      reorder_parameters;
                      pushparas;
-                     { free the resources allocated for the parameters }
-                     freeparas;
                    end;
 
                  if callref then
@@ -1085,8 +1088,6 @@ implementation
                     begin
                       reorder_parameters;
                       pushparas;
-                      { free the resources allocated for the parameters }
-                      freeparas;
                     end;
 
                   cg.alloccpuregisters(current_asmdata.CurrAsmList,R_INTREGISTER,regs_to_save_int);
@@ -1111,6 +1112,11 @@ implementation
                         name_to_call:=tprocdef(procdefinition).mangledname;
                       if cnf_inherited in callnodeflags then
                         retloc:=hlcg.a_call_name_inherited(current_asmdata.CurrAsmList,tprocdef(procdefinition),name_to_call,paralocs)
+                      { under certain conditions, a static call (i.e. without PIC) can be generated }
+                      else if ((procdefinition.owner=current_procinfo.procdef.owner) or
+                         (procdefinition.owner.symtabletype in [localsymtable,staticsymtable])
+                        ) and ((procdefinition.procoptions*[po_weakexternal,po_external])=[]) then
+                        retloc:=hlcg.a_call_name_static(current_asmdata.CurrAsmList,tprocdef(procdefinition),name_to_call,paralocs,typedef)
                       else
                         retloc:=hlcg.a_call_name(current_asmdata.CurrAsmList,tprocdef(procdefinition),name_to_call,paralocs,typedef,po_weakexternal in procdefinition.procoptions);
                       extra_post_call_code;
@@ -1146,8 +1152,6 @@ implementation
                 begin
                   reorder_parameters;
                   pushparas;
-                  { free the resources allocated for the parameters }
-                  freeparas;
                 end;
 
               if callref then
@@ -1175,26 +1179,47 @@ implementation
               extra_post_call_code;
            end;
 
+         { free the resources allocated for the parameters }
+         if assigned(left) then
+           freeparas;
+
          { Need to remove the parameters from the stack? }
-         if (procdefinition.proccalloption in clearstack_pocalls) then
-          begin
-            pop_size:=pushedparasize;
-            { for Cdecl functions we don't need to pop the funcret when it
-              was pushed by para. Except for safecall functions with
-              safecall-exceptions enabled. In that case the funcret is always
-              returned as a para which is considered a normal para on the
-              c-side, so the funcret has to be pop'ed normally. }
-            if not ((procdefinition.proccalloption=pocall_safecall) and
-                    (tf_safecall_exceptions in target_info.flags)) and
-               paramanager.ret_in_param(procdefinition.returndef,procdefinition) then
-              dec(pop_size,sizeof(pint));
-            { Remove parameters/alignment from the stack }
-            pop_parasize(pop_size);
-          end
+         if procdefinition.proccalloption in clearstack_pocalls then
+           begin
+             pop_size:=pushedparasize;
+             { for Cdecl functions we don't need to pop the funcret when it
+               was pushed by para. Except for safecall functions with
+               safecall-exceptions enabled. In that case the funcret is always
+               returned as a para which is considered a normal para on the
+               c-side, so the funcret has to be pop'ed normally. }
+             if not ((procdefinition.proccalloption=pocall_safecall) and
+                     (tf_safecall_exceptions in target_info.flags)) and
+                paramanager.ret_in_param(procdefinition.returndef,procdefinition) then
+               dec(pop_size,sizeof(pint));
+             { Remove parameters/alignment from the stack }
+             pop_parasize(pop_size);
+           end
+         { in case we use a fixed stack, we did not push anything, if the stack is
+           really adjusted because a ret xxx was done, depends on
+           pop_parasize which uses pushedparasize to determine this
+
+           This does not apply to interrupt procedures, their ret statment never clears any stack parameters }
+         else if paramanager.use_fixed_stack and
+                 not(po_interrupt in procdefinition.procoptions) and
+                 (target_info.abi=abi_i386_dynalignedstack) then
+           begin
+             { however, a delphi style frame pointer for a nested subroutine
+               is not cleared by the callee, so we have to compensate for this
+               by passing 4 as pushedparasize does include it }
+             if po_delphi_nested_cc in procdefinition.procoptions then
+               pop_parasize(sizeof(pint))
+             else
+               pop_parasize(0);
+           end
          { frame pointer parameter is popped by the caller when it's passed the
            Delphi way }
          else if (po_delphi_nested_cc in procdefinition.procoptions) and
-                 not paramanager.use_fixed_stack then
+           not paramanager.use_fixed_stack then
            pop_parasize(sizeof(pint));
          { Release registers, but not the registers that contain the
            function result }
@@ -1237,19 +1262,21 @@ implementation
            cg.dealloccpuregisters(current_asmdata.CurrAsmList,R_ADDRESSREGISTER,regs_to_save_address);
          cg.dealloccpuregisters(current_asmdata.CurrAsmList,R_INTREGISTER,regs_to_save_int);
 
-{$ifdef SUPPORT_SAFECALL}
-         if (procdefinition.proccalloption=pocall_safecall) and
-            (tf_safecall_exceptions in target_info.flags) then
+         if procdefinition.generate_safecall_wrapper then
            begin
              pd:=search_system_proc('fpc_safecallcheck');
              cgpara.init;
-             paramanager.getintparaloc(current_asmdata.CurrAsmList,pd,1,cgpara);
-             cg.a_load_reg_cgpara(current_asmdata.CurrAsmList,OS_INT,NR_FUNCTION_RESULT_REG,cgpara);
+             { fpc_safecallcheck returns its parameter value (= function result of function we just called) }
+             paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,cgpara);
+             location_reset(tmploc,LOC_REGISTER,def_cgsize(retloc.Def));
+             tmploc.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,retloc.Def);
+             hlcg.gen_load_cgpara_loc(current_asmdata.CurrAsmList,retloc.Def,retloc,tmploc,true);
              paramanager.freecgpara(current_asmdata.CurrAsmList,cgpara);
-             cg.g_call(current_asmdata.CurrAsmList,'FPC_SAFECALLCHECK');
+             hlcg.a_load_loc_cgpara(current_asmdata.CurrAsmList,retloc.Def,tmploc,cgpara);
+             retloc.resetiftemp;
+             retloc:=hlcg.g_call_system_proc(current_asmdata.CurrAsmList,pd,[@cgpara],nil);
              cgpara.done;
            end;
-{$endif}
 
          { handle function results }
          if (not is_void(resultdef)) then
@@ -1271,6 +1298,10 @@ implementation
 
          { release temps of paras }
          release_para_temps;
+
+         { check for fpu exceptions }
+         if cnf_check_fpu_exceptions in callnodeflags then
+           cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
 
          { perhaps i/o check ? }
          if (cs_check_io in current_settings.localswitches) and

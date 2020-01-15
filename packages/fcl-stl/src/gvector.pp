@@ -50,6 +50,7 @@ type
       function GetCurrent: T; inline;
     public
       constructor Create(AVector: TVector);
+      function GetEnumerator: TVectorEnumerator; inline;
       function MoveNext: Boolean; inline;
       property Current: T read GetCurrent;
     end;
@@ -81,6 +82,11 @@ implementation
 constructor TVector.TVectorEnumerator.Create(AVector: TVector);
 begin
   FVector := AVector;
+end;
+
+function TVector.TVectorEnumerator.GetEnumerator: TVectorEnumerator;
+begin
+  result:=self;
 end;
 
 function TVector.TVectorEnumerator.GetCurrent: T;
@@ -157,11 +163,26 @@ begin
 end;
 
 procedure TVector.IncreaseCapacity();
+const
+  // if size is small, multiply by 2;
+  // if size bigger but <256M, inc by 1/8*size;
+  // otherwise inc by 1/16*size
+  cSizeSmall = 1*1024*1024;
+  cSizeBig = 256*1024*1024;
+var
+  DataSize:SizeUInt;
 begin
+  DataSize:=FCapacity*SizeOf(T);
   if FCapacity=0 then
-    FCapacity:=1
+    FCapacity:=4
   else
-    FCapacity:=FCapacity*2;
+  if DataSize<cSizeSmall then
+    FCapacity:=FCapacity*2
+  else
+  if DataSize<cSizeBig then
+    FCapacity:=FCapacity+FCapacity div 8
+  else
+    FCapacity:=FCapacity+FCapacity div 16;
   SetLength(FData, FCapacity);
 end;
 

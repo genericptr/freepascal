@@ -159,6 +159,8 @@ type
     Procedure TestLocalSimpleTypes;
     Procedure TestLocalSimpleConst;
     Procedure TestLocalSimpleConsts;
+    Procedure TestClassTypeAttributes;
+    Procedure TestClassConstAttributes;
     procedure TestClassHelperEmpty;
     procedure TestClassHelperParentedEmpty;
     procedure TestClassHelperOneMethod;
@@ -253,6 +255,8 @@ procedure TTestClassType.StartClass(AncestorName: String; InterfaceList: String)
 Var
   S : String;
 begin
+  if FStarted then
+    Fail('TTestClassType.StartClass already started');
   FStarted:=True;
   S:='TMyClass = Class';
   if (AncestorName<>'') then
@@ -426,7 +430,7 @@ end;
 procedure TTestClassType.SetUp;
 begin
   inherited SetUp;
-  FDecl:=TstringList.Create;
+  FDecl:=TStringList.Create;
   FClass:=Nil;
   FParent:='';
   FStarted:=False;
@@ -555,8 +559,8 @@ begin
   AssertNotNull('Have param types',C.Params);
   AssertEquals('Have one param type',1,C.Params.Count);
   AssertNotNull('First Param ',C.Params[0]);
-  AssertEquals('First Param expr',TPrimitiveExpr,TObject(C.Params[0]).ClassType);
-  AssertEquals('Has specialize param integer','Integer',TPrimitiveExpr(C.Params[0]).Value);
+  AssertEquals('First Param unresolvedtype',TPasUnresolvedTypeRef,TObject(C.Params[0]).ClassType);
+  AssertEquals('Has specialize param integer','Integer',TPasUnresolvedTypeRef(C.Params[0]).Name);
 end;
 
 procedure TTestClassType.TestOneSpecializedClass;
@@ -1762,6 +1766,44 @@ begin
   AssertSame('Type parent is class',TheClass, Const2.Parent);
   AssertNotNull('Member 3 is procedure',Method3);
   AssertEquals('method name','Something', Method3.Name);
+end;
+
+procedure TTestClassType.TestClassTypeAttributes;
+begin
+  Add([
+  '{$modeswitch prefixedattributes}',
+  'type',
+  '  TObject = class',
+  '  [Black]',
+  '  type',
+  '    [Red]',
+  '    [White]',
+  '    TWord = word;',
+  '    [Blue]',
+  '    [Green]',
+  '    TChar = char;',
+  '  end;',
+  '']);
+  ParseDeclarations;
+end;
+
+procedure TTestClassType.TestClassConstAttributes;
+begin
+  Add([
+  '{$modeswitch prefixedattributes}',
+  'type',
+  '  TObject = class',
+  '  [Black]',
+  '  const',
+  '    [Red]',
+  '    [White]',
+  '    A = 1;',
+  '    [Blue]',
+  '    [Green]',
+  '    B = 2;',
+  '  end;',
+  '']);
+  ParseDeclarations;
 end;
 
 procedure TTestClassType.TestClassHelperEmpty;

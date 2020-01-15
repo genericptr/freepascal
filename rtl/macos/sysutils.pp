@@ -33,7 +33,7 @@ interface
 uses
   MacOSTP;
 
-//{$DEFINE HAS_SLEEP}     TODO
+{$DEFINE HAS_SLEEP}   {Dummy implementation:  TODO }
 //{$DEFINE HAS_OSERROR}   TODO
 //{$DEFINE HAS_OSCONFIG}  TODO
 
@@ -210,7 +210,13 @@ begin
 end;
 
 
-Function FileExists (Const FileName : RawByteString) : Boolean;
+function FileGetSymLinkTarget(const FileName: RawByteString; out SymLinkRec: TRawbyteSymLinkRec): Boolean;
+begin
+  Result := False;
+end;
+
+
+Function FileExists (Const FileName : RawByteString; FollowLink : Boolean) : Boolean;
 
   (*
 Var Info : Stat;
@@ -223,7 +229,7 @@ begin
 end;
 
 
-Function DirectoryExists (Const Directory : RawByteString) : Boolean;
+Function DirectoryExists (Const Directory : RawByteString; FollowLink : Boolean) : Boolean;
 
   (*
 Var Info : Stat;
@@ -821,8 +827,11 @@ begin
 end;
 
 
+procedure C_usleep(val : uint32); external 'StdCLib' name 'usleep';
+
 procedure Sleep(milliseconds: Cardinal);
 begin
+  C_usleep(milliseconds*1000);
 end;
 
 (*
@@ -840,5 +849,6 @@ Initialization
   InitExceptions;       { Initialize exceptions. OS independent }
   InitInternational;    { Initialize internationalization settings }
 Finalization
+  FreeTerminateProcs;
   DoneExceptions;
 end.

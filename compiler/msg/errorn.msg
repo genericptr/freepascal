@@ -828,7 +828,7 @@ parser_e_function_already_declared_public_forward=03120_E_Functie is al publiek/
 % declaration in the \var{implmentation} section.
 parser_e_not_external_and_export=03121_E_Kan niet zowel EXPORT als EXTERNAL gebruiken
 % These two procedure directives are mutually exclusive
-parser_h_not_supported_for_inline=03123_H_$1 wordt niet ondersteund voor inline procedure/functie
+parser_n_not_supported_for_inline=03123_N_$1 wordt niet ondersteund voor inline procedure/functie
 % Inline procedures don't support this declaration.
 parser_h_inlining_disabled=03124_H_Inlining uitgeschakeld
 % Inlining of procedures is disabled.
@@ -3485,7 +3485,7 @@ wpo_cant_create_feedback_file=12019_E_Cannot create specified whole program opti
 #
 option_logo=11023_[
 Free Pascal Compiler versie $FPCFULLVERSION [$FPCDATE] voor $FPCTARGET
-Copyright (c) 1993-2018 door Florian Klaempfl en anderen
+Copyright (c) 1993-2019 door Florian Klaempfl en anderen
 ]
 #
 # Info (option -i)

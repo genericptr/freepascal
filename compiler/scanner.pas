@@ -145,6 +145,8 @@ interface
 
           { true, if we are parsing preprocessor expressions }
           in_preproc_comp_expr : boolean;
+          { true if cross-compiling for a CPU in opposite endianess}
+          change_endian_for_tokens : boolean;
 
           constructor Create(const fn:string; is_macro: boolean = false);
           destructor Destroy;override;
@@ -212,7 +214,7 @@ interface
           procedure readnumber;
           function  readid:string;
           function  readval:longint;
-          function  readcomment:string;
+          function  readcomment(include_special_char: boolean = false):string;
           function  readquotedstring:string;
           function  readstate:char;
           function  readoptionalstate(fallback:char):char;
@@ -234,7 +236,7 @@ interface
          spacefound,
          eolfound : boolean;
          constructor create(const fn:string);
-         destructor  destroy;
+         destructor  destroy; override;
          procedure Add(const s:string);
          procedure AddSpace;
        end;
@@ -284,7 +286,7 @@ implementation
       symbase,symtable,symtype,symsym,symconst,symdef,defutil,
       { This is needed for tcputype }
       cpuinfo,
-      fmodule,
+      fmodule,fppu,
       { this is needed for $I %CURRENTROUTINE%}
       procinfo
 {$if FPC_FULLVERSION<20700}
@@ -521,12 +523,17 @@ implementation
 
            HandleModeSwitches(m_none,changeinit);
 
-           { turn on bitpacking for mode macpas and iso pascal as well as extended pascal }
+           { turn on bitpacking and case checking for mode macpas and iso pascal,
+             as well as extended pascal }
            if ([m_mac,m_iso,m_extpas] * current_settings.modeswitches <> []) then
              begin
                include(current_settings.localswitches,cs_bitpacking);
+               include(current_settings.localswitches,cs_check_all_case_coverage);
                if changeinit then
-                 include(init_settings.localswitches,cs_bitpacking);
+                 begin
+                   include(init_settings.localswitches,cs_bitpacking);
+                   include(init_settings.localswitches,cs_check_all_case_coverage);
+                 end;
              end;
 
            { support goto/label by default in delphi/tp7/mac/iso/extpas modes }
@@ -572,13 +579,15 @@ implementation
            { Default to intel assembler for delphi/tp7 on i386/i8086 }
            if (m_delphi in current_settings.modeswitches) or
               (m_tp7 in current_settings.modeswitches) then
+             begin
 {$ifdef i8086}
-             current_settings.asmmode:=asmmode_i8086_intel;
+               current_settings.asmmode:=asmmode_i8086_intel;
 {$else i8086}
-             current_settings.asmmode:=asmmode_i386_intel;
+               current_settings.asmmode:=asmmode_i386_intel;
 {$endif i8086}
-           if changeinit then
-             init_settings.asmmode:=current_settings.asmmode;
+               if changeinit then
+                 init_settings.asmmode:=current_settings.asmmode;
+             end;
 {$endif i386 or i8086}
 
            { Exception support explicitly turned on (mainly for macpas, to }
@@ -606,7 +615,11 @@ implementation
               undef_system_macro('FPC_GPC')
 {$endif}
             else if (m_mac in oldmodeswitches) then
-              undef_system_macro('FPC_MACPAS');
+              undef_system_macro('FPC_MACPAS')
+            else if (m_iso in oldmodeswitches) then
+              undef_system_macro('FPC_ISO')
+            else if (m_extpas in oldmodeswitches) then
+              undef_system_macro('FPC_EXTENDEDPASCAL');
 
             { define new symbol in delphi,objfpc,tp,gpc,macpas mode }
             if (m_delphi in current_settings.modeswitches) then
@@ -620,7 +633,11 @@ implementation
               def_system_macro('FPC_GPC')
 {$endif}
             else if (m_mac in current_settings.modeswitches) then
-              def_system_macro('FPC_MACPAS');
+              def_system_macro('FPC_MACPAS')
+            else if (m_iso in current_settings.modeswitches) then
+              def_system_macro('FPC_ISO')
+            else if (m_extpas in current_settings.modeswitches) then
+              def_system_macro('FPC_EXTENDEDPASCAL');
          end;
 
         SetCompileMode:=b;
@@ -925,7 +942,7 @@ type
         that we use the base types instead of the cpu-specific ones. }
       sintdef:=torddef.create(s64bit,low(int64),high(int64),false);
       uintdef:=torddef.create(u64bit,low(qword),high(qword),false);
-      booldef:=torddef.create(pasbool8,0,1,false);
+      booldef:=torddef.create(pasbool1,0,1,false);
       strdef:=tstringdef.createansi(0,false);
       setdef:=tsetdef.create(sintdef,0,255,false);
       realdef:=tfloatdef.create(s80real,false);
@@ -1481,7 +1498,9 @@ type
                               tokentoconsume:=_STRING;
                             end;
                         end
-                      end;
+                      else
+                        ;
+                    end;
                   end
                 else
                   begin
@@ -1994,6 +2013,8 @@ type
                                     result.free;
                                     result:=texprvalue.create_int(tenumsym(srsym).value);
                                   end;
+                                else
+                                  ;
                               end;
                           end
                         end
@@ -2561,6 +2582,7 @@ type
 {$ifdef PREPROCWRITE}
     constructor tpreprocfile.create(const fn:string);
       begin
+        inherited create;
       { open outputfile }
         assign(f,fn);
         {$push}{$I-}
@@ -2695,7 +2717,11 @@ type
         lasttoken:=NOTOKEN;
         nexttoken:=NOTOKEN;
         ignoredirectives:=TFPHashList.Create;
-      end;
+        if (current_module is tppumodule) and assigned(tppumodule(current_module).ppufile) then
+          change_endian_for_tokens:=tppumodule(current_module).ppufile.change_endian
+        else
+          change_endian_for_tokens:=false;
+       end;
 
 
     procedure tscannerfile.firstfile;
@@ -2867,17 +2893,11 @@ type
 
     procedure tscannerfile.tokenwritesizeint(val : asizeint);
       begin
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
         recordtokenbuf.write(val,sizeof(asizeint));
       end;
 
     procedure tscannerfile.tokenwritelongint(val : longint);
       begin
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
         recordtokenbuf.write(val,sizeof(longint));
       end;
 
@@ -2888,17 +2908,11 @@ type
 
     procedure tscannerfile.tokenwriteword(val : word);
       begin
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
         recordtokenbuf.write(val,sizeof(word));
       end;
 
     procedure tscannerfile.tokenwritelongword(val : longword);
       begin
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
         recordtokenbuf.write(val,sizeof(longword));
       end;
 
@@ -2907,9 +2921,8 @@ type
         val : asizeint;
       begin
         replaytokenbuf.read(val,sizeof(asizeint));
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
+        if change_endian_for_tokens then
+          val:=swapendian(val);
         result:=val;
       end;
 
@@ -2918,9 +2931,8 @@ type
         val : longword;
       begin
         replaytokenbuf.read(val,sizeof(longword));
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
+        if change_endian_for_tokens then
+          val:=swapendian(val);
         result:=val;
       end;
 
@@ -2929,9 +2941,8 @@ type
         val : longint;
       begin
         replaytokenbuf.read(val,sizeof(longint));
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
+        if change_endian_for_tokens then
+          val:=swapendian(val);
         result:=val;
       end;
 
@@ -2956,9 +2967,8 @@ type
         val : smallint;
       begin
         replaytokenbuf.read(val,sizeof(smallint));
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
+        if change_endian_for_tokens then
+          val:=swapendian(val);
         result:=val;
       end;
 
@@ -2967,9 +2977,8 @@ type
         val : word;
       begin
         replaytokenbuf.read(val,sizeof(word));
-{$ifdef FPC_BIG_ENDIAN}
-        val:=swapendian(val);
-{$endif}
+        if change_endian_for_tokens then
+          val:=swapendian(val);
         result:=val;
       end;
 
@@ -2986,16 +2995,13 @@ type
    end;
 
    procedure tscannerfile.tokenreadset(var b;size : longint);
-{$ifdef FPC_BIG_ENDIAN}
    var
      i : longint;
-{$endif}
    begin
      replaytokenbuf.read(b,size);
-{$ifdef FPC_BIG_ENDIAN}
-     for i:=0 to size-1 do
-       Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
-{$endif}
+     if change_endian_for_tokens then
+       for i:=0 to size-1 do
+         Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
    end;
 
    procedure tscannerfile.tokenwriteenum(var b;size : longint);
@@ -3004,22 +3010,8 @@ type
    end;
 
    procedure tscannerfile.tokenwriteset(var b;size : longint);
-{$ifdef FPC_BIG_ENDIAN}
-   var
-     i: longint;
-     tmpset: array[0..31] of byte;
-{$endif}
    begin
-{$ifdef FPC_BIG_ENDIAN}
-     { satisfy DFA because it assumes that size may be 0 and doesn't know that
-       recordtokenbuf.write wouldn't use tmpset in that case }
-     tmpset[0]:=0;
-     for i:=0 to size-1 do
-       tmpset[i]:=reverse_byte(Pbyte(@b)[i]);
-     recordtokenbuf.write(tmpset,size);
-{$else}
      recordtokenbuf.write(b,size);
-{$endif}
    end;
 
 
@@ -3042,6 +3034,9 @@ type
             alignment.procalign:=tokenreadlongint;
             alignment.loopalign:=tokenreadlongint;
             alignment.jumpalign:=tokenreadlongint;
+            alignment.jumpalignskipmax:=tokenreadlongint;
+            alignment.coalescealign:=tokenreadlongint;
+            alignment.coalescealignskipmax:=tokenreadlongint;
             alignment.constalignmin:=tokenreadlongint;
             alignment.constalignmax:=tokenreadlongint;
             alignment.varalignmin:=tokenreadlongint;
@@ -3082,6 +3077,8 @@ type
             minfpconstprec:=tfloattype(tokenreadenum(sizeof(tfloattype)));
 
             disabledircache:=boolean(tokenreadbyte);
+
+            tlsmodel:=ttlsmodel(tokenreadenum(sizeof(ttlsmodel)));
 { TH: Since the field was conditional originally, it was not stored in PPUs.  }
 { While adding ControllerSupport constant, I decided not to store ct_none     }
 { on targets not supporting controllers, but this might be changed here and   }
@@ -3122,6 +3119,9 @@ type
             tokenwritelongint(alignment.procalign);
             tokenwritelongint(alignment.loopalign);
             tokenwritelongint(alignment.jumpalign);
+            tokenwritelongint(alignment.jumpalignskipmax);
+            tokenwritelongint(alignment.coalescealign);
+            tokenwritelongint(alignment.coalescealignskipmax);
             tokenwritelongint(alignment.constalignmin);
             tokenwritelongint(alignment.constalignmax);
             tokenwritelongint(alignment.varalignmin);
@@ -3160,6 +3160,9 @@ type
             tokenwriteenum(minfpconstprec,sizeof(tfloattype));
 
             recordtokenbuf.write(byte(disabledircache),1);
+
+            tokenwriteenum(tlsmodel,sizeof(tlsmodel));
+
 { TH: See note about controllertype field in tokenreadsettings. }
 {$PUSH}
  {$WARN 6018 OFF} (* Unreachable code due to compile time evaluation *)
@@ -3234,6 +3237,15 @@ type
           end;
 
         { file pos changes? }
+        if current_tokenpos.fileindex<>last_filepos.fileindex then
+          begin
+            s:=ST_FILEINDEX;
+            writetoken(t);
+            recordtokenbuf.write(s,1);
+            tokenwriteword(current_tokenpos.fileindex);
+            last_filepos.fileindex:=current_tokenpos.fileindex;
+            last_filepos.line:=0;
+          end;
         if current_tokenpos.line<>last_filepos.line then
           begin
             s:=ST_LINE;
@@ -3241,6 +3253,7 @@ type
             recordtokenbuf.write(s,1);
             tokenwritelongint(current_tokenpos.line);
             last_filepos.line:=current_tokenpos.line;
+            last_filepos.column:=0;
           end;
         if current_tokenpos.column<>last_filepos.column then
           begin
@@ -3258,14 +3271,6 @@ type
                 tokenwriteword(current_tokenpos.column);
               end;
             last_filepos.column:=current_tokenpos.column;
-          end;
-        if current_tokenpos.fileindex<>last_filepos.fileindex then
-          begin
-            s:=ST_FILEINDEX;
-            writetoken(t);
-            recordtokenbuf.write(s,1);
-            tokenwriteword(current_tokenpos.fileindex);
-            last_filepos.fileindex:=current_tokenpos.fileindex;
           end;
 
         writetoken(token);
@@ -3304,6 +3309,8 @@ type
               recordtokenbuf.write(orgpattern[0],1);
               recordtokenbuf.write(orgpattern[1],length(orgpattern));
             end;
+          else
+            ;
         end;
       end;
 
@@ -3471,11 +3478,11 @@ type
                         current_tokenpos.fileindex:=tokenreadword;
                         current_filepos:=current_tokenpos;
                       end;
-                    else
-                      internalerror(2006103010);
                   end;
                 continue;
               end;
+            else
+              ;
           end;
           break;
         until false;
@@ -3820,14 +3827,14 @@ type
         valuedescr: String;
       begin
         if assigned(preprocstack) and
-           (preprocstack.typ in [pp_if,pp_elseif]) then
+           (preprocstack.typ in [pp_if,pp_ifdef,pp_ifndef,pp_elseif]) then
          begin
            { when the branch is accepted we use pp_elseif so we know that
              all the next branches need to be rejected. when this branch is still
              not accepted then leave it at pp_if }
            if (preprocstack.typ=pp_elseif) then
              preprocstack.accept:=false
-           else if (preprocstack.typ=pp_if) and preprocstack.accept then
+           else if (preprocstack.typ in [pp_if,pp_ifdef,pp_ifndef]) and preprocstack.accept then
                begin
                  preprocstack.accept:=false;
                  preprocstack.typ:=pp_elseif;
@@ -3923,11 +3930,14 @@ type
 {$ifdef PREPROCWRITE}
          if parapreprocess then
           begin
-            t:=Get_Directive(hs);
-            if not(is_conditional(t) or (t=_DIR_DEFINE) or (t=_DIR_UNDEF)) then
+            if not (m_mac in current_settings.modeswitches) then
+              t:=tdirectiveitem(turbo_scannerdirectives.Find(hs))
+            else
+              t:=tdirectiveitem(mac_scannerdirectives.Find(hs));
+            if assigned(t) and not(t.is_conditional) then
              begin
-               preprocfile^.AddSpace;
-               preprocfile^.Add('{$'+hs+current_scanner.readcomment+'}');
+               preprocfile.AddSpace;
+               preprocfile.Add('{$'+hs+current_scanner.readcomment+'}');
                exit;
              end;
           end;
@@ -4135,7 +4145,7 @@ type
       end;
 
 
-    function tscannerfile.readcomment:string;
+    function tscannerfile.readcomment(include_special_char: boolean):string;
       var
         i : longint;
       begin
@@ -4144,15 +4154,29 @@ type
           case c of
             '{' :
               begin
+                if (include_special_char) and (i<255) then
+                begin
+                  inc(i);
+                  readcomment[i]:=c;
+                end;
+
                 if current_commentstyle=comment_tp then
                   inc_comment_level;
               end;
             '}' :
               begin
+                if (include_special_char) and (i<255) then
+                begin
+                  inc(i);
+                  readcomment[i]:=c;
+                end;
+
                 if current_commentstyle=comment_tp then
                   begin
                     readchar;
                     dec_comment_level;
+
+
                     if comment_level=0 then
                       break
                     else

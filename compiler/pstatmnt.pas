@@ -109,6 +109,8 @@ implementation
            end;
          consume(_END);
          statements_til_end:=cblocknode.create(first);
+         if assigned(first) then
+           statements_til_end.fileinfo:=first.fileinfo;
       end;
 
 
@@ -221,8 +223,8 @@ implementation
                        CGMessage(parser_e_case_lower_less_than_upper_bound);
                      if not casedeferror then
                        begin
-                         testrange(casedef,hl1,false,false);
-                         testrange(casedef,hl2,false,false);
+                         adaptrange(casedef,hl1,false,false,cs_check_range in current_settings.localswitches);
+                         adaptrange(casedef,hl2,false,false,cs_check_range in current_settings.localswitches);
                        end;
                    end
                  else
@@ -250,7 +252,7 @@ implementation
                    begin
                      hl1:=get_ordinal_value(p);
                      if not casedeferror then
-                       testrange(casedef,hl1,false,false);
+                       adaptrange(casedef,hl1,false,false,cs_check_range in current_settings.localswitches);
                      casenode.addlabel(blockid,hl1,hl1);
                    end;
                end;
@@ -359,13 +361,10 @@ implementation
         procedure check_range(hp:tnode; fordef: tdef);
           begin
             if (hp.nodetype=ordconstn) and
-               (fordef.typ<>errordef) then
-              begin
-                { the node was derived from a generic parameter so ignore range check }
-                if nf_generic_para in hp.flags then
-                  exit;
-                testrange(fordef,tordconstnode(hp).value,false,true);
-              end;
+               (fordef.typ<>errordef) and
+               { the node was derived from a generic parameter so ignore range check }
+               not(nf_generic_para in hp.flags) then
+              adaptrange(fordef,tordconstnode(hp).value,false,false,true);
           end;
 
         function for_loop_create(hloopvar: tnode): tnode;
@@ -388,7 +387,10 @@ implementation
                ) and
                (hloopvar.resultdef.typ<>undefineddef)
                then
-               MessagePos(hloopvar.fileinfo,type_e_ordinal_expr_expected);
+               begin
+                 MessagePos(hloopvar.fileinfo,type_e_ordinal_expr_expected);
+                 hloopvar.resultdef:=generrordef;
+               end;
 
              hp:=hloopvar;
              while assigned(hp) and
@@ -781,8 +783,6 @@ implementation
               symtablestack.pop(TSymtable(withsymtablelist[i]));
             withsymtablelist.free;
 
-//            p:=cwithnode.create(right,twithsymtable(withsymtable),levelcount,refnode);
-
             { Finalize complex withnode with destroy of temp }
             if assigned(newblock) then
              begin
@@ -879,6 +879,7 @@ implementation
          t:ttoken;
          unit_found:boolean;
          oldcurrent_exceptblock: integer;
+         filepostry : tfileposinfo;
       begin
          p_default:=nil;
          p_specific:=nil;
@@ -887,6 +888,7 @@ implementation
 
          { read statements to try }
          consume(_TRY);
+         filepostry:=current_filepos;
          first:=nil;
          inc(exceptblockcounter);
          oldcurrent_exceptblock := current_exceptblock;
@@ -918,6 +920,7 @@ implementation
               current_exceptblock := exceptblockcounter;
               p_finally_block:=statements_til_end;
               try_statement:=ctryfinallynode.create(p_try_block,p_finally_block);
+              try_statement.fileinfo:=filepostry;
            end
          else
            begin
@@ -945,7 +948,7 @@ implementation
                             begin
                               single_type(ot,[]);
                               check_type_valid(ot);
-                              sym:=clocalvarsym.create(objrealname,vs_value,ot,[],true);
+                              sym:=clocalvarsym.create(objrealname,vs_value,ot,[]);
                             end
                           else
                             begin
@@ -953,7 +956,7 @@ implementation
                                  with "e: Exception" the e is not necessary }
 
                                { support unit.identifier }
-                               unit_found:=try_consume_unitsym_no_specialize(srsym,srsymtable,t,false,objname);
+                               unit_found:=try_consume_unitsym_no_specialize(srsym,srsymtable,t,[],objname);
                                if srsym=nil then
                                  begin
                                    identifier_not_found(orgpattern);
@@ -978,7 +981,7 @@ implementation
                                  { create dummy symbol so we don't need a special
                                  case in ncgflw, and so that we always know the
                                  type }
-                               sym:=clocalvarsym.create('$exceptsym',vs_value,ot,[],true);
+                               sym:=clocalvarsym.create('$exceptsym',vs_value,ot,[]);
                             end;
                           excepTSymtable:=tstt_excepTSymtable.create;
                           excepTSymtable.insert(sym);
@@ -1222,6 +1225,11 @@ implementation
                  Message(parser_e_no_assembler_in_generic);
                code:=_asm_statement;
              end;
+           _PLUS:
+             begin
+               Message(parser_e_syntax_error);
+               consume(_PLUS);
+             end;
            _EOF :
              Message(scan_f_end_of_file);
          else
@@ -1257,7 +1265,7 @@ implementation
                    if symtablestack.top.symtablelevel<>srsymtable.symtablelevel then
                      begin
                        tlabelsym(srsym).nonlocal:=true;
-                       exclude(current_procinfo.procdef.procoptions,po_inline);
+                       include(current_procinfo.flags,pi_has_interproclabel);
                      end;
                    if tlabelsym(srsym).nonlocal and
                      (current_procinfo.procdef.proctypeoption in [potype_unitinit,potype_unitfinalize]) then

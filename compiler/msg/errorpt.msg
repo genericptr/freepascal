@@ -775,7 +775,7 @@ parser_e_function_already_declared_public_forward=03120_E_Funá∆o j† declarada co
 % declaration in the \var{implementation} section.
 parser_e_not_external_and_export=03121_E_Imposs°vel usar ambos EXPORT e EXTERNAL
 % These two procedure directives are mutually exclusive.
-parser_h_not_supported_for_inline=03123_H_"$1" n∆o suportado ainda dentro procedimento/funá∆o em linha
+parser_n_not_supported_for_inline=03123_N_"$1" n∆o suportado ainda dentro procedimento/funá∆o em linha
 % Inline procedures don't support this declaration.
 parser_h_inlining_disabled=03124_H_Procedimentos em linha desabilitados
 % Inlining of procedures is disabled.
@@ -3086,7 +3086,7 @@ wpo_cant_create_feedback_file=12019_E_Imposs°vel criar arquivo retorno otimizaá‰
 #
 option_logo=11023_[
 Compilador Free Pascal vers∆o $FPCFULLVERSION [$FPCDATE] para $FPCCPU
-Copyright (c) 1993-2018 by Florian Klaempfl and others
+Copyright (c) 1993-2019 by Florian Klaempfl and others
 ]
 
 #

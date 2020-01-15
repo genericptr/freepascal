@@ -170,6 +170,7 @@ type
     _WHILE,
     _WRITE,
     _ADDREF,
+    _CBLOCK,
     _DISPID,
     _DIVIDE,
     _DOWNTO,
@@ -236,6 +237,7 @@ type
     _MULTIPLY,
     _MWPASCAL,
     _NEGATIVE,
+    _NOINLINE,
     _NORETURN,
     _NOTEQUAL,
     _OPERATOR,
@@ -510,6 +512,7 @@ const
       (str:'WHILE'         ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'WRITE'         ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'ADDREF'        ;special:false;keyword:[m_none];op:NOTOKEN),
+      (str:'CBLOCK'        ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'DISPID'        ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'DIVIDE'        ;special:false;keyword:[m_none];op:NOTOKEN), { delphi operator name }
       (str:'DOWNTO'        ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
@@ -576,6 +579,7 @@ const
       (str:'MULTIPLY'      ;special:false;keyword:[m_none];op:NOTOKEN), { delphi operator name }
       (str:'MWPASCAL'      ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NEGATIVE'      ;special:false;keyword:[m_none];op:NOTOKEN), { delphi operator name }
+      (str:'NOINLINE'      ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NORETURN'      ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NOTEQUAL'      ;special:false;keyword:[m_none];op:NOTOKEN), { delphi operator name }
       (str:'OPERATOR'      ;special:false;keyword:[m_fpc];op:NOTOKEN),

@@ -135,7 +135,7 @@ var
 Begin
   e := OpenFile(FileName, result, Mode, faOpen);
   if e <> 0 then
-    result := -1;
+    result := unusedhandle;
 end;
 
 
@@ -145,7 +145,7 @@ var
 begin
   e := OpenFile(FileName, result, ofReadWrite, faCreate or faOpenReplace);
   if e <> 0 then
-    result := -1;
+    result := unusedhandle;
 end;
 
 
@@ -303,7 +303,13 @@ begin
 end;
 
 
-function FileExists (const FileName: RawByteString): boolean;
+function FileGetSymLinkTarget(const FileName: RawByteString; out SymLinkRec: TRawbyteSymLinkRec): Boolean;
+begin
+  Result := False;
+end;
+
+
+function FileExists (const FileName: RawByteString; FollowLink : Boolean): boolean;
 var
   L: longint;
 begin
@@ -318,7 +324,7 @@ begin
 end;
 
 
-Function DirectoryExists (Const Directory : RawByteString) : Boolean;
+Function DirectoryExists (Const Directory : RawByteString; FollowLink : Boolean) : Boolean;
 Var
   Dir : RawByteString;
   drive : byte;
@@ -923,5 +929,6 @@ Initialization
   InitInternational;    { Initialize internationalization settings }
   OnBeep:=@SysBeep;
 Finalization
+  FreeTerminateProcs;
   DoneExceptions;
 end.

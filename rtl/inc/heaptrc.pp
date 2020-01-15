@@ -14,7 +14,6 @@
  **********************************************************************}
 
 {$checkpointer off}
-
 unit heaptrc;
 interface
 
@@ -59,9 +58,9 @@ const
   { tracing level
     splitted in two if memory is released !! }
 {$ifdef EXTRA}
-  tracesize = 16;
+  tracesize = 32;
 {$else EXTRA}
-  tracesize = 8;
+  tracesize = 16;
 {$endif EXTRA}
   { install heaptrc memorymanager }
   useheaptrace : boolean=true;
@@ -509,8 +508,6 @@ var
 begin
   loc_info := @heap_info;
   try_finish_heap_free_todo_list(loc_info);
-  inc(loc_info^.getmem_size,size);
-  inc(loc_info^.getmem8_size,(size+7) and not 7);
 { Do the real GetMem, but alloc also for the info block }
 {$ifdef cpuarm}
   allocsize:=(size + 3) and not 3+sizeof(theap_mem_info)+extra_info_size;
@@ -529,6 +526,10 @@ begin
     end;
   pp:=pheap_mem_info(p);
   inc(p,sizeof(theap_mem_info));
+  { Update getmem_size and getmem8_size only after successful call 
+    to SysGetMem }
+  inc(loc_info^.getmem_size,size);
+  inc(loc_info^.getmem8_size,(size+7) and not 7);
 { Create the info block }
   pp^.sig:=longword(AllocateSig);
   pp^.todolist:=@loc_info^.heap_free_todo;
@@ -536,6 +537,7 @@ begin
   pp^.size:=size;
   pp^.extra_info_size:=extra_info_size;
   pp^.exact_info_size:=exact_info_size;
+  fillchar(pp^.calls[1],sizeof(pp^.calls),#0);
   {
     the end of the block contains:
     <tail>   4 bytes
@@ -559,7 +561,9 @@ begin
    pp^.extra_info:=nil;
   if add_tail then
     begin
-      pl:=pointer(pp)+allocsize-pp^.extra_info_size-tail_size;
+      { Calculate position from start because of arm
+        specific alignment }
+      pl:=pointer(pp)+sizeof(theap_mem_info)+pp^.size;
       for i:=1 to tail_size div sizeof(dword) do
         begin
           unaligned(pl^):=dword(AllocateSig);
@@ -818,7 +822,7 @@ var
   i, allocsize,
   movesize  : ptruint;
   pl : pdword;
-  pp : pheap_mem_info;
+  pp,prevpp{$ifdef EXTRA},ppv{$endif} : pheap_mem_info;
   oldsize,
   oldextrasize,
   oldexactsize : ptruint;
@@ -880,6 +884,7 @@ begin
    inc(allocsize,tail_size);
   { Try to resize the block, if not possible we need to do a
     getmem, move data, freemem }
+  prevpp:=pp;
   if not SysTryResizeMem(pp,allocsize) then
    begin
      { get a new block }
@@ -900,6 +905,45 @@ begin
      p:=newp;
      traceReAllocMem := newp;
      exit;
+   end
+  else
+   begin
+     if (pp<>prevpp) then
+       begin
+         { We need to update the previous/next chains }
+         if assigned(pp^.previous) then
+           pp^.previous^.next:=pp;
+         if assigned(pp^.next) then
+           pp^.next^.previous:=pp;
+         if prevpp=loc_info^.heap_mem_root then
+           loc_info^.heap_mem_root:=pp;
+{$ifdef EXTRA}
+         { remove prevpp from prev_valid chain }
+         ppv:=loc_info^.heap_valid_last;
+         if (ppv=prevpp) then
+           loc_info^.heap_valid_last:=pp^.prev_valid
+         else
+           begin
+             while assigned(ppv) do
+               begin
+                 if (ppv^.prev_valid=prevpp) then
+                   begin
+                     ppv^.prev_valid:=pp^.prev_valid;
+                     if prevpp=loc_info^.heap_valid_first then
+                       loc_info^.heap_valid_first:=ppv;
+                     ppv:=nil;
+                   end
+                 else
+                   ppv:=ppv^.prev_valid;
+               end;
+           end;
+         { Reinsert new value in last position }
+         pp^.prev_valid:=loc_info^.heap_valid_last;
+         loc_info^.heap_valid_last:=pp;
+         if not assigned(loc_info^.heap_valid_first) then
+           loc_info^.heap_valid_first:=pp;
+{$endif EXTRA}
+       end;
    end;
 { Recreate the info block }
   pp^.sig:=longword(AllocateSig);
@@ -921,7 +965,9 @@ begin
    pp^.extra_info:=nil;
   if add_tail then
     begin
-      pl:=pointer(pp)+allocsize-pp^.extra_info_size-tail_size;
+      { Calculate position from start because of arm
+        specific alignment }
+      pl:=pointer(pp)+sizeof(theap_mem_info)+pp^.size;
       for i:=1 to tail_size div sizeof(dword) do
         begin
           unaligned(pl^):=dword(AllocateSig);
@@ -1192,6 +1238,59 @@ begin
   DumpHeap(GlobalSkipIfNoLeaks);
 end;
 
+const
+{$ifdef BSD}   // dlopen is in libc on FreeBSD.
+  LibDL = 'c';
+{$else}
+  {$ifdef HAIKU}
+    LibDL = 'root';
+  {$else}
+    LibDL = 'dl';
+  {$endif}
+{$endif}
+{$if defined(LINUX) or defined(BSD)}
+type
+  Pdl_info = ^dl_info;
+  dl_info = record
+    dli_fname      : Pchar;
+    dli_fbase      : pointer;
+    dli_sname      : Pchar;
+    dli_saddr      : pointer;
+  end;
+
+  function _dladdr(Lib:pointer; info: Pdl_info): Longint; cdecl; external LibDL name 'dladdr';
+{$elseif defined(MSWINDOWS)}
+  function _GetModuleFileNameA(hModule:HModule;lpFilename:PAnsiChar;nSize:cardinal):cardinal;stdcall; external 'kernel32' name 'GetModuleFileNameA';
+{$endif}
+
+function GetModuleName:string;
+{$ifdef MSWINDOWS}
+var
+  sz:cardinal;
+  buf:array[0..8191] of char;
+{$endif}
+{$if defined(LINUX) or defined(BSD)}
+var
+  res:integer;
+  dli:dl_info;
+{$endif}
+begin
+  GetModuleName:='';
+{$if defined(LINUX) or defined(BSD)}
+  res:=_dladdr(@ParamStr,@dli); { get any non-eliminated address in SO space }
+  if res<=0 then 
+    exit;
+  if Assigned(dli.dli_fname) then
+    GetModuleName:=PAnsiChar(dli.dli_fname);
+{$elseif defined(MSWINDOWS)}
+  sz:=_GetModuleFileNameA(hInstance,PChar(@buf),sizeof(buf));
+  if sz>0 then
+    setstring(GetModuleName,PAnsiChar(@buf),sz)
+{$else}
+  GetModuleName:=ParamStr(0);
+{$endif}
+end;
+
 procedure dumpheap(SkipIfNoLeaks : Boolean);
 var
   pp : pheap_mem_info;
@@ -1209,7 +1308,7 @@ begin
   pp:=loc_info^.heap_mem_root;
   if ((loc_info^.getmem_size-loc_info^.freemem_size)=0) and SkipIfNoLeaks then
     exit;
-  Writeln(ptext^,'Heap dump by heaptrc unit of '+ParamStr(0));
+  Writeln(ptext^,'Heap dump by heaptrc unit of "'+GetModuleName()+'"');
   Writeln(ptext^,loc_info^.getmem_cnt, ' memory blocks allocated : ',
     loc_info^.getmem_size,'/',loc_info^.getmem8_size);
   Writeln(ptext^,loc_info^.freemem_cnt,' memory blocks freed     : ',
@@ -1284,7 +1383,9 @@ end;
 
 function TraceAllocMem(size:ptruint):Pointer;
 begin
-  TraceAllocMem:=SysAllocMem(size);
+  TraceAllocMem := TraceGetMem(size);
+  if Assigned(TraceAllocMem) then
+    FillChar(TraceAllocMem^, TraceMemSize(TraceAllocMem), 0);
 end;
 
 

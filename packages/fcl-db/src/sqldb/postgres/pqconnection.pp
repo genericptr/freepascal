@@ -33,7 +33,7 @@ type
   // TField and TFieldDef only support a limited amount of fields.
   // TFieldBinding and TExtendedFieldType can be used to map PQ types
   // on standard fields and retain mapping info.
-  TExtendedFieldType = (eftNone,eftEnum);
+  TExtendedFieldType = (eftNone,eftEnum,eftCitext);
 
   TFieldBinding = record
     FieldDef : TSQLDBFieldDef; // FieldDef this is associated with
@@ -276,7 +276,7 @@ constructor TPQConnection.Create(AOwner : TComponent);
 
 begin
   inherited;
-  FConnOptions := FConnOptions + [sqSupportParams, sqSupportEmptyDatabaseName, sqEscapeRepeat, sqEscapeSlash, sqImplicitTransaction,sqSupportReturning];
+  FConnOptions := FConnOptions + [sqSupportParams, sqSupportEmptyDatabaseName, sqEscapeRepeat, sqEscapeSlash, sqImplicitTransaction,sqSupportReturning,sqSequences];
   FieldNameQuoteChars:=DoubleQuotes;
   VerboseErrors:=True;
   FConnectionPool:=TThreadlist.Create;
@@ -366,15 +366,16 @@ begin
       tt:=pqgetvalue(Res,i,2);
       tc:=pqgetvalue(Res,i,3);
       J:=length(Bindings)-1;
-      while (J>=0) and (Bindings[j].TypeOID<>toid) do
-        Dec(J);
-      if (J>=0) then
+      while (J>= 0) do
         begin
-        Bindings[j].TypeName:=TN;
-        Case tt of
-          'e': // Enum
+        if (Bindings[j].TypeOID=toid) then
+          Case tt of
+           'e':
             Bindings[j].ExtendedFieldType:=eftEnum;
-        end;
+           'citext':
+            Bindings[j].ExtendedFieldType:=eftCitext;
+          end;
+        Dec(J);
         end;
       end;
   finally
@@ -882,6 +883,7 @@ begin
   with (cursor as TPQCursor) do
     begin
     FPrepared := False;
+    FDirect := False;
     // Prior to v8 there is no support for cursors and parameters.
     // So that's not supported.
     if FStatementType in [stInsert,stUpdate,stDelete, stSelect] then
@@ -929,8 +931,6 @@ begin
         buf := AParams.ParseSQL(buf,false,sqEscapeSlash in ConnOptions, sqEscapeRepeat in ConnOptions,psPostgreSQL);
         end;
       s := s + ' as ' + buf;
-      if LogEvent(detPrepare) then
-        Log(detPrepare,S);
       if LogEvent(detActualSQL) then
         Log(detActualSQL,S);
       res := PQexec(tr.PGConn,pchar(s));
@@ -947,7 +947,13 @@ begin
       FPrepared := True;
       end
     else
-      Statement := AParams.ParseSQL(buf,false,sqEscapeSlash in ConnOptions, sqEscapeRepeat in ConnOptions,psPostgreSQL);
+      begin
+      if Assigned(AParams) then
+        Statement := AParams.ParseSQL(buf,false,sqEscapeSlash in ConnOptions, sqEscapeRepeat in ConnOptions,psPostgreSQL)
+      else
+        Statement:=Buf;
+      FDirect:=True;
+      end;
     end;
 end;
 
@@ -993,6 +999,7 @@ var ar  : array of PAnsiChar;
 begin
   with cursor as TPQCursor do
     begin
+    CurTuple:=-1;
     PQclear(res);
     if FStatementType in [stInsert,stUpdate,stDelete,stSelect] then
       begin
@@ -1152,6 +1159,10 @@ begin
             FD.DataType:=ftString;
             FD.Size:=64;
             //FD.Attributes:=FD.Attributes+[faReadonly];
+            end;
+          eftCitext:
+            begin
+            FD.DataType:=ftMemo;
             end
         else
           if ErrorOnUnknownType then

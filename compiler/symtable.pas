@@ -91,6 +91,12 @@ interface
        tllvmshadowsymtable = class;
 {$endif llvm}
 
+       tmanagementoperator_offset_entry = record
+         pd : tprocdef;
+         offset : asizeint;
+       end;
+       pmanagementoperator_offset_entry = ^tmanagementoperator_offset_entry;
+
        tabstractrecordsymtable = class(tstoredsymtable)
 {$ifdef llvm}
        private
@@ -102,9 +108,9 @@ interface
           recordalignment,       { alignment desired when inserting this record }
           fieldalignment,        { alignment current alignment used when fields are inserted }
           padalignment : shortint;   { size to a multiple of which the symtable has to be rounded up }
-          recordalignmin,            { local equivalents of global settings, so that records can }
-          maxCrecordalign: shortint; { be created with custom settings internally }
-          constructor create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+          recordalignmin: shortint; { local equivalentsof global settings, so that records can be created with custom settings internally }
+          has_fields_with_mop : tmanagementoperators; { whether any of the fields has the need for a management operator (or one of the field's fields) }
+          constructor create(const n:string;usealign,recordminalign:shortint);
           destructor destroy;override;
           procedure ppuload(ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -120,6 +126,10 @@ interface
           function is_packed: boolean;
           function has_single_field(out def:tdef): boolean;
           function get_unit_symtable: tsymtable;
+          { collects all management operators of the specified type in list (which
+            is not cleared); the entries are copies and thus must be freed by the
+            caller }
+          procedure get_managementoperator_offset_list(mop:tmanagementoperator;list:tfplist);
         protected
           { size in bytes including padding }
           _datasize      : asizeint;
@@ -128,8 +138,12 @@ interface
           databitsize    : asizeint;
           { size in bytes of padding }
           _paddingsize   : word;
+          { array of tmanagementoperator_offset_entry lists; only assigned if
+            they had been queried once by get_management_operator_list }
+          mop_list : array[tmanagementoperator] of tfplist;
           procedure setdatasize(val: asizeint);
           function getfieldoffset(sym: tfieldvarsym; base: asizeint; var globalfieldalignment: shortint): asizeint;
+          procedure do_get_managementoperator_offset_list(data:tobject;arg:pointer);
         public
           function iscurrentunit: boolean; override;
           property datasize : asizeint read _datasize write setdatasize;
@@ -146,14 +160,14 @@ interface
           { object/classes. In XE5 and newer is possible to use class operator }
           { for classes (like for Delphi .NET before) only for Delphi NEXTGEN  }
           managementoperators : tmanagementoperators;
-          constructor create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+          constructor create(const n:string;usealign,recordminalign:shortint);
           procedure insertunionst(unionst : trecordsymtable;offset : asizeint);
           procedure includemanagementoperator(mop:tmanagementoperator);
        end;
 
        tObjectSymtable = class(tabstractrecordsymtable)
        public
-          constructor create(adefowner:tdef;const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+          constructor create(adefowner:tdef;const n:string;usealign,recordminalign:shortint);
           function  checkduplicate(var hashedid:THashedIDString;sym:TSymEntry):boolean;override;
        end;
 
@@ -320,7 +334,8 @@ interface
     procedure write_system_parameter_lists(const name:string);
 
 {*** Search ***}
-    procedure addsymref(sym:tsym);
+    procedure addsymref(sym:tsym);inline;
+    procedure addsymref(sym:tsym;def:tdef);
     function  is_owned_by(nesteddef,ownerdef:tdef):boolean;
     function  sym_is_owned_by(childsym:tsym;symtable:tsymtable):boolean;
     function  defs_belong_to_same_generic(def1,def2:tdef):boolean;
@@ -368,6 +383,8 @@ interface
     { actually defined (could be disable using "undef")                     }
     function  defined_macro(const s : string):boolean;
     { Look for a system procedure (no overloads supported) }
+    { returns a list of helpers in the current module for the def }
+    function get_objectpascal_helpers(pd : tdef):TFPObjectList;
 
 {*** Object Helpers ***}
     function search_default_property(pd : tabstractrecorddef) : tpropertysym;
@@ -458,7 +475,7 @@ implementation
 
     uses
       { global }
-      verbose,globals,
+      verbose,globals,systems,
       { symtable }
       symutil,defutil,defcmp,objcdef,
       { module }
@@ -466,7 +483,7 @@ implementation
       { codegen }
       procinfo,
       { ppu }
-      entfile,
+      entfile,ppu,
       { parser }
       scanner
       ;
@@ -478,7 +495,6 @@ implementation
 {*****************************************************************************
                              TStoredSymtable
 *****************************************************************************}
-
 
     constructor tstoredsymtable.create(const s:string);
       begin
@@ -510,7 +526,7 @@ implementation
         { load the table's flags }
         if ppufile.readentry<>ibsymtableoptions then
           Message(unit_f_ppu_read_error);
-        ppufile.getsmallset(tableoptions);
+        ppufile.getset(tppuset1(tableoptions));
 
         { load definitions }
         loaddefs(ppufile);
@@ -529,7 +545,7 @@ implementation
            needs_init_final;
 
          { write the table's flags }
-         ppufile.putsmallset(tableoptions);
+         ppufile.putset(tppuset1(tableoptions));
          ppufile.writeentry(ibsymtableoptions);
 
          { write definitions }
@@ -545,13 +561,13 @@ implementation
         def : tdef;
         b   : byte;
       begin
-         def:=nil;
          { load start of definition section, which holds the amount of defs }
          if ppufile.readentry<>ibstartdefs then
            Message(unit_f_ppu_read_error);
          { read definitions }
          repeat
            b:=ppufile.readentry;
+           def:=nil;
            case b of
              ibpointerdef : def:=cpointerdef.ppuload(ppufile);
              ibarraydef : def:=carraydef.ppuload(ppufile);
@@ -578,6 +594,8 @@ implementation
            else
              Message1(unit_f_ppu_invalid_entry,tostr(b));
            end;
+           if assigned(def) then
+             tstoreddef(def).ppuload_subentries(ppufile);
            InsertDef(def);
          until false;
       end;
@@ -588,12 +606,12 @@ implementation
         b   : byte;
         sym : tsym;
       begin
-         sym:=nil;
          { load start of definition section, which holds the amount of defs }
          if ppufile.readentry<>ibstartsyms then
           Message(unit_f_ppu_read_error);
          { now read the symbols }
          repeat
+           sym:=nil;
            b:=ppufile.readentry;
            case b of
                 ibtypesym : sym:=ctypesym.ppuload(ppufile);
@@ -616,6 +634,8 @@ implementation
            else
              Message1(unit_f_ppu_invalid_entry,tostr(b));
            end;
+           if assigned(sym) then
+             tstoredsym(sym).ppuload_subentries(ppufile);
            Insert(sym,false);
          until false;
       end;
@@ -640,7 +660,10 @@ implementation
           begin
             def:=tstoreddef(DefList[i]);
             if def.is_registered then
-              def.ppuwrite(ppufile);
+              begin
+                def.ppuwrite(ppufile);
+                def.ppuwrite_subentries(ppufile);
+              end;
           end;
         { write end of definitions }
         ppufile.writeentry(ibenddefs);
@@ -666,7 +689,10 @@ implementation
           begin
             sym:=tstoredsym(SymList[i]);
             if sym.is_registered then
-              sym.ppuwrite(ppufile);
+              begin
+                sym.ppuwrite(ppufile);
+                sym.ppuwrite_subentries(ppufile);
+              end;
           end;
         { end of symbols }
         ppufile.writeentry(ibendsyms);
@@ -718,6 +744,7 @@ implementation
         newbuiltdefderefs,
         builtdefderefs,
         builtsymderefs: array of boolean;
+        changed: boolean;
       begin
         newbuiltdefderefs:=nil;
         builtdefderefs:=nil;
@@ -735,6 +762,7 @@ implementation
           { current number of registered defs/syms }
           defidmax:=current_module.deflist.count;
           symidmax:=current_module.symlist.count;
+          changed:=false;
 
           { build the derefs for the registered defs we haven't processed yet }
           for i:=0 to DefList.Count-1 do
@@ -747,6 +775,7 @@ implementation
                       def.buildderef;
                       newbuiltdefderefs[i]:=true;
                       builtdefderefs[i]:=true;
+                      changed:=true;
                     end;
                 end;
             end;
@@ -760,6 +789,7 @@ implementation
                     begin
                       sym.buildderef;
                       builtsymderefs[i]:=true;
+                      changed:=true;
                     end;
                 end;
             end;
@@ -770,12 +800,13 @@ implementation
                 begin
                   newbuiltdefderefs[i]:=false;
                   tstoreddef(DefList[i]).buildderefimpl;
+                  changed:=true;
                 end;
             end;
         { stop when no new defs or syms have been registered while processing
           the currently registered ones (defs/syms get added to the module's
           deflist/symlist when they are registered) }
-        until
+        until not changed and 
           (defidmax=current_module.deflist.count) and
           (symidmax=current_module.symlist.count);
       end;
@@ -934,6 +965,7 @@ implementation
                  if (vo_is_funcret in tabstractvarsym(sym).varoptions) then
                    begin
                      { don't warn about the result of constructors }
+                     { or the synthetic helper functions for class-attributes }
                      if ((tsym(sym).owner.symtabletype<>localsymtable) or
                         (tprocdef(tsym(sym).owner.defowner).proctypeoption<>potype_constructor)) and
                         not (po_noreturn in tprocdef(tsym(sym).owner.defowner).procoptions) and
@@ -1093,6 +1125,8 @@ implementation
                    (mop_initialize in trecordsymtable(trecorddef(tabstractvarsym(sym).vardef).symtable).managementoperators) then
                  include(tableoptions,sto_has_non_trivial_init);
              end;
+           else
+             ;
          end;
       end;
 
@@ -1136,7 +1170,7 @@ implementation
       end;
 {$endif llvm}
 
-    constructor tabstractrecordsymtable.create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+    constructor tabstractrecordsymtable.create(const n:string;usealign,recordminalign:shortint);
       begin
         inherited create(n);
         _datasize:=0;
@@ -1144,7 +1178,6 @@ implementation
         recordalignment:=1;
         usefieldalignment:=usealign;
         recordalignmin:=recordminalign;
-        maxCrecordalign:=recordmaxCalign;
         padalignment:=1;
         { recordalign C_alignment means C record packing, that starts
           with an alignment of 1 }
@@ -1161,11 +1194,46 @@ implementation
 
 
     destructor tabstractrecordsymtable.destroy;
+
+      { for some reason a compiler built with 3.3.1 fails building the libxml2
+        package if the below define is not defined and thus the code snippet is
+        part of the destructor itself and not a nested procedure; until that bug
+        is fixed this is used as a workaround :/ }
+{$define codegen_workaround}
+{$ifdef codegen_workaround}
+      procedure free_mop_list(mop:tmanagementoperator);
+        var
+          i : longint;
+        begin
+          if assigned(mop_list[mop]) then
+            for i:=0 to mop_list[mop].count-1 do
+              dispose(pmanagementoperator_offset_entry(mop_list[mop][i]));
+          mop_list[mop].free;
+        end;
+{$endif codegen_workaround}
+
+      var
+        mop : tmanagementoperator;
+{$ifndef codegen_workaround}
+        i : longint;
+{$endif codegen_workaround}
       begin
+        if refcount>1 then
+          exit;
 {$ifdef llvm}
-        if refcount=1 then
-          fllvmst.free;
+        fllvmst.free;
 {$endif llvm}
+        for mop:=low(tmanagementoperator) to high(tmanagementoperator) do
+          begin
+{$ifdef codegen_workaround}
+            free_mop_list(mop);
+{$else codegen_workaround}
+            if assigned(mop_list[mop]) then
+              for i:=0 to mop_list[mop].count-1 do
+                dispose(pmanagementoperator_offset_entry(mop_list[mop][i]));
+            mop_list[mop].free;
+{$endif codegen_workaround}
+          end;
         inherited destroy;
       end;
 
@@ -1179,6 +1247,7 @@ implementation
         recordalignmin:=shortint(ppufile.getbyte);
         if (usefieldalignment=C_alignment) then
           fieldalignment:=shortint(ppufile.getbyte);
+        ppufile.getset(tppuset1(has_fields_with_mop));
         inherited ppuload(ppufile);
       end;
 
@@ -1196,6 +1265,10 @@ implementation
          ppufile.putbyte(byte(recordalignmin));
          if (usefieldalignment=C_alignment) then
            ppufile.putbyte(byte(fieldalignment));
+         { it's not really a "symtableoption", but loading this from the record
+           def requires storing the set in the recorddef at least between
+           ppuload and deref/derefimpl }
+         ppufile.putset(tppuset1(has_fields_with_mop));
          ppufile.writeentry(ibrecsymtableoptions);
 
          inherited ppuwrite(ppufile);
@@ -1236,7 +1309,7 @@ implementation
       begin
         case usefieldalignment of
           C_alignment:
-            varalignrecord:=used_align(varalign,recordalignmin,maxCrecordalign);
+            varalignrecord:=used_align(varalign,recordalignmin,current_settings.alignment.maxCrecordalign);
           mac68k_alignment:
             varalignrecord:=2;
           else
@@ -1259,6 +1332,11 @@ implementation
         sym.visibility:=vis;
         { this symbol can't be loaded to a register }
         sym.varregable:=vr_none;
+        { management operators }
+        if sym.vardef.typ in [recorddef,objectdef] then
+          has_fields_with_mop:=has_fields_with_mop + tabstractrecordsymtable(tabstractrecorddef(sym.vardef).symtable).has_fields_with_mop;
+        if sym.vardef.typ=recorddef then
+          has_fields_with_mop:=has_fields_with_mop + trecordsymtable(trecorddef(sym.vardef).symtable).managementoperators;
         { Calculate field offset }
         l:=sym.getsize;
         vardef:=sym.vardef;
@@ -1478,8 +1556,7 @@ implementation
         for i:=0 to SymList.count-1 do
           begin
             sym:=tsym(symlist[i]);
-            if (sym.typ=fieldvarsym) and
-               not(sp_static in sym.symoptions) and
+            if is_normal_fieldvarsym(sym) and
                (tfieldvarsym(sym).fieldoffset>=offset) then
               begin
                 result:=tfieldvarsym(sym);
@@ -1560,8 +1637,7 @@ implementation
           { record has one field? }
           for i:=0 to currentsymlist.Count-1 do
             begin
-              if (tsym(currentsymlist[i]).typ=fieldvarsym) and
-                 not(sp_static in tsym(currentsymlist[i]).symoptions) then
+              if is_normal_fieldvarsym(tsym(currentsymlist[i])) then
                 begin
                   if result then
                     begin
@@ -1608,6 +1684,75 @@ implementation
           result:=result.defowner.owner;
       end;
 
+
+    procedure tabstractrecordsymtable.do_get_managementoperator_offset_list(data:tobject;arg:pointer);
+      var
+        sym : tsym absolute data;
+        fsym : tfieldvarsym absolute data;
+        mop : tmanagementoperator;
+        entry : pmanagementoperator_offset_entry;
+        sublist : tfplist;
+        i : longint;
+      begin
+        if not is_normal_fieldvarsym(sym) then
+          exit;
+        if not is_record(fsym.vardef) and not is_object(fsym.vardef) and not is_cppclass(fsym.vardef) then
+          exit;
+        mop:=tmanagementoperator(ptruint(arg));
+        if not assigned(mop_list[mop]) then
+          internalerror(2018082303);
+
+        if is_record(fsym.vardef) then
+          begin
+            if mop in trecordsymtable(trecorddef(fsym.vardef).symtable).managementoperators then
+              begin
+                new(entry);
+                entry^.pd:=search_management_operator(mop,fsym.vardef);
+                if not assigned(entry^.pd) then
+                  internalerror(2018082302);
+                entry^.offset:=fsym.fieldoffset;
+                mop_list[mop].add(entry);
+              end;
+          end;
+
+        sublist:=tfplist.create;
+        tabstractrecordsymtable(tabstractrecorddef(fsym.vardef).symtable).get_managementoperator_offset_list(mop,sublist);
+        for i:=0 to sublist.count-1 do
+          begin
+            entry:=pmanagementoperator_offset_entry(sublist[i]);
+            entry^.offset:=entry^.offset+fsym.fieldoffset;
+            mop_list[mop].add(entry);
+          end;
+        { we don't need to remove the entries as they become part of list }
+        sublist.free;
+      end;
+
+    procedure tabstractrecordsymtable.get_managementoperator_offset_list(mop:tmanagementoperator;list:tfplist);
+      var
+        i : longint;
+        entry,entrycopy : pmanagementoperator_offset_entry;
+      begin
+        if not assigned(list) then
+          internalerror(2018082301);
+        if mop=mop_none then
+          exit;
+        if not (mop in has_fields_with_mop) then
+          { none of the fields or one of the field's fields has the requested operator }
+          exit;
+        if not assigned(mop_list[mop]) then
+          begin
+            mop_list[mop]:=tfplist.create;
+            SymList.ForEachCall(@do_get_managementoperator_offset_list,pointer(ptruint(mop)));
+          end;
+        for i:=0 to mop_list[mop].count-1 do
+          begin
+            entry:=pmanagementoperator_offset_entry(mop_list[mop][i]);
+            New(entrycopy);
+            entrycopy^:=entry^;
+            list.add(entrycopy);
+          end;
+      end;
+
     procedure tabstractrecordsymtable.setdatasize(val: asizeint);
       begin
         _datasize:=val;
@@ -1640,7 +1785,7 @@ implementation
                 Message1(sym_w_wrong_C_pack,vardef.typename);
               if varalign=0 then
                 varalign:=l;
-              if (globalfieldalignment<maxCrecordalign) then
+              if (globalfieldalignment<current_settings.alignment.maxCrecordalign) then
                 begin
                   if (varalign>16) and (globalfieldalignment<32) then
                     globalfieldalignment:=32
@@ -1656,7 +1801,7 @@ implementation
                   else if (varalign>1) and (globalfieldalignment<2) then
                     globalfieldalignment:=2;
                 end;
-              globalfieldalignment:=min(globalfieldalignment,maxCrecordalign);
+              globalfieldalignment:=min(globalfieldalignment,current_settings.alignment.maxCrecordalign);
             end;
           mac68k_alignment:
             begin
@@ -1688,9 +1833,9 @@ implementation
                               TRecordSymtable
 ****************************************************************************}
 
-    constructor trecordsymtable.create(const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+    constructor trecordsymtable.create(const n:string;usealign,recordminalign:shortint);
       begin
-        inherited create(n,usealign,recordminalign,recordmaxCalign);
+        inherited create(n,usealign,recordminalign);
         symtabletype:=recordsymtable;
       end;
 
@@ -1725,7 +1870,7 @@ implementation
         for i:=0 to unionst.SymList.Count-1 do
           begin
             sym:=TSym(unionst.SymList[i]);
-            if sym.typ<>fieldvarsym then
+            if not is_normal_fieldvarsym(sym) then
               internalerror(200601272);
             if tfieldvarsym(sym).fieldoffset=0 then
               include(tfieldvarsym(sym).varoptions,vo_is_first_field);
@@ -1815,9 +1960,9 @@ implementation
                               TObjectSymtable
 ****************************************************************************}
 
-    constructor tObjectSymtable.create(adefowner:tdef;const n:string;usealign,recordminalign,recordmaxCalign:shortint);
+    constructor tObjectSymtable.create(adefowner:tdef;const n:string;usealign,recordminalign:shortint);
       begin
-        inherited create(n,usealign,recordminalign,recordmaxCalign);
+        inherited create(n,usealign,recordminalign);
         symtabletype:=ObjectSymtable;
         defowner:=adefowner;
       end;
@@ -1857,7 +2002,7 @@ implementation
                   )
                  ) then
                 begin
-                  { only watn when a parameter/local variable in a method
+                  { only warn when a parameter/local variable in a method
                     conflicts with a category method, because this can easily
                     happen due to all possible categories being imported via
                     CocoaAll }
@@ -2009,8 +2154,7 @@ implementation
         i:=0;
         while (i<equivst.symlist.count) do
           begin
-            if (tsym(equivst.symlist[i]).typ<>fieldvarsym) or
-               (sp_static in tsym(equivst.symlist[i]).symoptions) then
+            if not is_normal_fieldvarsym(tsym(equivst.symlist[i])) then
               begin
                 inc(i);
                 continue;
@@ -2068,8 +2212,7 @@ implementation
                       begin
                         inc(i);
                         while (i<equivst.symlist.count) and
-                              ((tsym(equivst.symlist[i]).typ<>fieldvarsym) or
-                               (sp_static in tsym(equivst.symlist[i]).symoptions) or
+                              (not is_normal_fieldvarsym(tsym(equivst.symlist[i])) or
                                (tfieldvarsym(equivst.symlist[i]).fieldoffset>sym.fieldoffset)) do
                           inc(i);
                         continue;
@@ -2096,8 +2239,7 @@ implementation
         lastvaroffsetprocessed:=-1;
         while (i<equivcount) do
           begin
-            if (tsym(equivst.symlist[i]).typ<>fieldvarsym) or
-               (sp_static in tsym(equivst.symlist[i]).symoptions) then
+            if not is_normal_fieldvarsym(tsym(equivst.symlist[i])) then
               begin
                 inc(i);
                 continue;
@@ -2138,8 +2280,7 @@ implementation
         i:=0;
         while (i < equivcount) do
           begin
-            if (tsym(equivst.symlist[i]).typ<>fieldvarsym) or
-               (sp_static in tsym(equivst.symlist[i]).symoptions) then
+            if not is_normal_fieldvarsym(tsym(equivst.symlist[i])) then
               begin
                 inc(i);
                 continue;
@@ -2624,6 +2765,8 @@ implementation
 
     destructor twithsymtable.destroy;
       begin
+        if refcount>1 then
+          exit;
         withrefnode.free;
         { Disable SymList because we don't Own it }
         SymList:=nil;
@@ -2881,9 +3024,9 @@ implementation
                                   Search
 *****************************************************************************}
 
-     procedure addsymref(sym:tsym);
+     procedure addsymref(sym:tsym;def:tdef);
        var
-         owner: tsymtable;
+         owner,procowner : tsymtable;
        begin
          { for symbols used in preprocessor expressions, we don't want to
            increase references count (for smaller final binaries) }
@@ -2915,8 +3058,47 @@ implementation
                  { symbol is imported from another unit }
                  current_module.addimportedsym(sym);
              end;
+         { static symbols that are used in public functions must be exported
+           for packages as well }
+         if ([tf_supports_packages,tf_supports_hidden_symbols]<=target_info.flags) and
+             (owner.symtabletype=staticsymtable) and
+             assigned(current_procinfo) and
+             (
+               (
+                 (sym.typ=staticvarsym) and
+                 ([vo_is_public,vo_has_global_ref]*tstaticvarsym(sym).varoptions=[])
+               ) or (
+                 (sym.typ=localvarsym) and
+                 assigned(tlocalvarsym(sym).defaultconstsym) and
+                 ([vo_is_public,vo_has_global_ref]*tstaticvarsym(tlocalvarsym(sym).defaultconstsym).varoptions=[])
+               ) or (
+                 (sym.typ=procsym) and
+                 assigned(def) and
+                 (def.typ=procdef) and
+                 not (df_has_global_ref in def.defoptions) and
+                 not (po_public in tprocdef(def).procoptions)
+               )
+             ) then
+           begin
+             procowner:=current_procinfo.procdef.owner;
+             while procowner.symtabletype in [objectsymtable,recordsymtable] do
+               procowner:=tdef(procowner.defowner).owner;
+             if procowner.symtabletype=globalsymtable then
+               begin
+                 if sym.typ=procsym then
+                   current_procinfo.add_local_ref_def(def)
+                 else if sym.typ=staticvarsym then
+                   current_procinfo.add_local_ref_sym(sym)
+                 else
+                   current_procinfo.add_local_ref_sym(tlocalvarsym(sym).defaultconstsym);
+               end;
+           end;
        end;
 
+     procedure addsymref(sym:tsym);
+       begin
+         addsymref(sym,nil);
+       end;
 
     function is_owned_by(nesteddef,ownerdef:tdef):boolean;
       begin
@@ -3139,6 +3321,8 @@ implementation
           vis_public,
           vis_published :
             result:=true;
+          else
+            internalerror(2019050702);
         end;
       end;
 
@@ -3694,6 +3878,8 @@ implementation
         srsymtable:=nil;
       end;
 
+    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym;out srsymtable: tsymtable):boolean;forward;
+
     function searchsym_in_helper(classh,contextclassh:tobjectdef;const s: TIDString;out srsym:tsym;out srsymtable:TSymtable;flags:tsymbol_search_flags):boolean;
       var
         hashedid      : THashedIDString;
@@ -3755,10 +3941,26 @@ implementation
               end;
             parentclassh:=parentclassh.childof;
           end;
+        { now search in the parents of the extended class (with helpers!) }
         if is_class(classh.extendeddef) then
-          { now search in the parents of the extended class (with helpers!) }
-          result:=searchsym_in_class(tobjectdef(classh.extendeddef).childof,contextclassh,s,srsym,srsymtable,flags+[ssf_search_helper]);
-          { addsymref is already called by searchsym_in_class }
+          begin
+            result:=searchsym_in_class(tobjectdef(classh.extendeddef).childof,contextclassh,s,srsym,srsymtable,flags+[ssf_search_helper]);
+            { addsymref is already called by searchsym_in_class }
+            if result then
+              exit;
+          end;
+        { now search all helpers using the extendeddef as the starting point }
+        if (m_multi_helpers in current_settings.modeswitches) and
+            (
+              (current_structdef<>classh) or
+              assigned(classh.extendeddef)
+            ) then
+          begin
+            { this is only allowed if classh is currently parsed }
+            if not assigned(classh.extendeddef) then
+              internalerror(2019110101);
+            result:=search_best_objectpascal_helper(s,classh.extendeddef,contextclassh,srsym,srsymtable);
+          end;
       end;
 
     function search_specific_assignment_operator(assignment_type:ttoken;from_def,to_def:Tdef):Tprocdef;
@@ -3971,19 +4173,73 @@ implementation
           end;
       end;
 
-    function search_last_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;out odef : tobjectdef):boolean;
+    function search_sym_in_helperdef(const s: string;classh : tobjectdef;contextclassh : tabstractrecorddef;out srsym: tsym;out srsymtable: tsymtable): boolean;
       var
-        s: string;
-        list: TFPObjectList;
-        i: integer;
-        st: tsymtable;
+        hashedid : THashedIDString;
+        pdef : tprocdef;
+        i : integer;
       begin
+        hashedid.id:=s;
         result:=false;
-        odef:=nil;
+        repeat
+          srsymtable:=classh.symtable;
+          srsym:=tsym(srsymtable.FindWithHash(hashedid));
+          if srsym<>nil then
+            begin
+              case srsym.typ of
+                procsym:
+                  begin
+                    for i:=0 to tprocsym(srsym).procdeflist.count-1 do
+                      begin
+                        pdef:=tprocdef(tprocsym(srsym).procdeflist[i]);
+                        if not is_visible_for_object(pdef.owner,pdef.visibility,contextclassh) then
+                          continue;
+                        srsym:=tprocdef(tprocsym(srsym).procdeflist[i]).procsym;
+                        srsymtable:=srsym.owner;
+                        result:=true;
+                        exit;
+                      end;
+                  end;
+                typesym,
+                fieldvarsym,
+                constsym,
+                enumsym,
+                undefinedsym,
+                propertysym:
+                  begin
+                    result:=true;
+                    exit;
+                  end;
+                else
+                  internalerror(2014041101);
+              end;
+            end;
+
+          { try the helper parent if available }
+          classh:=classh.childof;
+        until classh=nil;
+      end;
+
+    function get_objectpascal_helpers(pd : tdef):TFPObjectList;
+      var
+        s : string;
+        st : tsymtable;
+      begin
+        result:=nil;
         { when there are no helpers active currently then we don't need to do
           anything }
         if current_module.extendeddefs.count=0 then
           exit;
+        if (df_genconstraint in pd.defoptions) then
+          begin
+            { if we have a constraint for a class type or a single interface we
+              use that to resolve helpers at declaration time of the generic,
+              otherwise there can't be any helpers as the type isn't known yet }
+            if pd.typ=objectdef then
+              pd:=tobjectdef(pd).getparentdef
+            else
+              exit;
+          end;
         { no helpers for anonymous types }
         if ((pd.typ in [recorddef,objectdef]) and
             (
@@ -4002,7 +4258,42 @@ implementation
           exit;
         { the mangled name is used as the key for tmodule.extendeddefs }
         s:=generate_objectpascal_helper_key(pd);
-        list:=TFPObjectList(current_module.extendeddefs.Find(s));
+        result:=TFPObjectList(current_module.extendeddefs.Find(s));
+      end;
+
+    function search_best_objectpascal_helper(const name: string;pd : tdef;contextclassh : tabstractrecorddef;out srsym: tsym;out srsymtable: tsymtable):boolean;
+      var
+        s : string;
+        list : TFPObjectList;
+        i : integer;
+        st : tsymtable;
+        odef : tobjectdef;
+      begin
+        result:=false;
+        list:=get_objectpascal_helpers(pd);
+        if assigned(list) and (list.count>0) then
+          begin
+            i:=list.count-1;
+            repeat
+              odef:=tobjectdef(list[i]);
+              result:=(odef.owner.symtabletype in [staticsymtable,globalsymtable]) or
+                      is_visible_for_object(tobjectdef(list[i]).typesym,contextclassh);
+              if result then
+                result:=search_sym_in_helperdef(name,odef,contextclassh,srsym,srsymtable);
+              dec(i);
+            until result or (i<0);
+          end;
+      end;
+
+    function search_last_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;out odef : tobjectdef):boolean;
+      var
+        s : string;
+        list : TFPObjectList;
+        i : integer;
+      begin
+        result:=false;
+        odef:=nil;
+        list:=get_objectpascal_helpers(pd);
         if assigned(list) and (list.count>0) then
           begin
             i:=list.count-1;
@@ -4019,95 +4310,68 @@ implementation
       end;
 
     function search_objectpascal_helper(pd : tdef;contextclassh : tabstractrecorddef;const s: string; out srsym: tsym; out srsymtable: tsymtable):boolean;
-
       var
-        hashedid  : THashedIDString;
         classh : tobjectdef;
-        i : integer;
-        pdef : tprocdef;
       begin
         result:=false;
 
         { if there is no class helper for the class then there is no need to
           search further }
-        if not search_last_objectpascal_helper(pd,contextclassh,classh) then
-          exit;
+        if m_multi_helpers in current_settings.modeswitches then
+          result:=search_best_objectpascal_helper(s,pd,contextclassh,srsym,srsymtable)
+        else
+          begin
+            if search_last_objectpascal_helper(pd,contextclassh,classh) and
+               search_sym_in_helperdef(s,classh,contextclassh,srsym,srsymtable) then
+                result:=true;
+          end;
 
-        hashedid.id:=s;
-
-        repeat
-          srsymtable:=classh.symtable;
-          srsym:=tsym(srsymtable.FindWithHash(hashedid));
-
-          if srsym<>nil then
-            begin
-              case srsym.typ of
-                procsym:
-                  begin
-                    for i:=0 to tprocsym(srsym).procdeflist.count-1 do
-                      begin
-                        pdef:=tprocdef(tprocsym(srsym).procdeflist[i]);
-                        if not is_visible_for_object(pdef.owner,pdef.visibility,contextclassh) then
-                          continue;
-                        { we need to know if a procedure references symbols
-                          in the static symtable, because then it can't be
-                          inlined from outside this unit }
-                        if assigned(current_procinfo) and
-                           (srsym.owner.symtabletype=staticsymtable) then
-                          include(current_procinfo.flags,pi_uses_static_symtable);
-                        { the first found method wins }
-                        srsym:=tprocdef(tprocsym(srsym).procdeflist[i]).procsym;
-                        srsymtable:=srsym.owner;
-                        addsymref(srsym);
-                        result:=true;
-                        exit;
-                      end;
-                  end;
-                typesym,
-                fieldvarsym,
-                constsym,
-                enumsym,
-                undefinedsym,
-                propertysym:
-                  begin
-                    addsymref(srsym);
-                    result:=true;
-                    exit;
-                  end;
-                else
-                  internalerror(2014041101);
-              end;
-            end;
-
-          { try the helper parent if available }
-          classh:=classh.childof;
-        until classh=nil;
-
-        srsym:=nil;
-        srsymtable:=nil;
+        if result then
+          begin
+            { we need to know if a procedure references symbols
+              in the static symtable, because then it can't be
+              inlined from outside this unit }
+            if (srsym.typ=procsym) and
+               assigned(current_procinfo) and
+               (srsym.owner.symtabletype=staticsymtable) then
+              include(current_procinfo.flags,pi_uses_static_symtable);
+            addsymref(srsym);
+          end
+        else
+          begin
+            srsym:=nil;
+            srsymtable:=nil;
+          end;
       end;
 
     function search_objc_helper(pd : tobjectdef;const s : string; out srsym: tsym; out srsymtable: tsymtable):boolean;
       var
+        searchst   : tsymtable;
+        searchsym  : tsym;
         hashedid   : THashedIDString;
         stackitem  : psymtablestackitem;
         i          : longint;
+        founddefowner,
         defowner   : tobjectdef;
       begin
         hashedid.id:=class_helper_prefix+s;
         stackitem:=symtablestack.stack;
+        result:=false;
+        srsym:=nil;
+        srsymtable:=nil;
+        founddefowner:=nil;
         while assigned(stackitem) do
           begin
-            srsymtable:=stackitem^.symtable;
-            srsym:=tsym(srsymtable.FindWithHash(hashedid));
-            if assigned(srsym) then
+            searchst:=stackitem^.symtable;
+            searchsym:=tsym(searchst.FindWithHash(hashedid));
+            if assigned(searchsym) then
               begin
-                if not(srsymtable.symtabletype in [globalsymtable,staticsymtable]) or
-                   not(srsym.owner.symtabletype in [globalsymtable,staticsymtable]) or
-                   (srsym.typ<>procsym) then
+                if not(searchst.symtabletype in [globalsymtable,staticsymtable]) or
+                   not(searchsym.owner.symtabletype in [globalsymtable,staticsymtable]) or
+                   (searchsym.typ<>procsym) then
                   internalerror(2009111505);
                 { check whether this procsym includes a helper for this particular class }
-                for i:=0 to tprocsym(srsym).procdeflist.count-1 do
+                for i:=0 to tprocsym(searchsym).procdeflist.count-1 do
                   begin
                     { does pd inherit from (or is the same as) the class
                       that this method's category extended?
@@ -4115,7 +4379,7 @@ implementation
                       Warning: this list contains both category and objcclass methods
                        (for id.randommethod), so only check category methods here
                     }
-                    defowner:=tobjectdef(tprocdef(tprocsym(srsym).procdeflist[i]).owner.defowner);
+                    defowner:=tobjectdef(tprocdef(tprocsym(searchsym).procdeflist[i]).owner.defowner);
                     if is_objccategory(defowner) and
                        def_is_related(pd,defowner.childof) then
                       begin
@@ -4123,28 +4387,37 @@ implementation
                           in the static symtable, because then it can't be
                           inlined from outside this unit }
                         if assigned(current_procinfo) and
-                           (srsym.owner.symtabletype=staticsymtable) then
+                           (searchsym.owner.symtabletype=staticsymtable) then
                           include(current_procinfo.flags,pi_uses_static_symtable);
-                        { no need to keep looking. There might be other
-                          categories that extend this, a parent or child
-                          class with a method with the same name (either
-                          overriding this one, or overridden by this one),
-                          but that doesn't matter as far as the basic
-                          procsym is concerned.
+                        { Stop looking if this is a category that extends the specified
+                          class itself. There might be other categories that extend this,
+                          but that doesn't matter. If it extens a parent, keep looking
+                          in case we find the symbol in a category that extends this class
+                          (or a closer parent).
                         }
-                        srsym:=tprocdef(tprocsym(srsym).procdeflist[i]).procsym;
-                        srsymtable:=srsym.owner;
-                        addsymref(srsym);
-                        result:=true;
-                        exit;
+                        if not result or
+                           def_is_related(defowner.childof,founddefowner) then
+                          begin
+                            founddefowner:=defowner.childof;
+                            srsym:=tprocdef(tprocsym(searchsym).procdeflist[i]).procsym;
+                            srsymtable:=srsym.owner;
+                            result:=true;
+                            if pd=founddefowner then
+                              begin
+                                addsymref(srsym);
+                                exit;
+                              end;
+                          end;
                       end;
                   end;
               end;
             stackitem:=stackitem^.next;
           end;
-        srsym:=nil;
-        srsymtable:=nil;
-        result:=false;
+        if result then
+          begin
+            addsymref(srsym);
+            exit;
+          end;
       end;
 
 
@@ -4517,6 +4790,7 @@ implementation
 {$endif}
        { set some global vars to nil, might be important for the ide }
        class_tobject:=nil;
+       class_tcustomattribute:=nil;
        interface_iunknown:=nil;
        interface_idispatch:=nil;
        rec_tguid:=nil;

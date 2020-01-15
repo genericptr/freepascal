@@ -67,12 +67,22 @@ type
   packed
 {$endif USE_PACKED}
   record
+{$if declared(TRttiDataCommon)}
+    Common: TRttiDataCommon;
+{$endif declared TRttiDataCommon}
+    case TTypeKind of
+      tkRecord: (
 {$ifndef VER3_0}
-    InitTable: Pointer;
+        InitTable: Pointer;
 {$endif VER3_0}
-    Size: Longint;
-    Count: Longint;
-    { Elements: array[count] of TRecordElement }
+        Size: Longint;
+        Count: Longint;
+        { Elements: array[count] of TRecordElement }
+      );
+      { include for proper alignment }
+      tkInt64: (
+        dummy : Int64
+      );
   end;
 
   PRecordInfoInit=^TRecordInfoInit;
@@ -92,38 +102,48 @@ type
     Copy: TRTTIRecCopyOp;
   end;
 
-{$ifndef VER3_0}
-{$push}
+  TRTTIRecordOpOffsetEntry =
+{$ifdef USE_PACKED}
+  packed
+{$endif USE_PACKED}
+  record
+    ManagmentOperator: CodePointer;
+    FieldOffset: SizeUInt;
+  end;
 
-{ better alignment for TRecordInfoInit }
-{ keep in sync with ncgrtti.TRTTIWriter.write_record_init_flag() and typinfo.pp }
-{ ToDo: different values for 8/16-bit platforms? }
-{$minenumsize 4}
-{$packset 4}
-
-  TRecordInfoInitFlag = (
-    riifNonTrivialChild,
-    { only relevant for classes }
-    riifParentHasNonTrivialChild
-  );
-  TRecordInfoInitFlags = set of TRecordInfoInitFlag;
-
-{$pop}
-{$endif}
+  TRTTIRecordOpOffsetTable =
+{$ifdef USE_PACKED}
+  packed
+{$endif USE_PACKED}
+  record
+    Count: LongWord;
+    Entries: array[0..0] of TRTTIRecordOpOffsetEntry;
+  end;
+  PRTTIRecordOpOffsetTable = ^TRTTIRecordOpOffsetTable;
 
   TRecordInfoInit=
 {$ifdef USE_PACKED}
   packed
 {$endif USE_PACKED}
   record
-    Terminator: Pointer;
-    Size: Longint;
+{$if declared(TRttiDataCommon)}
+    Common: TRttiDataCommon;
+{$endif declared TRttiDataCommon}
+    case TTypeKind of
+      tkRecord: (
+        Terminator: Pointer;
+        Size: Longint;
 {$ifndef VER3_0}
-    Flags: TRecordInfoInitFlags;
-    RecordOp: PRTTIRecordOpVMT;
+        InitRecordOpTable: PRTTIRecordOpOffsetTable;
+        RecordOp: PRTTIRecordOpVMT;
 {$endif VER3_0}
-    Count: Longint;
-    { Elements: array[count] of TRecordElement }
+        Count: Longint;
+        { Elements: array[count] of TRecordElement }
+      );
+      { include for proper alignment }
+      tkInt64: (
+        dummy : Int64
+      );
   end;
 {$else VER3_0}
   TRecordInfoInit=TRecordInfoFull;
@@ -135,20 +155,30 @@ type
   packed
 {$endif USE_PACKED}
   record
-    Size: SizeInt;
-    ElCount: SizeInt;
+{$if declared(TRttiDataCommon)}
+    Common: TRttiDataCommon;
+{$endif declared TRttiDataCommon}
+    case TTypeKind of
+      tkArray: (
+        Size: SizeInt;
+        ElCount: SizeInt;
 {$ifdef VER3_0}
-    ElInfo: Pointer;
+        ElInfo: Pointer;
 {$else}
-    ElInfo: PPointer;
+        ElInfo: PPointer;
 {$endif}
-    DimCount: Byte;
-    Dims:array[0..255] of Pointer;
+        DimCount: Byte;
+        Dims:array[0..255] of Pointer;
+      );
+      { include for proper alignment }
+      tkInt64: (
+        dummy : Int64
+      );
   end;
 
 
 {$ifndef VER3_0}
-function RecordRTTIInitFlags(ti: Pointer): TRecordInfoInitFlags; forward;
+function RTTIRecordMopInitTable(ti: Pointer): PRTTIRecordOpOffsetTable; forward;
 {$endif VER3_0}
 
 {$ifdef VER3_0}

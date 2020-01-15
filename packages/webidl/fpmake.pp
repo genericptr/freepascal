@@ -13,11 +13,11 @@ begin
 {$endif ALLPACKAGES}
 
     P:=AddPackage('webidl');
-    P.ShortName:='webidl';
+    P.ShortName:='widl';
 {$ifdef ALLPACKAGES}
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
-    P.Version:='3.1.1';
+    P.Version:='3.3.1';
     P.Dependencies.Add('fcl-base');
     P.Author := 'Michael Van Canneyt';
     P.License := 'LGPL with modification, ';
@@ -26,6 +26,8 @@ begin
     P.Description := 'WEB IDL parser and converter to Object Pascal classes';
     P.NeedLibC:= false;
     P.OSes:=AllOSes-[embedded,msdos,win16,macos,palmos];
+    if Defaults.CPU=jvm then
+      P.OSes := P.OSes - [java,android];
 
     P.SourcePath.Add('src');
 

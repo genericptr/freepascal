@@ -21,7 +21,9 @@ unit compinnr;
 interface
 
 const
-  fpc_in_cpu_first   = 10000;
+  { this file needs to be kept in sync with rtl/inc/innr.in }
+  in_cpu_first   = 10000;
+  in_x86_mm_first    = 11000;
 
 type
    tinlinenumber=(
@@ -117,6 +119,8 @@ type
      in_not_assign_x      = 95,
      in_gettypekind_x     = 96,
      in_faraddr_x         = 97,
+     in_volatile_x        = 98,
+     in_ismanagedtype_x   = 99,
 
 { Internal constant functions }
      in_const_sqr        = 100,
@@ -129,6 +133,7 @@ type
      in_hi_qword         = 107,
      in_const_swap_qword = 108,
      in_prefetch_var     = 109,
+     in_const_eh_return_data_regno = 110,
 
 { FPU functions }
      in_trunc_real       = 120,

@@ -2,9 +2,13 @@
 
 var rtl = {
 
+  version: 10501,
+
   quiet: false,
   debug_load_units: false,
   debug_rtti: false,
+
+  $res : {},
 
   debug: function(){
     if (rtl.quiet || !console || !console.log) return;
@@ -19,6 +23,12 @@ var rtl = {
   warn: function(s){
     rtl.debug('Warn: ',s);
   },
+
+  checkVersion: function(v){
+    if (rtl.version != v) throw "expected rtl version "+v+", but found "+rtl.version;
+  },
+
+  hiInt: Math.pow(2,53),
 
   hasString: function(s){
     return rtl.isString(s) && (s.length>0);
@@ -63,6 +73,10 @@ var rtl = {
 
   getObject: function(o){
     return ((typeof(o)==="object") || (typeof(o)==='function')) ? o : null;
+  },
+
+  isTRecord: function(type){
+    return (rtl.isObject(type) && type.hasOwnProperty('$new') && (typeof(type.$new)==='function'));
   },
 
   isPasClass: function(type){
@@ -135,7 +149,7 @@ var rtl = {
       try{
         doRun();
       } catch(re) {
-        var errMsg = re.hasOwnProperty('$class') ? re.$class.$classname : '';
+        var errMsg = rtl.hasString(re.$classname) ? re.$classname : '';
 	    errMsg +=  ((errMsg) ? ': ' : '') + (re.hasOwnProperty('fMessage') ? re.fMessage : re);
         alert('Uncaught Exception : '+errMsg);
         rtl.exitCode = 216;
@@ -164,7 +178,8 @@ var rtl = {
 
   loaduseslist: function(module,useslist,f){
     if (useslist==undefined) return;
-    for (var i in useslist){
+    var len = useslist.length;
+    for (var i = 0; i<len; i++) {
       var unitname=useslist[i];
       if (rtl.debug_load_units) rtl.debug('loaduseslist of "'+module.$name+'" uses="'+unitname+'"');
       if (pas[unitname]==undefined)
@@ -227,22 +242,28 @@ var rtl = {
     }
   },
 
-  initClass: function(c,parent,name,initfn){
-    parent[name] = c;
-    c.$classname = name;
+  initStruct: function(c,parent,name){
     if ((parent.$module) && (parent.$module.$impl===parent)) parent=parent.$module;
     c.$parent = parent;
-    c.$fullname = parent.$name+'.'+name;
     if (rtl.isModule(parent)){
       c.$module = parent;
       c.$name = name;
     } else {
       c.$module = parent.$module;
-      c.$name = parent.name+'.'+name;
+      c.$name = parent.$name+'.'+name;
     };
+    return parent;
+  },
+
+  initClass: function(c,parent,name,initfn){
+    parent[name] = c;
+    c.$class = c; // Note: o.$class === Object.getPrototypeOf(o)
+    c.$classname = name;
+    parent = rtl.initStruct(c,parent,name);
+    c.$fullname = parent.$name+'.'+name;
     // rtti
     if (rtl.debug_rtti) rtl.debug('initClass '+c.$fullname);
-    var t = c.$module.$rtti.$Class(c.$name,{ "class": c, module: parent });
+    var t = c.$module.$rtti.$Class(c.$name,{ "class": c });
     c.$rtti = t;
     if (rtl.isObject(c.$ancestor)) t.ancestor = c.$ancestor.$rtti;
     if (!t.ancestor) t.ancestor = null;
@@ -262,25 +283,30 @@ var rtl = {
       // if root is an "object" then c.$ancestor === Object.getPrototypeOf(c)
       // if root is a "function" then c.$ancestor === c.__proto__, Object.getPrototypeOf(c) returns the root
     } else {
-      c = {};
-      c.$create = function(fnname,args){
+      c = { $ancestor: null };
+      c.$create = function(fn,args){
         if (args == undefined) args = [];
         var o = Object.create(this);
-        o.$class = this; // Note: o.$class === Object.getPrototypeOf(o)
         o.$init();
         try{
-          o[fnname].apply(o,args);
+          if (typeof(fn)==="string"){
+            o[fn].apply(o,args);
+          } else {
+            fn.apply(o,args);
+          };
           o.AfterConstruction();
         } catch($e){
-          o.$destroy;
+          // do not call BeforeDestruction
+          if (o.Destroy) o.Destroy();
+          o.$final();
           throw $e;
         }
         return o;
       };
       c.$destroy = function(fnname){
         this.BeforeDestruction();
-        this[fnname]();
-        this.$final;
+        if (this[fnname]) this[fnname]();
+        this.$final();
       };
     };
     rtl.initClass(c,parent,name,initfn);
@@ -290,47 +316,103 @@ var rtl = {
     // Create a class using an external ancestor.
     // If newinstancefnname is given, use that function to create the new object.
     // If exist call BeforeDestruction and AfterConstruction.
-    var c = null;
-    c = Object.create(ancestor);
-    c.$create = function(fnname,args){
+    var c = Object.create(ancestor);
+    c.$create = function(fn,args){
       if (args == undefined) args = [];
       var o = null;
       if (newinstancefnname.length>0){
-        o = this[newinstancefnname](fnname,args);
+        o = this[newinstancefnname](fn,args);
       } else {
         o = Object.create(this);
       }
-      o.$class = this; // Note: o.$class === Object.getPrototypeOf(o)
-      o.$init();
+      if (o.$init) o.$init();
       try{
-        o[fnname].apply(o,args);
+        if (typeof(fn)==="string"){
+          o[fn].apply(o,args);
+        } else {
+          fn.apply(o,args);
+        };
         if (o.AfterConstruction) o.AfterConstruction();
       } catch($e){
-        o.$destroy;
+        // do not call BeforeDestruction
+        if (o.Destroy) o.Destroy();
+        if (o.$final) this.$final();
         throw $e;
       }
       return o;
     };
     c.$destroy = function(fnname){
       if (this.BeforeDestruction) this.BeforeDestruction();
-      this[fnname]();
-      this.$final;
+      if (this[fnname]) this[fnname]();
+      if (this.$final) this.$final();
     };
     rtl.initClass(c,parent,name,initfn);
+  },
+
+  createHelper: function(parent,name,ancestor,initfn){
+    // create a helper,
+    // ancestor must be null or a helper,
+    var c = null;
+    if (ancestor != null){
+      c = Object.create(ancestor);
+      c.$ancestor = ancestor;
+      // c.$ancestor === Object.getPrototypeOf(c)
+    } else {
+      c = { $ancestor: null };
+    };
+    parent[name] = c;
+    c.$class = c; // Note: o.$class === Object.getPrototypeOf(o)
+    c.$classname = name;
+    parent = rtl.initStruct(c,parent,name);
+    c.$fullname = parent.$name+'.'+name;
+    // rtti
+    var t = c.$module.$rtti.$Helper(c.$name,{ "helper": c });
+    c.$rtti = t;
+    if (rtl.isObject(ancestor)) t.ancestor = ancestor.$rtti;
+    if (!t.ancestor) t.ancestor = null;
+    // init members
+    initfn.call(c);
   },
 
   tObjectDestroy: "Destroy",
 
   free: function(obj,name){
-    if (obj[name]==null) return;
+    if (obj[name]==null) return null;
     obj[name].$destroy(rtl.tObjectDestroy);
     obj[name]=null;
   },
 
   freeLoc: function(obj){
-    if (obj==null) return;
+    if (obj==null) return null;
     obj.$destroy(rtl.tObjectDestroy);
     return null;
+  },
+
+  recNewT: function(parent,name,initfn,full){
+    // create new record type
+    var t = {};
+    if (parent) parent[name] = t;
+    function hide(prop){
+      Object.defineProperty(t,prop,{enumerable:false});
+    }
+    if (full){
+      rtl.initStruct(t,parent,name);
+      t.$record = t;
+      hide('$record');
+      hide('$name');
+      hide('$parent');
+      hide('$module');
+    }
+    initfn.call(t);
+    if (!t.$new){
+      t.$new = function(){ return Object.create(this); };
+    }
+    t.$clone = function(r){ return this.$new().$assign(r); };
+    hide('$new');
+    hide('$clone');
+    hide('$eq');
+    hide('$assign');
+    return t;
   },
 
   is: function(instance,type){
@@ -365,6 +447,8 @@ var rtl = {
   EInvalidCast: null,
   EAbstractError: null,
   ERangeError: null,
+  EIntOverflow: null,
+  EPropWriteOnly: null,
 
   raiseE: function(typename){
     var t = rtl[typename];
@@ -456,7 +540,7 @@ var rtl = {
 
   createTGUID: function(guid){
     var TGuid = (pas.System)?pas.System.TGuid:pas.system.tguid;
-    var g = rtl.strToGUIDR(guid,new TGuid());
+    var g = rtl.strToGUIDR(guid,TGuid.$new());
     return g;
   },
 
@@ -482,6 +566,7 @@ var rtl = {
     if(!map) map = {};
     var t = intf;
     var item = Object.create(t);
+    if (!aclass.hasOwnProperty('$intfmaps')) aclass.$intfmaps = {};
     aclass.$intfmaps[intf.$guid] = item;
     do{
       var names = t.$names;
@@ -545,7 +630,7 @@ var rtl = {
   },
 
   queryIntfIsT: function(obj,intftype){
-    var i = rtl.queryIntfG(obj,intftype.$guid);
+    var i = rtl.getIntfG(obj,intftype.$guid);
     if (!i) return false;
     if (i.$kind === 'com') i._Release();
     return true;
@@ -554,6 +639,18 @@ var rtl = {
   asIntfT: function (obj,intftype){
     var i = rtl.getIntfG(obj,intftype.$guid);
     if (i!==null) return i;
+    rtl.raiseEInvalidCast();
+  },
+
+  intfIsIntfT: function(intf,intftype){
+    return (intf!==null) && rtl.queryIntfIsT(intf.$o,intftype);
+  },
+
+  intfAsIntfT: function (intf,intftype){
+    if (intf){
+      var i = rtl.getIntfG(intf.$o,intftype.$guid);
+      if (i!==null) return i;
+    }
     rtl.raiseEInvalidCast();
   },
 
@@ -649,6 +746,12 @@ var rtl = {
     rtl.raiseE("EInvalidCast");
   },
 
+  oc: function(i){
+    // overflow check integer
+    if ((Math.floor(i)===i) && (i>=-0x1fffffffffffff) && (i<=0x1fffffffffffff)) return i;
+    rtl.raiseE('EIntOverflow');
+  },
+
   rc: function(i,minval,maxval){
     // range check integer
     if ((Math.floor(i)===i) && (i>=minval) && (i<=maxval)) return i;
@@ -709,6 +812,59 @@ var rtl = {
   },
 
   arraySetLength: function(arr,defaultvalue,newlength){
+    var stack = [];
+    for (var i=2; i<arguments.length; i++){
+      stack.push({ dim:arguments[i]+0, a:null, i:0, src:null });
+    }
+    var dimmax = stack.length-1;
+    var depth = 0;
+    var lastlen = stack[dimmax].dim;
+    var item = null;
+    var a = null;
+    var src = arr;
+    var oldlen = 0
+    do{
+      a = [];
+      if (depth>0){
+        item=stack[depth-1];
+        item.a[item.i]=a;
+        src = (item.src && item.src.length>item.i)?item.src[item.i]:null;
+        item.i++;
+      }
+      if (depth<dimmax){
+        item = stack[depth];
+        item.a = a;
+        item.i = 0;
+        item.src = src;
+        depth++;
+      } else {
+        oldlen = src?src.length:0;
+        if (rtl.isArray(defaultvalue)){
+          for (var i=0; i<lastlen; i++) a[i]=(i<oldlen)?src[i]:[]; // array of dyn array
+        } else if (rtl.isObject(defaultvalue)) {
+          if (rtl.isTRecord(defaultvalue)){
+            for (var i=0; i<lastlen; i++){
+              a[i]=(i<oldlen)?defaultvalue.$clone(src[i]):defaultvalue.$new(); // e.g. record
+            }
+          } else {
+            for (var i=0; i<lastlen; i++) a[i]=(i<oldlen)?rtl.refSet(src[i]):{}; // e.g. set
+          }
+        } else {
+          for (var i=0; i<lastlen; i++)
+            a[i]=(i<oldlen)?src[i]:defaultvalue;
+        }
+        while ((depth>0) && (stack[depth-1].i>=stack[depth-1].dim)){
+          depth--;
+        };
+        if (depth===0){
+          if (dimmax===0) return a;
+          return stack[0].a;
+        }
+      }
+    }while (true);
+  },
+
+  /*arrayChgLength: function(arr,defaultvalue,newlength){
     // multi dim: (arr,defaultvalue,dim1,dim2,...)
     if (arr == null) arr = [];
     var p = arguments;
@@ -720,10 +876,12 @@ var rtl = {
         if (argNo === p.length-1){
           if (rtl.isArray(defaultvalue)){
             for (var i=oldlen; i<newlen; i++) a[i]=[]; // nested array
-          } else if (rtl.isFunction(defaultvalue)){
-            for (var i=oldlen; i<newlen; i++) a[i]=new defaultvalue(); // e.g. record
           } else if (rtl.isObject(defaultvalue)) {
-            for (var i=oldlen; i<newlen; i++) a[i]={}; // e.g. set
+            if (rtl.isTRecord(defaultvalue)){
+              for (var i=oldlen; i<newlen; i++) a[i]=defaultvalue.$new(); // e.g. record
+            } else {
+              for (var i=oldlen; i<newlen; i++) a[i]={}; // e.g. set
+            }
           } else {
             for (var i=oldlen; i<newlen; i++) a[i]=defaultvalue;
           }
@@ -738,7 +896,7 @@ var rtl = {
       return a;
     }
     return setLength(arr,2);
-  },
+  },*/
 
   arrayEq: function(a,b){
     if (a===null) return b===null;
@@ -752,10 +910,10 @@ var rtl = {
     // type: 0 for references, "refset" for calling refSet(), a function for new type()
     // src must not be null
     // This function does not range check.
-    if (rtl.isFunction(type)){
-      for (; srcpos<endpos; srcpos++) dst[dstpos++] = new type(src[srcpos]); // clone record
-    } else if(type === 'refSet') {
+    if(type === 'refSet') {
       for (; srcpos<endpos; srcpos++) dst[dstpos++] = rtl.refSet(src[srcpos]); // ref set
+    } else if (rtl.isTRecord(type)){
+      for (; srcpos<endpos; srcpos++) dst[dstpos++] = type.$clone(src[srcpos]); // clone record
     }  else {
       for (; srcpos<endpos; srcpos++) dst[dstpos++] = src[srcpos]; // reference
     };
@@ -843,7 +1001,12 @@ var rtl = {
   },
 
   refSet: function(s){
-    s.$shared = true;
+    Object.defineProperty(s, '$shared', {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: true
+    });
     return s;
   },
 
@@ -862,7 +1025,6 @@ var rtl = {
   diffSet: function(s,t){
     var r = {};
     for (var key in s) if (!t[key]) r[key]=true;
-    delete r.$shared;
     return r;
   },
 
@@ -870,14 +1032,12 @@ var rtl = {
     var r = {};
     for (var key in s) r[key]=true;
     for (var key in t) r[key]=true;
-    delete r.$shared;
     return r;
   },
 
   intersectSet: function(s,t){
     var r = {};
     for (var key in s) if (t[key]) r[key]=true;
-    delete r.$shared;
     return r;
   },
 
@@ -885,13 +1045,12 @@ var rtl = {
     var r = {};
     for (var key in s) if (!t[key]) r[key]=true;
     for (var key in t) if (!s[key]) r[key]=true;
-    delete r.$shared;
     return r;
   },
 
   eqSet: function(s,t){
-    for (var key in s) if (!t[key] && (key!='$shared')) return false;
-    for (var key in t) if (!s[key] && (key!='$shared')) return false;
+    for (var key in s) if (!t[key]) return false;
+    for (var key in t) if (!s[key]) return false;
     return true;
   },
 
@@ -900,12 +1059,12 @@ var rtl = {
   },
 
   leSet: function(s,t){
-    for (var key in s) if (!t[key] && (key!='$shared')) return false;
+    for (var key in s) if (!t[key]) return false;
     return true;
   },
 
   geSet: function(s,t){
-    for (var key in t) if (!s[key] && (key!='$shared')) return false;
+    for (var key in t) if (!s[key]) return false;
     return true;
   },
 
@@ -936,10 +1095,11 @@ var rtl = {
         s=' '+s;
         l++;
       };
+      return s;
     };
   },
 
-  floatToStr : function(d,w,p){
+  floatToStr: function(d,w,p){
     // input 1-3 arguments: double, width, precision
     if (arguments.length>2){
       return rtl.spaceLeft(d.toFixed(p),w);
@@ -962,6 +1122,64 @@ var rtl = {
       s=s.replace(/e(.)/,'E$1'+pad);
       return rtl.spaceLeft(s,w);
     }
+  },
+
+  valEnum: function(s, enumType, setCodeFn){
+    s = s.toLowerCase();
+    for (var key in enumType){
+      if((typeof(key)==='string') && (key.toLowerCase()===s)){
+        setCodeFn(0);
+        return enumType[key];
+      }
+    }
+    setCodeFn(1);
+    return 0;
+  },
+
+  lw: function(l){
+    // fix longword bitwise operation
+    return l<0?l+0x100000000:l;
+  },
+
+  and: function(a,b){
+    var hi = 0x80000000;
+    var low = 0x7fffffff;
+    var h = (a / hi) & (b / hi);
+    var l = (a & low) & (b & low);
+    return h*hi + l;
+  },
+
+  or: function(a,b){
+    var hi = 0x80000000;
+    var low = 0x7fffffff;
+    var h = (a / hi) | (b / hi);
+    var l = (a & low) | (b & low);
+    return h*hi + l;
+  },
+
+  xor: function(a,b){
+    var hi = 0x80000000;
+    var low = 0x7fffffff;
+    var h = (a / hi) ^ (b / hi);
+    var l = (a & low) ^ (b & low);
+    return h*hi + l;
+  },
+
+  shr: function(a,b){
+    if (a<0) a += rtl.hiInt;
+    if (a<0x80000000) return a >> b;
+    if (b<=0) return a;
+    if (b>54) return 0;
+    return Math.floor(a / Math.pow(2,b));
+  },
+
+  shl: function(a,b){
+    if (a<0) a += rtl.hiInt;
+    if (b<=0) return a;
+    if (b>54) return 0;
+    var r = a * Math.pow(2,b);
+    if (r <= rtl.hiInt) return r;
+    return r % rtl.hiInt;
   },
 
   initRTTI: function(){
@@ -1096,7 +1314,9 @@ var rtl = {
     newBaseTI("tTypeInfoRecord",12 /* tkRecord */,rtl.tTypeInfoStruct);
     newBaseTI("tTypeInfoClass",13 /* tkClass */,rtl.tTypeInfoStruct);
     newBaseTI("tTypeInfoClassRef",14 /* tkClassRef */);
-    newBaseTI("tTypeInfoInterface",15 /* tkInterface */,rtl.tTypeInfoStruct);
+    newBaseTI("tTypeInfoInterface",18 /* tkInterface */,rtl.tTypeInfoStruct);
+    newBaseTI("tTypeInfoHelper",19 /* tkHelper */,rtl.tTypeInfoStruct);
+    newBaseTI("tTypeInfoExtClass",20 /* tkExtClass */,rtl.tTypeInfoClass);
   },
 
   tSectionRTTI: {
@@ -1146,7 +1366,9 @@ var rtl = {
     $Class: function(name,o){ return this.$Scope(name,rtl.tTypeInfoClass,o); },
     $ClassRef: function(name,o){ return this.$inherited(name,rtl.tTypeInfoClassRef,o); },
     $Pointer: function(name,o){ return this.$inherited(name,rtl.tTypeInfoPointer,o); },
-    $Interface: function(name,o){ return this.$Scope(name,rtl.tTypeInfoInterface,o); }
+    $Interface: function(name,o){ return this.$Scope(name,rtl.tTypeInfoInterface,o); },
+    $Helper: function(name,o){ return this.$Scope(name,rtl.tTypeInfoHelper,o); },
+    $ExtClass: function(name,o){ return this.$Scope(name,rtl.tTypeInfoExtClass,o); }
   },
 
   newTIParam: function(param){
@@ -1175,5 +1397,23 @@ var rtl = {
       flags: flags
     };
     return s;
+  },
+
+  addResource: function(aRes){
+    rtl.$res[aRes.name]=aRes;
+  },
+
+  getResource: function(aName){
+    var res = rtl.$res[aName];
+    if (res !== undefined) {
+      return res;
+    } else {
+      return null;
+    }
+  },
+
+  getResourceList: function(){
+    return Object.keys(rtl.$res);
   }
 }
+

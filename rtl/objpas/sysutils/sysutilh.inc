@@ -266,6 +266,9 @@ type
   procedure AddTerminateProc(TermProc: TTerminateProc);
   function CallTerminateProcs: Boolean;
 
+{$IFNDEF VER3_0}
+generic function IfThen<T>(val:boolean;const iftrue:T; const iffalse:T) :T; inline; overload;
+{$ENDIF}
 
 Var
    OnShowException : Procedure (Msg : ShortString);
@@ -303,7 +306,7 @@ Type
 
 {$macro on}
 {$define PathStr:=UnicodeString}
-{$define PathPChar:=PWideChar}
+{$define PathPChar:=PUnicodeChar}
   { Read filename handling functions declaration }
   {$i finah.inc}
 {$define PathStr:=RawByteString}
@@ -323,9 +326,7 @@ Type
   {$i systhrdh.inc}
 
   { Type Helpers}
-  {$IFNDEF VER2_6}
   {$i syshelph.inc}
-  {$ENDIF}
   
   procedure FreeAndNil(var obj);
   procedure FreeMemAndNil(var p);

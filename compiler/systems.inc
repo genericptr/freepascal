@@ -52,7 +52,9 @@
              cpu_i8086,                    { 15 }
              cpu_aarch64,                  { 16 }
              cpu_wasm,                     { 17 }
-             cpu_sparc64                   { 18 }
+             cpu_sparc64,                  { 18 }
+             cpu_riscv32,                  { 19 }
+             cpu_riscv64                   { 20 }
        );
 
        tasmmode= (asmmode_none
@@ -179,7 +181,14 @@
              system_wasm_wasm32,        { 92 }
              system_sparc64_linux,      { 93 }
              system_sparc64_solaris,    { 94 }
-             system_arm_netbsd          { 95 }
+             system_arm_netbsd,         { 95 }
+             system_riscv32_linux,      { 96 }
+             system_riscv64_linux,      { 97 }
+             system_riscv64_embedded,   { 98 }
+             system_riscv32_embedded,   { 99 }
+             system_aarch64_android,    { 100 }
+             system_x86_64_android,     { 101 }
+             system_x86_64_haiku        { 102 }
        );
 
      type
@@ -227,13 +236,14 @@
              ,as_gas_powerpc_xcoff
              ,as_arm_elf32
              ,as_i8086_omf
-             ,as_llvm
+             ,as_llvm_llc
              ,as_clang
              ,as_solaris_as
              ,as_m68k_vasm
              ,as_m68k_as_aout
              ,as_wasm_binaryen
              ,as_powerpc_gas_legacy    { for systems with very old GAS versions only, which don't support eg. named sections }
+             ,as_llvm_clang
        );
 
        tlink = (ld_none,
@@ -270,7 +280,8 @@
              ld_int_nativent,
              ld_int_netware,
              ld_int_windows,
-             ld_int_msdos
+             ld_int_msdos,
+             ld_int_win16
        );
 
        tar = (ar_none
@@ -309,6 +320,12 @@
             ,abi_eabi,abi_armeb,abi_eabihf
             ,abi_old_win32_gnu
             ,abi_aarch64_darwin
+            ,abi_riscv_hf
+            { stack is aligned and all room for parameters is reserved on
+              entry, but depending on the calling convention, the parameters
+              may still be removed by the callee (and then the stack needs to
+              be restored by the caller) }
+            ,abi_i386_dynalignedstack
        );
 
      const

@@ -122,20 +122,20 @@ const
     and will increase with 10 for each parameter. The high parameters
     will be inserted with n+1 }
   paranr_blockselfpara = 1;
-  paranr_parentfp = 2;
   paranr_parentfp_delphi_cc_leftright = 2;
-{$ifndef aarch64}
-  paranr_self = 3;
-  paranr_result = 4;
-{$else aarch64}
-  { on AArch64, the result parameter is passed in a special register, so its
-    order doesn't really matter -- except for LLVM, where the "sret" parameter
+{$if defined(aarch64) and defined(llvm)}
+  { for AArch64 on LLVM, the "sret" parameter
     must always be the first -> give it a higher number; can't do it for other
     platforms, because that would change the register assignment/parameter order
     and the current one is presumably Delphi-compatible }
-  paranr_result = 3;
+  paranr_result = 2;
+  paranr_parentfp = 3;
   paranr_self = 4;
-{$endif aarch64}
+{$else}
+  paranr_parentfp = 2;
+  paranr_self = 3;
+  paranr_result = 4;
+{$endif}
   paranr_vmt = 5;
 
   { the implicit parameters for Objective-C methods need to come
@@ -234,6 +234,8 @@ type
     df_llvm_no_struct_packing,
     { internal def that's not for any export }
     df_internal,
+    { the local def is referenced from a public function }
+    df_has_global_ref,
     { the def was derived with generic type or const fields so the size
       of the def can not be determined }
     df_has_generic_fields
@@ -274,9 +276,9 @@ type
     uvoid,
     u8bit,u16bit,u32bit,u64bit,u128bit,
     s8bit,s16bit,s32bit,s64bit,s128bit,
-    pasbool8,pasbool16,pasbool32,pasbool64,
+    pasbool1,pasbool8,pasbool16,pasbool32,pasbool64,
     bool8bit,bool16bit,bool32bit,bool64bit,
-    uchar,uwidechar,scurrency
+    uchar,uwidechar,scurrency,customint
   );
 
   tordtypeset = set of tordtype;
@@ -312,7 +314,8 @@ type
     potype_propsetter,
     potype_exceptfilter,      { SEH exception filter or termination handler }
     potype_mainstub,          { "main" function that calls through to FPC_SYSTEMMAIN }
-    potype_pkgstub            { stub for a package file, that tells OS that all is OK }
+    potype_pkgstub,           { stub for a package file, that tells OS that all is OK }
+    potype_libmainstub        { "main" function for a library that calls through to FPC_LIBMAIN }
   );
   tproctypeoptions=set of tproctypeoption;
 
@@ -418,7 +421,14 @@ type
     { procedure is an automatically generated property getter }
     po_is_auto_getter,
     { procedure is an automatically generated property setter }
-    po_is_auto_setter
+    po_is_auto_setter,
+    { must never be inlined          by auto-inlining }
+    po_noinline,
+    { same as po_varargs, but with an array-of-const parameter instead of with the
+      "varargs" modifier or Mac-Pascal ".." parameter }
+    po_variadic,
+    { implicitly return same type as the class instance to which the message is sent }
+    po_objc_related_result_type
   );
   tprocoptions=set of tprocoption;
 
@@ -428,7 +438,15 @@ type
     { the routine contains no code }
     pio_empty,
     { the inline body of this routine is available }
-    pio_has_inlininginfo
+    pio_has_inlininginfo,
+    { inline is not possible (has assembler block, etc) }
+    pio_inline_not_possible,
+    { a nested routine accesses a local variable from this routine }
+    pio_nested_access,
+    { a stub/thunk }
+    pio_thunk,
+    { compiled with fastmath enabled }
+    pio_fastmath
   );
   timplprocoptions = set of timplprocoption;
 
@@ -543,7 +561,8 @@ type
     ado_IsConstructor,      // array constructor (e.g. something = [1,2,3])
     ado_IsArrayOfConst,     // array of const
     ado_IsConstString,      // string constant
-    ado_IsBitPacked         // bitpacked array
+    ado_IsBitPacked,        // bitpacked array
+    ado_IsVector            // Vector
   );
   tarraydefoptions=set of tarraydefoption;
 
@@ -597,9 +616,20 @@ type
       sections }
     vo_is_default_var,
     { i8086 'external far' (can only be used in combination with vo_is_external) }
-    vo_is_far
+    vo_is_far,
+    { a static symbol that is referenced from a global function }
+    vo_has_global_ref
   );
   tvaroptions=set of tvaroption;
+
+  { variable symbol access flags }
+  tvarsymaccessflag = (
+    { this symbol's address has been taken }
+    vsa_addr_taken,
+    { this symbol is accessed from a different scope }
+    vsa_different_scope
+  );
+  tvarsymaccessflags = set of tvarsymaccessflag;
 
   tmanagementoperator=(mop_none,
     mop_initialize,
@@ -723,21 +753,37 @@ type
     itp_vmt_afterconstruction_local,
     itp_rttidef,
     itp_rtti_header,
+    itp_rtti_outer,
+    itp_rtti_case,
+    itp_rtti_common_data,
     itp_rtti_prop,
     itp_rtti_ansistr,
+    itp_rtti_attr_list,
+    itp_rtti_attr_entry,
     itp_rtti_ord_outer,
+    itp_rtti_ord_middle,
     itp_rtti_ord_inner,
     itp_rtti_ord_64bit,
     itp_rtti_normal_array,
+    itp_rtti_normal_array_inner,
     itp_rtti_dyn_array,
+    itp_rtti_dyn_array_inner,
+    itp_rtti_pointer,
+    itp_rtti_classref,
+    itp_rtti_float,
     itp_rtti_proc_param,
     itp_rtti_enum_size_start_rec,
+    itp_rtti_enum_size_start_rec2,
     itp_rtti_enum_min_max_rec,
     itp_rtti_enum_basetype_array_rec,
     itp_rtti_ref,
     itp_rtti_set_outer,
+    itp_rtti_set_middle,
     itp_rtti_set_inner,
+    itp_rtti_record,
+    itp_rtti_record_inner,
     itp_init_record_operators,
+    itp_init_mop_offset_entry,
     itp_threadvar_record,
     itp_objc_method_list,
     itp_objc_proto_list,
@@ -862,21 +908,37 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
        '$vmt_afterconstruction_local',
        '$rttidef$',
        '$rtti_header$',
+       '$rtti_outer$',
+       '$rtti_case$',
+       '$rtti_common_data$',
        '$rtti_prop$',
        '$rtti_ansistr$',
+       '$rtti_attr_list$',
+       '$rtti_attr_entry$',
        '$rtti_ord_outer$',
+       '$rtti_ord_middle$',
        '$rtti_ord_inner$',
        '$rtti_ord_64bit$',
        '$rtti_normal_array$',
+       '$rtti_normal_array_inner$',
        '$rtti_dyn_array$',
+       '$rtti_dyn_array_inner$',
+       '$rtti_dyn_pointer$',
+       '$rtti_dyn_classref$',
+       '$rtti_dyn_float$',
        '$rtti_proc_param$',
        '$rtti_enum_size_start_rec$',
+       '$rtti_enum_size_start_rec2$',
        '$rtti_enum_min_max_rec$',
        '$rtti_enum_basetype_array_rec$',
        '$rtti_ref$',
        '$rtti_set_outer$',
+       '$rtti_set_middle$',
        '$rtti_set_inner$',
+       '$rtti_record$',
+       '$rtti_record_inner$',
        '$init_record_operators$',
+       '$init_mop_offset_entry$',
        '$threadvar_record$',
        '$objc_method_list$',
        '$objc_proto_list$',
@@ -961,7 +1023,8 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'property setters',   {potype_propsetter}
       'exception filters',  {potype_exceptfilter}
       '"main" stub',        {potype_mainstub}
-      'package stub'        {potype_pkgstub}
+      'package stub',       {potype_pkgstub}
+      'lib "main" stub'     {potype_libmainstub}
     );
 
     { TProcOption string identifiers for error messages }
@@ -1023,7 +1086,10 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_function_ref',{po_is_function_ref}
       'C-style blocks',{po_is_block}
       'po_is_auto_getter',{po_is_auto_getter}
-      'po_is_auto_setter'{po_is_auto_setter}
+      'po_is_auto_setter',{po_is_auto_setter}
+      'po_noinline',{po_noinline}
+      'C-style array-of-const', {po_variadic}
+      'objc-related-result-type' {po_objc_related_result_type}
     );
 
 implementation

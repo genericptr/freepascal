@@ -88,6 +88,9 @@ interface
           procedure buildderefimpl;override;
           procedure derefimpl;override;
           procedure printnodeinfo(var t: text); override;
+{$ifdef DEBUG_NODE_XML}
+          procedure XMLPrintNodeInfo(var T: Text); override;
+{$endif DEBUG_NODE_XML}
           function docompare(p: tnode): boolean; override;
           function dogetcopy : tnode;override;
           function pass_1 : tnode;override;
@@ -121,6 +124,9 @@ interface
           function docompare(p: tnode): boolean; override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
+{$ifdef DEBUG_NODE_XML}
+          procedure XMLPrintNodeData(var T: Text); override;
+{$endif DEBUG_NODE_XML}
        end;
        tsubscriptnodeclass = class of tsubscriptnode;
 
@@ -133,20 +139,11 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           procedure mark_write;override;
+{$ifdef DEBUG_NODE_XML}
+          procedure XMLPrintNodeData(var T: Text); override;
+{$endif DEBUG_NODE_XML}
        end;
        tvecnodeclass = class of tvecnode;
-
-       twithnode = class(tunarynode)
-          constructor create(l:tnode);
-          destructor destroy;override;
-          constructor ppuload(t:tnodetype;ppufile:tcompilerppufile);override;
-          procedure ppuwrite(ppufile:tcompilerppufile);override;
-          function dogetcopy : tnode;override;
-          function pass_1 : tnode;override;
-          function docompare(p: tnode): boolean; override;
-          function pass_typecheck:tnode;override;
-       end;
-       twithnodeclass = class of twithnode;
 
     var
        cloadvmtaddrnode : tloadvmtaddrnodeclass= tloadvmtaddrnode;
@@ -154,7 +151,6 @@ interface
        cderefnode : tderefnodeclass= tderefnode;
        csubscriptnode : tsubscriptnodeclass= tsubscriptnode;
        cvecnode : tvecnodeclass= tvecnode;
-       cwithnode : twithnodeclass= twithnode;
        cloadparentfpnode : tloadparentfpnodeclass = tloadparentfpnode;
 
     function is_big_untyped_addrnode(p: tnode): boolean;
@@ -163,7 +159,7 @@ implementation
 
     uses
       globtype,systems,constexp,
-      cutils,verbose,globals,
+      cutils,verbose,globals,ppu,
       symconst,defutil,defcmp,
       nadd,nbas,nflw,nutils,objcutil,
       wpobase,
@@ -255,9 +251,6 @@ implementation
       begin
          result:=nil;
          expectloc:=LOC_REGISTER;
-         if (left.nodetype=typen) and
-            (cs_create_pic in current_settings.moduleswitches) then
-           include(current_procinfo.flags,pi_needs_got);
          if left.nodetype<>typen then
            begin
              if (is_objc_class_or_protocol(left.resultdef) or
@@ -445,7 +438,7 @@ implementation
       begin
         inherited ppuload(t,ppufile);
         ppufile.getderef(getprocvardefderef);
-        ppufile.getsmallset(addrnodeflags);
+        ppufile.getset(tppuset1(addrnodeflags));
       end;
 
 
@@ -453,7 +446,7 @@ implementation
       begin
         inherited ppuwrite(ppufile);
         ppufile.putderef(getprocvardefderef);
-        ppufile.putsmallset(addrnodeflags);
+        ppufile.putset(tppuset1(addrnodeflags));
       end;
 
     procedure Taddrnode.mark_write;
@@ -497,6 +490,29 @@ implementation
         write(t,']');
       end;
 
+{$ifdef DEBUG_NODE_XML}
+    procedure TAddrNode.XMLPrintNodeInfo(var T: Text);
+      var
+        First: Boolean;
+        i: TAddrNodeFlag;
+      begin
+        inherited XMLPrintNodeInfo(t);
+        First := True;
+        for i := Low(TAddrNodeFlag) to High(TAddrNodeFlag) do
+          if i in addrnodeflags then
+            begin
+              if First then
+                begin
+                  Write(T, ' addrnodeflags="', i);
+                  First := False;
+                end
+              else
+                Write(T, ',', i);
+            end;
+        if not First then
+          Write(T, '"');
+      end;
+{$endif DEBUG_NODE_XML}
 
     function taddrnode.docompare(p: tnode): boolean;
       begin
@@ -519,6 +535,22 @@ implementation
 
 
     function taddrnode.pass_typecheck:tnode;
+
+      procedure check_mark_read_written;
+        begin
+          if mark_read_written then
+            begin
+              { This is actually only "read", but treat it nevertheless as
+                modified due to the possible use of pointers
+                To avoid false positives regarding "uninitialised"
+                warnings when using arrays, perform it in two steps         }
+              set_varstate(left,vs_written,[]);
+              { vsf_must_be_valid so it doesn't get changed into
+                vsf_referred_not_inited                          }
+              set_varstate(left,vs_read,[vsf_must_be_valid]);
+            end;
+        end;
+
       var
          hp : tnode;
          hsym : tfieldvarsym;
@@ -613,9 +645,11 @@ implementation
               end
             else
               begin
+                check_mark_read_written;
                 { Return the typeconvn only }
                 result:=left;
                 left:=nil;
+                exit;
               end;
           end
         else
@@ -634,17 +668,8 @@ implementation
               CGMessage(type_e_variable_id_expected);
           end;
 
-        if mark_read_written then
-          begin
-            { This is actually only "read", but treat it nevertheless as  }
-            { modified due to the possible use of pointers                }
-            { To avoid false positives regarding "uninitialised"          }
-            { warnings when using arrays, perform it in two steps         }
-            set_varstate(left,vs_written,[]);
-            { vsf_must_be_valid so it doesn't get changed into }
-            { vsf_referred_not_inited                          }
-            set_varstate(left,vs_read,[vsf_must_be_valid]);
-          end;
+        check_mark_read_written;
+
         if not(assigned(result)) then
           result:=simplify(false);
       end;
@@ -913,6 +938,13 @@ implementation
           (vs = tsubscriptnode(p).vs);
       end;
 
+{$ifdef DEBUG_NODE_XML}
+    procedure TSubscriptNode.XMLPrintNodeData(var T: Text);
+      begin
+        inherited XMLPrintNodeData(T);
+        WriteLn(T, PrintNodeIndention, '<field>', vs.Name, '</field>');
+      end;
+{$endif DEBUG_NODE_XML}
 
 {*****************************************************************************
                                TVECNODE
@@ -1070,7 +1102,9 @@ implementation
            that has a field of one of these types -> in that case the record
            can't be a regvar either }
          if ((left.resultdef.typ=arraydef) and
-             not is_special_array(left.resultdef)) or
+             not is_special_array(left.resultdef) and
+             { arrays with elements equal to the alu size and with a constant index can be kept in register }
+             not(is_constnode(right) and (tarraydef(left.resultdef).elementdef.size=alusinttype.size))) or
             ((left.resultdef.typ=stringdef) and
              (tstringdef(left.resultdef).stringtype in [st_shortstring,st_longstring])) then
            make_not_regable(left,[ra_addr_regable]);
@@ -1144,8 +1178,6 @@ implementation
                       elementdef:=cansichartype;
                       elementptrdef:=charpointertype;
                     end;
-                  else
-                    internalerror(2013112902);
                 end;
                 if right.nodetype=rangen then
                   begin
@@ -1176,7 +1208,7 @@ implementation
       begin
         include(flags,nf_write);
         { see comment in tsubscriptnode.mark_write }
-        if not(is_implicit_pointer_object_type(left.resultdef)) then
+        if not(is_implicit_array_pointer(left.resultdef)) then
           left.mark_write;
       end;
 
@@ -1315,65 +1347,23 @@ implementation
     end;
 
 
-{*****************************************************************************
-                               TWITHNODE
-*****************************************************************************}
-
-    constructor twithnode.create(l:tnode);
+{$ifdef DEBUG_NODE_XML}
+    procedure TVecNode.XMLPrintNodeData(var T: Text);
       begin
-         inherited create(withn,l);
-         fileinfo:=l.fileinfo;
+        XMLPrintNode(T, Left);
+
+        { The right node is the index }
+        WriteLn(T, PrintNodeIndention, '<index>');
+        PrintNodeIndent;
+        XMLPrintNode(T, Right);
+        PrintNodeUnindent;
+        WriteLn(T, PrintNodeIndention, '</index>');
+
+        PrintNodeUnindent;
+        WriteLn(T, PrintNodeIndention, '</', nodetype2str[nodetype], '>');
       end;
+{$endif DEBUG_NODE_XML}
 
-
-    destructor twithnode.destroy;
-      begin
-        inherited destroy;
-      end;
-
-
-    constructor twithnode.ppuload(t:tnodetype;ppufile:tcompilerppufile);
-      begin
-        inherited ppuload(t,ppufile);
-      end;
-
-
-    procedure twithnode.ppuwrite(ppufile:tcompilerppufile);
-      begin
-        inherited ppuwrite(ppufile);
-      end;
-
-
-    function twithnode.dogetcopy : tnode;
-      var
-         p : twithnode;
-      begin
-         p:=twithnode(inherited dogetcopy);
-         result:=p;
-      end;
-
-
-    function twithnode.pass_typecheck:tnode;
-      begin
-        result:=nil;
-        resultdef:=voidtype;
-        if assigned(left) then
-          typecheckpass(left);
-      end;
-
-
-    function twithnode.pass_1 : tnode;
-      begin
-        result:=nil;
-        expectloc:=LOC_VOID;
-      end;
-
-
-    function twithnode.docompare(p: tnode): boolean;
-      begin
-        docompare :=
-          inherited docompare(p);
-      end;
 
     function is_big_untyped_addrnode(p: tnode): boolean;
       begin

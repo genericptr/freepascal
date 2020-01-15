@@ -14,6 +14,8 @@
 
 Unit CPUInfo;
 
+{$i fpcdefs.inc}
+
 Interface
 
   uses
@@ -50,7 +52,7 @@ Type
    tfputype =
      (fpu_none,
       fpu_soft,
-      fp_libgcc
+      fpu_libgcc
      );
 
    tcontrollertype =

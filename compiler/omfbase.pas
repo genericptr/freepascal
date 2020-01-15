@@ -86,7 +86,9 @@ interface
       'obcj_nlcatlist',
       'objc_protolist',
       'stack',
-      'heap'
+      'heap',
+      'gcc_except_table',
+      'ARM_attributes'
     );
 
     { OMF record types }
@@ -158,6 +160,12 @@ interface
     CC_User                     = $DF;
     CC_DependencyFileBorland    = $E9;
     CC_CommandLineMicrosoft     = $FF;
+
+    { CC_OmfExtension subtypes }
+    CC_OmfExtension_IMPDEF      = $01;
+    CC_OmfExtension_EXPDEF      = $02;
+    CC_OmfExtension_INCDEF      = $03;
+    CC_OmfExtension_LNKDIR      = $05;
 
   type
     TOmfSegmentAlignment = (
@@ -321,6 +329,58 @@ interface
       property CommentString: string read FCommentString write FCommentString;
       property NoPurge: Boolean read GetNoPurge write SetNoPurge;
       property NoList: Boolean read GetNoList write SetNoList;
+    end;
+
+    { TOmfRecord_COMENT_Subtype }
+
+    TOmfRecord_COMENT_Subtype = class
+    public
+      procedure DecodeFrom(ComentRecord: TOmfRecord_COMENT);virtual;abstract;
+      procedure EncodeTo(ComentRecord: TOmfRecord_COMENT);virtual;abstract;
+    end;
+
+    { TOmfRecord_COMENT_IMPDEF }
+
+    TOmfRecord_COMENT_IMPDEF = class(TOmfRecord_COMENT_Subtype)
+    private
+      FImportByOrdinal: Boolean;
+      FInternalName: string;
+      FModuleName: string;
+      FOrdinal: Word;
+      FName: string;
+    public
+      procedure DecodeFrom(ComentRecord: TOmfRecord_COMENT);override;
+      procedure EncodeTo(ComentRecord: TOmfRecord_COMENT);override;
+
+      property ImportByOrdinal: Boolean read FImportByOrdinal write FImportByOrdinal;
+      property InternalName: string read FInternalName write FInternalName;
+      property ModuleName: string read FModuleName write FModuleName;
+      property Ordinal: Word read FOrdinal write FOrdinal;
+      property Name: string read FName write FName;
+    end;
+
+    { TOmfRecord_COMENT_EXPDEF }
+
+    TOmfRecord_COMENT_EXPDEF = class(TOmfRecord_COMENT_Subtype)
+    private
+      FExportByOrdinal: Boolean;
+      FResidentName: Boolean;
+      FNoData: Boolean;
+      FParmCount: Integer;
+      FExportedName: string;
+      FInternalName: string;
+      FExportOrdinal: Word;
+    public
+      procedure DecodeFrom(ComentRecord: TOmfRecord_COMENT);override;
+      procedure EncodeTo(ComentRecord: TOmfRecord_COMENT);override;
+
+      property ExportByOrdinal: Boolean read FExportByOrdinal write FExportByOrdinal;
+      property ResidentName: Boolean read FResidentName write FResidentName;
+      property NoData: Boolean read FNoData write FNoData;
+      property ParmCount: Integer read FParmCount write FParmCount;
+      property ExportedName: string read FExportedName write FExportedName;
+      property InternalName: string read FInternalName write FInternalName;
+      property ExportOrdinal: Word read FExportOrdinal write FExportOrdinal;
     end;
 
     { TOmfRecord_LNAMES }
@@ -1349,18 +1409,23 @@ implementation
         internalerror(2015033103);
       SetLength(s, len);
       UniqueString(s);
-      Move(RawData[Offset+1],s[1],len);
+      if len>0 then
+        Move(RawData[Offset+1],s[1],len);
     end;
 
   function TOmfRawRecord.WriteStringAt(Offset: Integer; s: string): Integer;
+    var
+      len : longint;
     begin
-      if Length(s)>255 then
+      len:=Length(s);
+      if len>255 then
         internalerror(2015033101);
-      result:=Offset+Length(s)+1;
+      result:=Offset+len+1;
       if result>High(RawData) then
         internalerror(2015033102);
-      RawData[Offset]:=Length(s);
-      Move(s[1], RawData[Offset+1], Length(s));
+      RawData[Offset]:=len;
+      if len>0 then
+        Move(s[1], RawData[Offset+1], len);
     end;
 
   function TOmfRawRecord.ReadIndexedRef(Offset: Integer; out IndexedRef: Integer): Integer;
@@ -1420,7 +1485,7 @@ implementation
       b:=0;
       for I:=-3 to RecordLength-2 do
         b:=byte(b+RawData[I]);
-      SetChecksumByte($100-b);
+      SetChecksumByte(byte($100-b));
     end;
 
   function TOmfRawRecord.VerifyChecksumByte: boolean;
@@ -1521,15 +1586,161 @@ implementation
     end;
 
   procedure TOmfRecord_COMENT.EncodeTo(RawRecord: TOmfRawRecord);
+    var
+      len : longint;
     begin
       RawRecord.RecordType:=RT_COMENT;
-      if (Length(FCommentString)+3)>High(RawRecord.RawData) then
+      len:=Length(FCommentString);
+      if (len+3)>High(RawRecord.RawData) then
         internalerror(2015033105);
-      RawRecord.RecordLength:=Length(FCommentString)+3;
+      RawRecord.RecordLength:=len+3;
       RawRecord.RawData[0]:=CommentType;
       RawRecord.RawData[1]:=CommentClass;
-      Move(FCommentString[1],RawRecord.RawData[2],Length(FCommentString));
+      if len>0 then
+        Move(FCommentString[1],RawRecord.RawData[2],len);
       RawRecord.CalculateChecksumByte;
+    end;
+
+  { TOmfRecord_COMENT_IMPDEF }
+
+  procedure TOmfRecord_COMENT_IMPDEF.DecodeFrom(ComentRecord: TOmfRecord_COMENT);
+    var
+      InternalNameLen, ModuleNameLenIdx, ModuleNameLen, NameLenIdx,
+        NameLen, OrdinalIdx: Integer;
+    begin
+      if ComentRecord.CommentClass<>CC_OmfExtension then
+        internalerror(2019061621);
+      if Length(ComentRecord.CommentString)<5 then
+        internalerror(2019061622);
+      if ComentRecord.CommentString[1]<>Chr(CC_OmfExtension_IMPDEF) then
+        internalerror(2019061623);
+      ImportByOrdinal:=Ord(ComentRecord.CommentString[2])<>0;
+      InternalNameLen:=Ord(ComentRecord.CommentString[3]);
+      InternalName:=Copy(ComentRecord.CommentString,4,InternalNameLen);
+      ModuleNameLenIdx:=4+InternalNameLen;
+      if ModuleNameLenIdx>Length(ComentRecord.CommentString) then
+        internalerror(2019061624);
+      ModuleNameLen:=Ord(ComentRecord.CommentString[ModuleNameLenIdx]);
+      ModuleName:=Copy(ComentRecord.CommentString,ModuleNameLenIdx+1,ModuleNameLen);
+      if ImportByOrdinal then
+        begin
+          Name:='';
+          OrdinalIdx:=ModuleNameLenIdx+1+ModuleNameLen;
+          if (OrdinalIdx+1)>Length(ComentRecord.CommentString) then
+            internalerror(2019061625);
+          Ordinal:=Ord(ComentRecord.CommentString[OrdinalIdx]) or
+                   (Word(Ord(ComentRecord.CommentString[OrdinalIdx+1])) shl 8);
+        end
+      else
+        begin
+          Ordinal:=0;
+          NameLenIdx:=ModuleNameLenIdx+1+ModuleNameLen;
+          if NameLenIdx>Length(ComentRecord.CommentString) then
+            internalerror(2019061626);
+          NameLen:=Ord(ComentRecord.CommentString[NameLenIdx]);
+          if (NameLenIdx+NameLen)>Length(ComentRecord.CommentString) then
+            internalerror(2019061627);
+          Name:=Copy(ComentRecord.CommentString,NameLenIdx+1,NameLen);
+          if Name='' then
+            Name:=InternalName;
+        end;
+    end;
+
+  procedure TOmfRecord_COMENT_IMPDEF.EncodeTo(ComentRecord: TOmfRecord_COMENT);
+    begin
+      ComentRecord.CommentClass:=CC_OmfExtension;
+      if ImportByOrdinal then
+        ComentRecord.CommentString:=Chr(CC_OmfExtension_IMPDEF)+#1+
+                                    Chr(Length(InternalName))+InternalName+
+                                    Chr(Length(ModuleName))+ModuleName+
+                                    Chr(Ordinal and $ff)+Chr((Ordinal shr 8) and $ff)
+      else if InternalName=Name then
+        ComentRecord.CommentString:=Chr(CC_OmfExtension_IMPDEF)+#0+
+                                    Chr(Length(InternalName))+InternalName+
+                                    Chr(Length(ModuleName))+ModuleName+#0
+      else
+        ComentRecord.CommentString:=Chr(CC_OmfExtension_IMPDEF)+#0+
+                                    Chr(Length(InternalName))+InternalName+
+                                    Chr(Length(ModuleName))+ModuleName+
+                                    Chr(Length(Name))+Name;
+    end;
+
+  { TOmfRecord_COMENT_EXPDEF }
+
+  procedure TOmfRecord_COMENT_EXPDEF.DecodeFrom(ComentRecord: TOmfRecord_COMENT);
+    var
+      expflag: Byte;
+      ExportedNameLen, InternalNameLenIdx, InternalNameLen,
+        ExportOrdinalIdx: Integer;
+    begin
+      if ComentRecord.CommentClass<>CC_OmfExtension then
+        internalerror(2019061601);
+      if Length(ComentRecord.CommentString)<4 then
+        internalerror(2019061602);
+      if ComentRecord.CommentString[1]<>Chr(CC_OmfExtension_EXPDEF) then
+        internalerror(2019061603);
+      expflag:=Ord(ComentRecord.CommentString[2]);
+      ExportByOrdinal:=(expflag and $80)<>0;
+      ResidentName:=(expflag and $40)<>0;
+      NoData:=(expflag and $20)<>0;
+      ParmCount:=expflag and $1F;
+      ExportedNameLen:=Ord(ComentRecord.CommentString[3]);
+      ExportedName:=Copy(ComentRecord.CommentString,4,ExportedNameLen);
+      InternalNameLenIdx:=4+ExportedNameLen;
+      if InternalNameLenIdx>Length(ComentRecord.CommentString) then
+        internalerror(2019061604);
+      InternalNameLen:=Ord(ComentRecord.CommentString[InternalNameLenIdx]);
+      if (InternalNameLenIdx+InternalNameLen)>Length(ComentRecord.CommentString) then
+        internalerror(2019061605);
+      InternalName:=Copy(ComentRecord.CommentString,InternalNameLenIdx+1,InternalNameLen);
+      if ExportByOrdinal then
+        begin
+          ExportOrdinalIdx:=InternalNameLenIdx+1+InternalNameLen;
+          if (ExportOrdinalIdx+1)>Length(ComentRecord.CommentString) then
+            internalerror(2019061606);
+          ExportOrdinal:=Ord(ComentRecord.CommentString[ExportOrdinalIdx]) or
+                         (Word(Ord(ComentRecord.CommentString[ExportOrdinalIdx+1])) shl 8);
+        end
+      else
+        ExportOrdinal:=0;
+      if InternalName='' then
+        InternalName:=ExportedName;
+    end;
+
+  procedure TOmfRecord_COMENT_EXPDEF.EncodeTo(ComentRecord: TOmfRecord_COMENT);
+    var
+      expflag: Byte;
+    begin
+      ComentRecord.CommentClass:=CC_OmfExtension;
+
+      if (ParmCount<0) or (ParmCount>31) then
+        internalerror(2019061504);
+      expflag:=ParmCount;
+      if ExportByOrdinal then
+        expflag:=expflag or $80;
+      if ResidentName then
+        expflag:=expflag or $40;
+      if NoData then
+        expflag:=expflag or $20;
+
+      if ExportByOrdinal then
+        if InternalName=ExportedName then
+          ComentRecord.CommentString:=Chr(CC_OmfExtension_EXPDEF)+Chr(expflag)+
+                                      Chr(Length(ExportedName))+ExportedName+#0+
+                                      Chr(Byte(ExportOrdinal))+Chr(Byte(ExportOrdinal shr 8))
+        else
+          ComentRecord.CommentString:=Chr(CC_OmfExtension_EXPDEF)+Chr(expflag)+
+                                      Chr(Length(ExportedName))+ExportedName+
+                                      Chr(Length(InternalName))+InternalName+
+                                      Chr(Byte(ExportOrdinal))+Chr(Byte(ExportOrdinal shr 8))
+      else
+        if InternalName=ExportedName then
+          ComentRecord.CommentString:=Chr(CC_OmfExtension_EXPDEF)+Chr(expflag)+
+                                      Chr(Length(ExportedName))+ExportedName+#0
+        else
+          ComentRecord.CommentString:=Chr(CC_OmfExtension_EXPDEF)+Chr(expflag)+
+                                      Chr(Length(ExportedName))+ExportedName+
+                                      Chr(Length(InternalName))+InternalName;
     end;
 
   { TOmfRecord_LNAMES }
@@ -2423,8 +2634,6 @@ implementation
             AThreads.TargetThread[ThreadNumber].TargetMethod:=TargetMethod;
             AThreads.TargetThread[ThreadNumber].Initialized:=True;
           end;
-        else
-          internalerror(2018053001);
       end;
     end;
 
@@ -2811,7 +3020,9 @@ implementation
         {objc_nlcatlist} 'DATA',
         {objc_protolist} 'DATA',
         {stack} 'STACK',
-        {heap} 'HEAP'
+        {heap} 'HEAP',
+        {gcc_except_table} 'DATA',
+        {ARM_attributes} 'DATA'
       );
     begin
       result:=segclass[atype];
