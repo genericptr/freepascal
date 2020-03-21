@@ -635,6 +635,39 @@ implementation
                   messagepos1(fwtype.fileinfo,sym_e_generic_type_param_decl,fwtype.realname);
                   result:=false;
                 end;
+<<<<<<< Updated upstream
+=======
+
+              // todo: how do we know if the procdef is forward? this is before we parsed forward!
+              // writeln('currpd-forwarddef: ', currpd.forwarddef, ' fwpd-forwarddef: ', fwpd.forwarddef);
+              // writeln('currpd-po_forward: ', (po_forward in currpd.procoptions), ' fwpd-po_forward: ', (po_forward in fwpd.procoptions));
+              // writeln('currpd-hasforward: ', currpd.hasforward, ' fwpd-hasforward: ', fwpd.hasforward);
+              writeln('currpd-interfacedef: ', currpd.interfacedef, ' fwpd-interfacedef: ', fwpd.interfacedef);
+
+              if (fwpd.interfacedef or assigned(fwpd.struct)) and (df_genconstraint in currtype.typedef.defoptions) then
+                begin
+                  //messagepos(tstoreddef(currtype.typedef).genconstraintdata.fileinfo,parser_e_generic_constraints_not_allowed_here);
+                  writeln('parser_e_generic_constraints_not_allowed_here');
+                  internalerror(1);
+                  result:=false;
+                end
+              else if (currtype.typ=constsym) and (fwtype.typ=constsym) then
+                begin
+                  { if we're checking forward definitions then constant parameters must match exactly }
+                  if not currpd.forwarddef and fwpd.forwarddef and 
+                    not equal_defs(currtype.typedef,fwtype.typedef) then
+                    begin
+                      writeln('constants not allowed in forward definition - parser_e_generic_constraints_not_allowed_here');
+                      internalerror(2);
+                    end
+                  { otherwise any constants are not allowed in the implementation section }
+                  else if not fwpd.forwarddef then
+                    begin
+                      writeln('constants not allowed in implementation section - parser_e_generic_constraints_not_allowed_here');
+                      internalerror(3);
+                    end;
+                end;
+>>>>>>> Stashed changes
             end;
         end;
 
