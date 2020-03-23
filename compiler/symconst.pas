@@ -234,7 +234,11 @@ type
     { internal def that's not for any export }
     df_internal,
     { the local def is referenced from a public function }
-    df_has_global_ref
+    df_has_global_ref,
+    { type is trait }
+    df_is_trait,
+    { type implements traits }
+    df_implements_traits
   );
   tdefoptions=set of tdefoption;
 
@@ -424,7 +428,9 @@ type
       "varargs" modifier or Mac-Pascal ".." parameter }
     po_variadic,
     { implicitly return same type as the class instance to which the message is sent }
-    po_objc_related_result_type
+    po_objc_related_result_type,
+    { procdef is implemented from trait }
+    po_is_trait_implemented
   );
   tprocoptions=set of tprocoption;
 
@@ -612,7 +618,9 @@ type
     { i8086 'external far' (can only be used in combination with vo_is_external) }
     vo_is_far,
     { a static symbol that is referenced from a global function }
-    vo_has_global_ref
+    vo_has_global_ref,
+    // note(ryan): temporary flag for traits until keyword is added
+    vo_is_trait
   );
   tvaroptions=set of tvaroption;
 
@@ -1083,7 +1091,8 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_auto_setter',{po_is_auto_setter}
       'po_noinline',{po_noinline}
       'C-style array-of-const', {po_variadic}
-      'objc-related-result-type' {po_objc_related_result_type}
+      'objc-related-result-type', {po_objc_related_result_type}
+      'po-is-trait-implemented' {po_is_trait_implemented}
     );
 
 implementation
