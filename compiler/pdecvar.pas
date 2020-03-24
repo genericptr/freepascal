@@ -144,7 +144,7 @@ implementation
             the object must explictly resolve the ambiguity by
             implementing the method }
           proc:=tprocsym(search_struct_member(astruct,sym.name));
-          if proc.typ=procsym then
+          if (proc<>nil) and (proc.typ=procsym) then
             begin
               writeln('must implement proc ',sym.name);
               // todo: make a method for this
@@ -155,7 +155,7 @@ implementation
             end;
           parentpd:=tprocdef(tprocsym(sym).procdeflist[0]);
           pd:=tprocdef(parentpd.getcopyas(procdef,pc_normal_no_hidden,''));
-          writeln('  proc ',sym.realname,'->',traitstruct.typename,' into ',astruct.typename);
+          writeln('  proc ',sym.realname,'->',traitstruct.typename,' into ',astruct.typename,' @',hexstr(pd));
           // todo: if there is already a method of the same name/params in the class
           // then we need to implement it so don't auto add the abstract proc
           // and mark the class as needing to give an error at the end

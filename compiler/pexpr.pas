@@ -1349,8 +1349,7 @@ implementation
                         paras:=nil;
                       { we need to know which procedure is called }
                       do_typecheckpass(p1);
-
-                      // todo: we can probably move this inside tcallnode during typechecking
+                      // todo: this needs to be moved to tcallnode.pass_typecheck but we can't figure out how yet
                       { handle traits }
                       call_node:=tcallnode(p1);
                       pd:=tprocdef(call_node.procdefinition);
@@ -1372,8 +1371,8 @@ implementation
                                                trait_proc,
                                                trait_proc.owner,
                                                trait_node,
-                                               callflags,
-                                               spezcontext);
+                                               call_node.callnodeflags,
+                                               call_node.spezcontext);
                           do_typecheckpass(p1);
                         end;
 
