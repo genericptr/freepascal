@@ -156,9 +156,8 @@ implementation
           parentpd:=tprocdef(tprocsym(sym).procdeflist[0]);
           pd:=tprocdef(parentpd.getcopyas(procdef,pc_normal_no_hidden,''));
           writeln('  proc ',sym.realname,'->',traitstruct.typename,' into ',astruct.typename,' @',hexstr(pd));
-          // todo: if there is already a method of the same name/params in the class
-          // then we need to implement it so don't auto add the abstract proc
-          // and mark the class as needing to give an error at the end
+          { inherit visibility of trait implementor }
+          pd.visibility:=trait_sym.visibility;
           pd.trait_implementor:=trait_sym;
           pd.trait_proc:=sym;
           pd.procoptions:=pd.procoptions+[po_is_trait_implemented,
@@ -722,7 +721,6 @@ implementation
                         p.add_getter_or_setter_for_sym(palt_write,sym,def,writeprocdef);
                         { insert trait members into struct }
                         implement_trait_members(sym,current_structdef,tabstractrecorddef(def));
-                        include(tabstractvarsym(sym).varoptions,vo_is_trait);
                         include(current_structdef.defoptions,df_implements_traits);
                       end
                     else

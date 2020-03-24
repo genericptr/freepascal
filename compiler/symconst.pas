@@ -618,9 +618,7 @@ type
     { i8086 'external far' (can only be used in combination with vo_is_external) }
     vo_is_far,
     { a static symbol that is referenced from a global function }
-    vo_has_global_ref,
-    // note(ryan): temporary flag for traits until keyword is added
-    vo_is_trait
+    vo_has_global_ref
   );
   tvaroptions=set of tvaroption;
 
