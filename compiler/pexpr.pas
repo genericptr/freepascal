@@ -1295,12 +1295,7 @@ implementation
         isclassref:boolean;
         isrecordtype:boolean;
         isobjecttype:boolean;
-        trait_node:tnode;
-        call_node:tcallnode;
-        trait_proc:tprocsym;
-        trait_implementor:tfieldvarsym;
-        paras:tnode;
-        pd:tprocdef;
+        p2:tnode;
       begin
          if sym=nil then
            begin
@@ -1341,39 +1336,15 @@ implementation
                       do_proc_call(sym,sym.owner,structh,
                                    (getaddr and not(token in [_CARET,_POINT])),
                                    again,p1,callflags,spezcontext);
-                      { keep the raw parsed parameters in case we need
-                        for resolving traits }
-                      if (p1.nodetype=calln) and assigned(tcallnode(p1).parameters) then
-                        paras:=tcallnode(p1).parameters.dogetcopy
-                      else
-                        paras:=nil;
                       { we need to know which procedure is called }
                       do_typecheckpass(p1);
-                      // todo: this needs to be moved to tcallnode.pass_typecheck but we can't figure out how yet
-                      { handle traits }
-                      call_node:=tcallnode(p1);
-                      pd:=tprocdef(call_node.procdefinition);
-                      if po_is_trait_implemented in pd.procoptions then
+
+                      // todo: calling this inside tcallnode causes crashes
+                      if p1.nodetype=calln then
                         begin
-                          trait_proc:=pd.trait_proc as tprocsym;
-                          if trait_proc=nil then
-                            internalerror(2020);
-                          trait_implementor:=pd.trait_implementor as tfieldvarsym;
-                          if trait_implementor=nil then
-                            internalerror(2020);
-                          writeln('call ', trait_proc.owner.realname^,'.',
-                                           trait_proc.realname,'->',
-                                           call_node.methodpointer.resultdef.typename,'.',
-                                           trait_implementor.realname);
-                          trait_node:=csubscriptnode.create(trait_implementor,call_node.methodpointer);
-                          do_typecheckpass(trait_node);
-                          p1:=ccallnode.create(paras,
-                                               trait_proc,
-                                               trait_proc.owner,
-                                               trait_node,
-                                               call_node.callnodeflags,
-                                               call_node.spezcontext);
-                          do_typecheckpass(p1);
+                          p2:=tcallnode(p1).check_traits;
+                          if assigned(p2) then
+                            p1:=p2;
                         end;
 
                       { calling using classref? }

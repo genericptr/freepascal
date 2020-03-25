@@ -1922,6 +1922,9 @@ implementation
               end;
             _TRAIT :
               begin
+                // TODO: pass arg into object_dec so we know it's a trait.
+                // add a special field for "owner" inside the trait also
+                // which we need to do in parse_object_members
                 consume(token);
                 def:=object_dec(odt_object,name,newsym,genericdef,genericlist,nil,ht_none);
                 include(def.defoptions,df_is_trait);
