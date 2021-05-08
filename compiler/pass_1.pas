@@ -62,6 +62,7 @@ implementation
     procedure typecheckpass_internal_loop(var p : tnode; out node_changed: boolean);
       var
          hp        : tnode;
+         oldflags  : tnodeflags;
       begin
         codegenerror:=false;
         repeat
@@ -73,9 +74,13 @@ implementation
           if assigned(hp) then
             begin
               node_changed:=true;
+              oldflags:=p.flags;
               p.free;
               { switch to new node }
               p:=hp;
+              { transfer generic paramter flag }
+              if nf_generic_para in oldflags then
+                include(p.flags,nf_generic_para);
             end;
         until not assigned(hp) or
               assigned(hp.resultdef);
@@ -184,23 +189,24 @@ implementation
                    { should the node be replaced? }
                    if assigned(hp) then
                      begin
+                       hp.flags := hp.flags + (p.flags * [nf_usercode_entry]);
                        p.free;
                        { switch to new node }
                        p:=hp;
                      end;
                    if codegenerror then
-                     include(p.flags,nf_error)
-                   else
-                     begin
-{$ifdef EXTDEBUG}
-                       if (p.expectloc=LOC_INVALID) then
-                         Comment(V_Warning,'Expectloc is not set in firstpass: '+nodetype2str[p.nodetype]);
-{$endif EXTDEBUG}
-                     end;
+                     include(p.flags,nf_error);
                  end;
              until not assigned(hp) or
                    (nf_pass1_done in hp.flags);
              include(p.flags,nf_pass1_done);
+{$ifdef EXTDEBUG}
+             if not(nf_error in p.flags) then
+               begin
+                 if (p.expectloc=LOC_INVALID) then
+                   Comment(V_Warning,'Expectloc is not set in firstpass: '+nodetype2str[p.nodetype]);
+               end;
+{$endif EXTDEBUG}
              codegenerror:=codegenerror or oldcodegenerror;
              current_settings.localswitches:=oldlocalswitches;
              current_filepos:=oldpos;

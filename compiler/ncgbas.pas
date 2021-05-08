@@ -350,11 +350,11 @@ interface
                              end;
                            end;
                         end;
-{$ifdef x86}
+{$if defined(x86) or defined(z80)}
                         { can only be checked now that all local operands }
                         { have been resolved                              }
                         taicpu(hp2).CheckIfValid;
-{$endif x86}
+{$endif x86 or z80}
                      end;
                   else
                     ;
@@ -397,11 +397,11 @@ interface
                              end;
 {$endif x86}
                          end;
-{$ifdef x86}
+{$if defined(x86) or defined(z80)}
                       { can only be checked now that all local operands }
                       { have been resolved                              }
                       taicpu(hp).CheckIfValid;
-{$endif x86}
+{$endif x86 or z80}
                      end;
                   else
                     ;
@@ -443,6 +443,7 @@ interface
             oldflowcontrol:=flowcontrol;
             { the nested block will not span an exit statement of the parent }
             exclude(flowcontrol,fc_exit);
+            include(flowcontrol,fc_no_direct_exit);
           end;
 
         { do second pass on left node }
@@ -468,7 +469,7 @@ interface
             current_procinfo.CurrExitLabel:=oldexitlabel;
             { the exit statements inside this block are not exit statements }
             { out of the parent                                             }
-            flowcontrol:=oldflowcontrol+(flowcontrol - [fc_exit]);
+            flowcontrol:=oldflowcontrol+(flowcontrol - [fc_exit,fc_no_direct_exit]);
           end;
       end;
 

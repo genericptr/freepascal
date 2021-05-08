@@ -75,6 +75,7 @@ implementation
       aasmbase,
       cgbase,pass_2,
       procinfo,
+      cpuinfo,
       cpubase,parabase,
       tgobj,
       cgobj,hlcgobj,
@@ -646,8 +647,8 @@ implementation
                        begin
                          { load address of the function }
                          reference_reset_symbol(href,current_asmdata.RefAsmSymbol(procdef.mangledname,AT_FUNCTION),0,procdef.address_type.alignment,[]);
-                         location.register:=hlcg.getaddressregister(current_asmdata.CurrAsmList,cprocvardef.getreusableprocaddr(procdef));
-                         hlcg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,procdef,cprocvardef.getreusableprocaddr(procdef),href,location.register);
+                         location.register:=hlcg.getaddressregister(current_asmdata.CurrAsmList,cprocvardef.getreusableprocaddr(procdef,pc_address_only));
+                         hlcg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,procdef,cprocvardef.getreusableprocaddr(procdef,pc_address_only),href,location.register);
                        end;
 
                      { to get methodpointers stored correctly, code and self register must be swapped on
@@ -691,7 +692,7 @@ implementation
          href : treference;
          releaseright : boolean;
          alignmentrequirement,
-         len : aint;
+         len : tcgint;
          r : tregister;
          {$if not defined(cpu64bitalu) and not defined(cpuhighleveltarget)}
          r64 : tregister64;
@@ -717,10 +718,13 @@ implementation
               empty value is assigned
 
            But not when the result is in the flags, then
-          loading the left node afterwards can destroy the flags.
+           loading the left node afterwards can destroy the flags.
+
+           Neither if right contains conditional nodes: this might cause problems with
+           temp. nodes with init code used by CSE, see e.g. #38129
         }
         if not(right.expectloc in [LOC_FLAGS,LOC_JUMP]) and
-            (node_complexity(right)>node_complexity(left)) then
+            (node_complexity(right)>node_complexity(left)) and not(has_conditional_nodes(right)) then
          begin
            secondpass(right);
            if codegenerror then
@@ -878,7 +882,13 @@ implementation
                       begin
                         if (left.resultdef.typ=floatdef) and
                            (right.resultdef.typ=floatdef) and
-                           (left.location.size<>right.location.size) then
+                           ((left.location.size<>right.location.size)
+                           { on newer (1993+ :)) x86 cpus, use the fpu to copy extended values }
+{$ifdef x86}
+                            or ({$ifndef x86_64}(current_settings.cputype>=cpu_Pentium) and{$endif x86_64}
+                            (is_extended(right.resultdef) {$ifdef i386} or is_double(right.resultdef){$endif i386} ))
+{$endif x86}
+                           )then
                           begin
                             { assume that all float types can be handed by the
                               fpu if one can be handled by the fpu }
@@ -1133,7 +1143,7 @@ implementation
                               cg.g_flags2ref(current_asmdata.CurrAsmList,left.location.size,right.location.resflags,left.location.reference);
                               cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
                             end;
-                        LOC_SUBSETREG,LOC_SUBSETREF:
+                        LOC_CSUBSETREG,LOC_SUBSETREG,LOC_SUBSETREF:
                           begin
                             r:=cg.getintregister(current_asmdata.CurrAsmList,left.location.size);
                             cg.g_flags2reg(current_asmdata.CurrAsmList,left.location.size,right.location.resflags,r);

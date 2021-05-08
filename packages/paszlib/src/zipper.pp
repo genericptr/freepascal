@@ -34,6 +34,7 @@ Const
   ZIP64_HEADER_ID                            = $0001;
   // infozip unicode path
   INFOZIP_UNICODE_PATH_ID                    = $7075;
+  EFS_LANGUAGE_ENCODING_FLAG                 = $800;
 
 const
   OS_FAT  = 0; //MS-DOS and OS/2 (FAT/VFAT/FAT32)
@@ -71,7 +72,6 @@ Type
    Local_File_Header_Type = Packed Record //1 per zipped file
      Signature              :  LongInt; //4 bytes
      Extract_Version_Reqd   :  Word; //if zip64: >= 45
-     {$warning TODO implement EFS/language enooding using UTF-8}
      Bit_Flag               :  Word; //"General purpose bit flag in PKZip appnote
      Compress_Method        :  Word;
      Last_Mod_Time          :  Word;
@@ -433,6 +433,7 @@ Type
     FOnEndOfFile    : TOnEndOfFileEvent;
     FOnStartFile    : TOnStartFileEvent;
     FCurrentCompressor : TCompressor;
+    FUseLanguageEncoding: Boolean;
     function CheckEntries: Integer;
     procedure SetEntries(const AValue: TZipFileEntries);
   Protected
@@ -487,6 +488,8 @@ Type
     Property InMemSize : Int64 Read FInMemSize Write FInMemSize;
     Property Entries : TZipFileEntries Read FEntries Write SetEntries;
     Property Terminated : Boolean Read FTerminated;
+    // EFS/language encoding using UTF-8
+    Property UseLanguageEncoding : Boolean Read FUseLanguageEncoding Write FUseLanguageEncoding;
   end;
 
   { TFullZipFileEntry }
@@ -835,6 +838,7 @@ Procedure ZipDateTimeToDateTime(ZD,ZT : Word;out DT : TDateTime);
 
 Var
   Y,M,D,H,N,S,MS : Word;
+  aDate,aTime : TDateTime;
 
 begin
   MS:=0;
@@ -844,10 +848,19 @@ begin
   D:=ZD and 31;
   M:=(ZD shr 5) and 15;
   Y:=((ZD shr 9) and 127)+1980;
-
+  // Some corrections
   if M < 1 then M := 1;
+  if M > 12 then M:=12;
   if D < 1 then D := 1;
-  DT:=ComposeDateTime(EncodeDate(Y,M,D),EncodeTime(H,N,S,MS));
+  if D>MonthDays[IsLeapYear(Y)][M] then
+    D:=MonthDays[IsLeapYear(Y)][M];
+  // Try to encode the result, fall back on today if it fails
+  if Not TryEncodeDate(Y,M,D,aDate) then
+    aDate:=Date;
+  if not TryEncodeTime(H,N,S,MS,aTime) then
+    aTime:=Time;
+  // Return result
+  DT:=ComposeDateTime(aDate,ATime);
 end;
 
 
@@ -1495,7 +1508,10 @@ Begin
         Raise EZipError.CreateFmt(SErrMissingFileName,[I]);
       If FindFirst(F.DiskFileName, STDATTR, Info)=0 then
         try
-          F.Size:=Info.Size;
+          if Info.Attr and faDirectory <> 0 then //in Linux directory Size <> 0
+            F.Size := 0
+          else
+            F.Size:=Info.Size;
           F.DateTime:=FileDateToDateTime(Info.Time);
         {$IFDEF UNIX}
           if fplstat(F.DiskFileName, @UnixInfo) = 0 then
@@ -1604,12 +1620,16 @@ function TZipper.UpdateZipHeader(Item: TZipFileEntry; FZip: TStream;
 var
   IsZip64           : boolean; //Must the local header be in zip64 format?
   // Separate from zip64 status of entire zip file.
-  ZFileName         : String;
+  ZFileName         : RawByteString;
 Begin
   ZFileName := Item.ArchiveFileName;
   IsZip64 := false;
   With LocalHdr do
     begin
+    if FUseLanguageEncoding then begin
+      SetCodePage(ZFileName, CP_UTF8, True);
+      Bit_Flag := Bit_Flag or EFS_LANGUAGE_ENCODING_FLAG;
+    end;
     FileName_Length := Length(ZFileName);
     Crc32 := ACRC;
     if LocalZip64Fld.Original_Size > 0 then
@@ -2275,7 +2295,7 @@ end;
 
 procedure TUnZipper.ReadZipHeader(Item: TFullZipFileEntry; out AMethod: Word);
 Var
-  S : String;
+  S : RawByteString;
   U : UTF8String;
   D : TDateTime;
   ExtraFieldHdr: Extensible_Data_Field_Header_Type;
@@ -2295,6 +2315,8 @@ Begin
       Item.FBitFlags:=Bit_Flag;
       SetLength(S,Filename_Length);
       FZipStream.ReadBuffer(S[1],Filename_Length);
+      if Bit_Flag and EFS_LANGUAGE_ENCODING_FLAG <> 0 then
+        SetCodePage(S, CP_UTF8, False);
       Item.ArchiveFileName:=S;
       Item.DiskFileName:=S;
       SavePos:=FZipStream.Position; //after filename, before extra fields
@@ -2506,7 +2528,7 @@ Var
   Zip64Field: Zip64_Extended_Info_Field_Type;
   NewNode   : TFullZipFileEntry;
   D : TDateTime;
-  S : String;
+  S : RawByteString;
   U : UTF8String;
   // infozip unicode path
   Infozip_unicode_path_ver : byte; // always 1
@@ -2561,6 +2583,8 @@ Begin
       NewNode.FBitFlags:=Bit_Flag;
       SetLength(S,Filename_Length);
       FZipStream.ReadBuffer(S[1],Filename_Length);
+      if Bit_Flag and EFS_LANGUAGE_ENCODING_FLAG <> 0 then
+        SetCodePage(S, CP_UTF8, False);
       SavePos:=FZipStream.Position; //After fixed part of central directory...
       // and the filename; before any extra field(s)
       NewNode.ArchiveFileName:=S;
@@ -2805,7 +2829,7 @@ Begin
       end
     else if Item.IsDirectory then
       begin
-        if (NOT Flat) then CreateDir(OutputFileName);
+        if (NOT Flat) then ForceDirectories(OutputFileName);
       end
     else
       begin

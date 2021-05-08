@@ -74,14 +74,15 @@ unit agrvgas;
             else
               begin
                 s :='';
-                s := s+'(';
+                if not(refaddr in [addr_no,addr_pic_no_got,addr_plt]) then
+                  s := s+'(';
                 if assigned(symbol) then
                   begin
                     if asminfo^.dollarsign<>'$' then
                       begin
-                        s:=s+ReplaceForbiddenAsmSymbolChars(symbol.name);
+                        s:=s+ApplyAsmSymbolRestrictions(symbol.name);
                         if assigned(relsymbol) then
-                          s:=s+'-'+ReplaceForbiddenAsmSymbolChars(relsymbol.name)
+                          s:=s+'-'+ApplyAsmSymbolRestrictions(relsymbol.name)
                       end
                     else
                       begin
@@ -103,14 +104,10 @@ unit agrvgas;
                 s:=s+tostr(offset);
             end;
 
-           if not(refaddr in [addr_no,addr_pic_no_got]) then
+           if not(refaddr in [addr_no,addr_pic_no_got,addr_plt]) then
              begin
                s := s+')';
              end;
-{$ifdef cpu64bitaddr}
-           if (refaddr=addr_pic) then
-             s := s + '@got';
-{$endif cpu64bitaddr}
 
            if (index=NR_NO) then
              begin
@@ -130,13 +127,17 @@ unit agrvgas;
                  s:=s+gas_regname(base)+','+gas_regname(index)
                else
                  internalerror(2006052502);
-             end;
+             end
+           else
+             Internalerror(2021030602);
 
            case refaddr of
              addr_lo12: s:='%lo'+s;
              addr_hi20: s:='%hi'+s;
              addr_pcrel_lo12: s:='%pcrel_lo'+s;
              addr_pcrel_hi20: s:='%pcrel_hi'+s;
+             addr_got_pcrel_hi: s:='%got_pcrel_hi'+s;
+             addr_plt: s:=s+'@plt';
              else
                ;
            end;
@@ -159,7 +160,7 @@ unit agrvgas;
             begin
               hs:=o.ref^.symbol.name;
               if asminfo^.dollarsign<>'$' then
-                hs:=ReplaceForbiddenAsmSymbolChars(hs);
+                hs:=ApplyAsmSymbolRestrictions(hs);
               if o.ref^.offset>0 then
                hs:=hs+'+'+tostr(o.ref^.offset)
               else
@@ -232,8 +233,8 @@ unit agrvgas;
       const
         arch_str: array[boolean,tcputype] of string[10] = (
 {$ifdef RISCV32}
-          ('','rv32ima','rv32im','rv32i'),
-          ('','rv32imafd','rv32imfd','rv32ifd')
+          ('','rv32imac','rv32ima','rv32im','rv32i'),
+          ('','rv32imafdc','rv32imafd','rv32imfd','rv32ifd')
 {$endif RISCV32}
 {$ifdef RISCV64}
           ('','rv64imac','rv64ima','rv64im','rv64i'),
@@ -247,7 +248,10 @@ unit agrvgas;
         Replace(result,'$ABI','ilp32');
 {$endif RISCV32}
 {$ifdef RISCV64}
-        Replace(result,'$ABI','lp64');
+        if target_info.abi=abi_riscv_hf then
+          Replace(result,'$ABI','lp64d')
+        else
+          Replace(result,'$ABI','lp64');
 {$endif RISCV64}
       end;
 
@@ -263,6 +267,7 @@ unit agrvgas;
          supported_targets : [system_riscv32_linux,system_riscv64_linux];
          flags : [af_needar,af_smartlink_sections];
          labelprefix : '.L';
+         labelmaxlen : -1;
          comment : '# ';
          dollarsign: '$';
        );

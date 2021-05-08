@@ -88,6 +88,8 @@ implementation
     R_X86_64_TLSDESC_CALL = 35;
     R_X86_64_TLSDESC = 36;
     R_X86_64_IRELATIVE = 37;
+    R_X86_64_GOTPCRELX =41;
+    R_X86_64_REX_GOTPCRELX =42;
     R_X86_64_GNU_VTINHERIT = 250;    { GNU extension to record C++ vtable hierarchy }
     R_X86_64_GNU_VTENTRY = 251;      { GNU extension to record C++ vtable member usage }
 
@@ -164,11 +166,15 @@ implementation
           else if objrel.size=4 then
             result:=R_X86_64_32
           else
-            InternalError(2012061901);
+            InternalError(2012061902);
         RELOC_ABSOLUTE32 :
           result:=R_X86_64_32S;
         RELOC_GOTPCREL :
           result:=R_X86_64_GOTPCREL;
+        RELOC_GOTPCRELX :
+          result:=R_X86_64_GOTPCRELX;
+        RELOC_REX_GOTPCRELX :
+          result:=R_X86_64_REX_GOTPCRELX;
         RELOC_PLT32 :
           result:=R_X86_64_PLT32;
         RELOC_TPOFF:
@@ -186,7 +192,7 @@ implementation
           else if objrel.size=4 then
             result:=R_X86_64_DTPOFF32
           else
-            InternalError(2019091701);
+            InternalError(2019091702);
         else
           result:=0;
           InternalError(2012082302);
@@ -557,7 +563,7 @@ implementation
               else
                 begin
                   writeln(objreloc.typ);
-                  internalerror(200604014);
+                  internalerror(2006040105);
                 end;
             end
           else           { not relocsec.Used }
@@ -577,7 +583,7 @@ implementation
                 end;
               end;
           else
-            InternalError(2012101102);
+            InternalError(2012101103);
           end;
 
           data.Seek(objreloc.dataoffset);
@@ -699,6 +705,7 @@ implementation
                              system_x86_64_haiku];
         flags : [af_outputbinary,af_smartlink_sections,af_supports_dwarf];
         labelprefix : '.L';
+        labelmaxlen : -1;
         comment : '';
         dollarsign: '$';
       );

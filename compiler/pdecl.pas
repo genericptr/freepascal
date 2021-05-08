@@ -135,7 +135,10 @@ implementation
            setconstn :
              begin
                new(ps);
-               ps^:=tsetconstnode(p).value_set^;
+               if assigned(tsetconstnode(p).value_set) then
+                 ps^:=tsetconstnode(p).value_set^
+               else
+                 ps^:=[];
                hp:=cconstsym.create_ptr(orgname,constset,ps,p.resultdef);
              end;
            pointerconstn :
@@ -185,8 +188,22 @@ implementation
                end;
              end;
            else
-             Message(parser_e_illegal_expression);
+             begin
+               { the node is from a generic parameter constant and is
+                 untyped so we need to pass a placeholder constant
+                 instead of givng an error }
+               if nf_generic_para in p.flags then
+                 hp:=cconstsym.create_ord(orgname,constnil,0,p.resultdef)
+               else
+                 Message(parser_e_illegal_expression);
+             end;
         end;
+        { transfer generic param flag from node to symbol }
+        if nf_generic_para in p.flags then
+          begin
+            include(hp.symoptions,sp_generic_const);
+            include(hp.symoptions,sp_generic_para);
+          end;
         current_tokenpos:=storetokenpos;
         p.free;
         readconstant:=hp;
@@ -370,7 +387,14 @@ implementation
                 if token=_ID then
                   labelsym:=clabelsym.create(orgpattern)
                 else
-                  labelsym:=clabelsym.create(pattern);
+                  begin
+                    { strip leading 0's in iso mode }
+                    if (([m_iso,m_extpas]*current_settings.modeswitches)<>[]) then
+                      while (length(pattern)>1) and (pattern[1]='0') do
+                        delete(pattern,1,1);
+                    labelsym:=clabelsym.create(pattern);
+                  end;
+
                 symtablestack.top.insert(labelsym);
                 if m_non_local_goto in current_settings.modeswitches then
                   begin
@@ -589,7 +613,7 @@ implementation
 
     procedure types_dec(in_structure: boolean;out had_generic:boolean;var rtti_attrs_def: trtti_attribute_list);
 
-      function determine_generic_def(name:tidstring):tstoreddef;
+      function determine_generic_def(const name:tidstring):tstoreddef;
         var
           hashedid : THashedIDString;
           pd : tprocdef;
@@ -650,7 +674,8 @@ implementation
          gentypename,genorgtypename : TIDString;
          newtype  : ttypesym;
          sym      : tsym;
-         hdef     : tdef;
+         hdef,
+         hdef2    : tdef;
          defpos,storetokenpos : tfileposinfo;
          old_block_type : tblock_type;
          old_checkforwarddefs: TFPObjectList;
@@ -658,9 +683,10 @@ implementation
          first,
          isgeneric,
          isunique,
-         istyperenaming : boolean;
+         istyperenaming,
+         wasforward: boolean;
          generictypelist : tfphashobjectlist;
-         generictokenbuf : tdynamicarray;
+         localgenerictokenbuf : tdynamicarray;
          p:tnode;
          gendef : tstoreddef;
          s : shortstring;
@@ -682,7 +708,7 @@ implementation
            defpos:=current_tokenpos;
            istyperenaming:=false;
            generictypelist:=nil;
-           generictokenbuf:=nil;
+           localgenerictokenbuf:=nil;
 
            { class attribute definitions? }
            if m_prefixed_attributes in current_settings.modeswitches then
@@ -715,8 +741,9 @@ implementation
                { we are not freeing the type parameters, so register them }
                for i:=0 to generictypelist.count-1 do
                  begin
-                    ttypesym(generictypelist[i]).register_sym;
-                    tstoreddef(ttypesym(generictypelist[i]).typedef).register_def;
+                    tstoredsym(generictypelist[i]).register_sym;
+                    if tstoredsym(generictypelist[i]).typ=typesym then
+                      tstoreddef(ttypesym(generictypelist[i]).typedef).register_def;
                  end;
 
                str(generictypelist.Count,s);
@@ -744,8 +771,8 @@ implementation
            { Start recording a generic template }
            if assigned(generictypelist) then
              begin
-               generictokenbuf:=tdynamicarray.create(256);
-               current_scanner.startrecordtokens(generictokenbuf);
+               localgenerictokenbuf:=tdynamicarray.create(256);
+               current_scanner.startrecordtokens(localgenerictokenbuf);
              end;
 
            { is the type already defined? -- must be in the current symtable,
@@ -764,6 +791,7 @@ implementation
                    (sp_generic_dummy in sym.symoptions)
                  ) then
                begin
+                 wasforward:=false;
                  if ((token=_CLASS) or
                      (token=_INTERFACE) or
                      (token=_DISPINTERFACE) or
@@ -774,6 +802,7 @@ implementation
                     is_implicit_pointer_object_type(ttypesym(sym).typedef) and
                     (oo_is_forward in tobjectdef(ttypesym(sym).typedef).objectoptions) then
                   begin
+                    wasforward:=true;
                     case token of
                       _CLASS :
                         objecttype:=default_class_type;
@@ -802,6 +831,9 @@ implementation
                     gendef:=determine_generic_def(gentypename);
                     { we can ignore the result, the definition is modified }
                     object_dec(objecttype,genorgtypename,newtype,gendef,generictypelist,tobjectdef(ttypesym(sym).typedef),ht_none);
+                    if wasforward and
+                      (tobjectdef(ttypesym(sym).typedef).objecttype<>objecttype) then
+                      Message1(type_e_forward_interface_type_does_not_match,tobjectdef(ttypesym(sym).typedef).GetTypeName);
                     newtype:=ttypesym(sym);
                     hdef:=newtype.typedef;
                   end
@@ -896,9 +928,11 @@ implementation
                       if is_object(hdef) or
                          is_class_or_interface_or_dispinterface(hdef) then
                         begin
-                          { just create a child class type; this is
+                          { just create a copy that is a child of the original class class type; this is
                             Delphi-compatible }
-                          hdef:=cobjectdef.create(tobjectdef(hdef).objecttype,genorgtypename,tobjectdef(hdef),true);
+                          hdef2:=tstoreddef(hdef).getcopy;
+                          tobjectdef(hdef2).childof:=tobjectdef(hdef);
+                          hdef:=hdef2;
                         end
                       else
                         begin
@@ -928,6 +962,7 @@ implementation
                              (tabstractpointerdef(hdef).pointeddef.typ=forwarddef) then
                             current_module.checkforwarddefs.add(hdef);
                         end;
+
                       include(hdef.defoptions,df_unique);
                     end;
                   if not assigned(hdef.typesym) then
@@ -1083,7 +1118,7 @@ implementation
                       finalize_class_external_status(tobjectdef(hdef));
 
                     { Build VMT indexes, skip for type renaming and forward classes }
-                    if (hdef.typesym=newtype) and
+                    if not istyperenaming and
                        not(oo_is_forward in tobjectdef(hdef).objectoptions) then
                       build_vmt(tobjectdef(hdef));
 
@@ -1132,7 +1167,7 @@ implementation
            if assigned(generictypelist) then
              begin
                current_scanner.stoprecordtokens;
-               tstoreddef(hdef).generictokenbuf:=generictokenbuf;
+               tstoreddef(hdef).generictokenbuf:=localgenerictokenbuf;
                { Generic is never a type renaming }
                hdef.typesym:=newtype;
                generictypelist.free;
@@ -1151,6 +1186,11 @@ implementation
            first:=false;
            if assigned(rtti_attrs_def) and (rtti_attrs_def.get_attribute_count>0) then
              Message1(parser_e_unbound_attribute,trtti_attribute(rtti_attrs_def.rtti_attributes[0]).typesym.prettyname);
+
+ {$ifdef DEBUG_NODE_XML}
+          if Assigned(hdef) then
+            hdef.XMLPrintDef(newtype);
+ {$endif DEBUG_NODE_XML}
 
          until ((token<>_ID) and (token<>_LECKKLAMMER)) or
                (in_structure and

@@ -27,7 +27,11 @@ interface
 
 uses
   globtype, parabase,
-  cgbase, cgutils, cgobj, cg64f32, cpupara,
+  cgbase, cgutils, cgobj,
+{$ifndef mips64}
+  cg64f32,
+{$endif mips64}
+  cpupara,
   aasmbase, aasmtai, aasmcpu, aasmdata,
   cpubase, cpuinfo,
   node, symconst, SymType, symdef,
@@ -88,6 +92,7 @@ type
     procedure g_profilecode(list: TAsmList);override;
   end;
 
+{$ifndef mips64}
   TCg64MPSel = class(tcg64f32)
   public
     procedure a_load64_reg_ref(list: tasmlist; reg: tregister64; const ref: treference); override;
@@ -100,6 +105,7 @@ type
     procedure a_op64_const_reg_reg_checkoverflow(list: tasmlist; op: TOpCG; size: tcgsize; Value: int64; regsrc, regdst: tregister64; setflags: boolean; var ovloc: tlocation); override;
     procedure a_op64_reg_reg_reg_checkoverflow(list: tasmlist; op: TOpCG; size: tcgsize; regsrc1, regsrc2, regdst: tregister64; setflags: boolean; var ovloc: tlocation); override;
   end;
+{$endif mips64}
 
   procedure create_codegen;
 
@@ -459,6 +465,12 @@ var
 begin
   if (TCGSize2Size[fromsize] < TCGSize2Size[tosize]) then
     a_load_reg_reg(list,fromsize,tosize,reg,reg);
+  if (ref.alignment<>0) and
+     (ref.alignment<tcgsize2size[tosize]) then
+    begin
+      a_load_reg_ref_unaligned(list,FromSize,ToSize,reg,ref);
+      exit;
+    end;
   case tosize of
     OS_8,
     OS_S8:
@@ -485,6 +497,12 @@ var
 begin
   if (TCGSize2Size[fromsize] >= TCGSize2Size[tosize]) then
     fromsize := tosize;
+  if (ref.alignment<>0) and
+     (ref.alignment<tcgsize2size[fromsize]) then
+     begin
+       a_load_ref_reg_unaligned(list,FromSize,ToSize,ref,reg);
+       exit;
+     end;
   case fromsize of
     OS_S8:
       Op := A_LB;{Load Signed Byte}
@@ -612,7 +630,7 @@ begin
   if (cs_create_pic in current_settings.moduleswitches) then
     begin
       if not (pi_needs_got in current_procinfo.flags) then
-        InternalError(2013060103);
+        InternalError(2013060104);
       { For PIC global symbols offset must be handled separately.
         Otherwise (non-PIC or local symbols) offset can be encoded
         into relocation even if exceeds 16 bits. }
@@ -1691,6 +1709,7 @@ procedure TCGMIPS.g_adjust_self_value(list:TAsmList;procdef: tprocdef;ioffset: t
   end;
 
 
+{$ifndef mips64}
 {****************************************************************************
                                TCG64_MIPSel
 ****************************************************************************}
@@ -1928,12 +1947,15 @@ begin
     internalerror(200306017);
   end;
 end;
+{$endif mips64}
 
 
     procedure create_codegen;
       begin
         cg:=TCGMIPS.Create;
+{$ifndef mips64}
         cg64:=TCg64MPSel.Create;
+{$endif mips64}
       end;
 
 end.

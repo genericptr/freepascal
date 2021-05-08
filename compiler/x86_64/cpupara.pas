@@ -178,10 +178,13 @@ unit cpupara;
                cl.typ:=X86_64_INTEGERSI_CLASS;
                { gcc/clang sign/zero-extend all values to 32 bits, except for
                  _Bool (= Pascal boolean), which is only zero-extended to 8 bits
-                 as per the x86-64 ABI -> do the same }
+                 as per the x86-64 ABI -> do the same
+
+                 some testing showed, that this is not true for 8 bit values:
+                 in case of an 8 bit value, it is not zero/sign extended }
                if not assigned(cl.def) or
-                  not is_pasbool(cl.def) or
-                  (torddef(cl.def).ordtype<>pasbool1) then
+                  not(cl.def.typ=orddef) or
+                  not(torddef(cl.def).ordtype in [uchar,u8bit,s8bit,pasbool1]) then
                  cl.def:=u32inttype;
              end
            else
@@ -1358,9 +1361,9 @@ unit cpupara;
     function tcpuparamanager.get_volatile_registers_mm(calloption : tproccalloption):tcpuregisterset;
       begin
         if x86_64_use_ms_abi(calloption) then
-          result:=[RS_XMM0..RS_XMM5]
+          result:=[RS_XMM0..RS_XMM5,RS_XMM16..RS_XMM31]
         else
-          result:=[RS_XMM0..RS_XMM15];
+          result:=[RS_XMM0..RS_XMM15,RS_XMM16..RS_XMM31];
       end;
 
 
@@ -1454,7 +1457,12 @@ unit cpupara;
             numclasses:=classify_argument(p.proccalloption,result.def,nil,vs_value,result.def.size,classes,0,False);
             { this would mean a memory return }
             if (numclasses=0) then
-              internalerror(2010021502);
+              begin
+                { we got an error before, so we just skip all the return type generation }
+                if result.def.typ=errordef then
+                  exit;
+                internalerror(2010021502);
+              end;
 
             if (numclasses > MAX_PARA_CLASSES) then
               internalerror(2010021503);

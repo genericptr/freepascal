@@ -307,9 +307,6 @@ Unit Rax86int;
         forcelabel : boolean;
         srsym : tsym;
         srsymtable : TSymtable;
-        scomment: string;
-        schar: char;
-        old_commentstyle: tcommentstyle;
       begin
         actoperextention := '';
 
@@ -1145,7 +1142,7 @@ Unit Rax86int;
                       SetSegmentOverride(dest,segreg);
                   end;
                 else
-                  internalerror(2018030701);
+                  internalerror(2018030704);
               end;
             end;
           OPR_LOCAL:
@@ -1226,7 +1223,7 @@ Unit Rax86int;
               oper.opr.localsegment:=seg;
             end;
           else
-            internalerror(2018030703);
+            internalerror(2018030705);
         end;
       end;
 
@@ -1497,6 +1494,11 @@ Unit Rax86int;
                  4 :
                   l:=ord(actasmpattern[4]) + ord(actasmpattern[3]) shl 8 +
                      Ord(actasmpattern[2]) shl 16 + ord(actasmpattern[1]) shl 24;
+                 8 :
+                  begin
+                    move(actasmpattern[1],l,8);
+                    l:=SwapEndian(l);
+                  end;
                 else
                   Message1(asmr_e_invalid_string_as_opcode_operand,actasmpattern);
                 end;
@@ -3153,7 +3155,7 @@ Unit Rax86int;
                      end
                    else
 {$endif i8086}
-                     ConcatConstSymbol(curlist,asmsym,asmsymtyp,value,constsize,cseof_hasofs in cse_out_flags);
+                     ConcatConstSymbol(curlist,asmsym,'',asmsymtyp,value,constsize,cseof_hasofs in cse_out_flags);
                  end
                 else
                  ConcatConstant(curlist,value,constsize);

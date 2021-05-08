@@ -505,6 +505,8 @@ interface
         IF_T4,                  { disp8 - tuple - 4 }
         IF_T8,                  { disp8 - tuple - 8 }
         IF_T1S,                 { disp8 - tuple - 1 scalar }
+        IF_T1S8,                { disp8 - tuple - 1 scalar byte }
+        IF_T1S16,               { disp8 - tuple - 1 scalar word }
         IF_T1F32,
         IF_T1F64,
         IF_TMDDUP,
@@ -919,6 +921,7 @@ implementation
           Intel 64 and IA-32 Architectures Software Developer’s Manual
             Volume 2B: Instruction Set Reference, N-Z, January 2015
         }
+{$ifndef i8086}
         alignarray_cmovcpus:array[0..10] of string[11]=(
           #$66#$66#$66#$0F#$1F#$84#$00#$00#$00#$00#$00,
           #$66#$66#$0F#$1F#$84#$00#$00#$00#$00#$00,
@@ -931,6 +934,7 @@ implementation
           #$0F#$1F#$00,
           #$66#$90,
           #$90);
+{$endif i8086}
 {$ifdef i8086}
         alignarray:array[0..5] of string[8]=(
           #$90#$90#$90#$90#$90#$90#$90,
@@ -963,7 +967,7 @@ implementation
            while (localsize>0) do
             begin
 {$ifndef i8086}
-              if CPUX86_HAS_CMOV in cpu_capabilities[current_settings.cputype] then
+              if (CPUX86_HAS_CMOV in cpu_capabilities[current_settings.cputype]) then
                 begin
                   for j:=low(alignarray_cmovcpus) to high(alignarray_cmovcpus) do
                    if (localsize>=length(alignarray_cmovcpus[j])) then
@@ -2127,6 +2131,8 @@ implementation
                       else tuplesize := 4;
               end;
             end
+            else if IF_T1S8 in aInsEntry^.Flags then tuplesize := 1
+            else if IF_T1S16 in aInsEntry^.Flags then tuplesize := 2
             else if IF_T1F32 in aInsEntry^.Flags then tuplesize := 4
             else if IF_T1F64 in aInsEntry^.Flags then tuplesize := 8
             else if IF_T2 in aInsEntry^.Flags then
@@ -2148,7 +2154,7 @@ implementation
               case aIsEVEXW1 of
                 false: if aIsVector512 then tuplesize := 32;
                 else
-                  Internalerror(2019081003);
+                  Internalerror(2019081013);
               end;
             end
             else if IF_THVM in aInsEntry^.Flags then
@@ -2176,18 +2182,21 @@ implementation
               if aIsVector256 then tuplesize := 32
                else if aIsVector512 then tuplesize := 64;
             end;
-          end;;
+          end;
 
           if tuplesize > 0 then
           begin
             if aInput.typ = top_ref then
             begin
-              if (aInput.ref^.offset <> 0) and
-                 ((aInput.ref^.offset mod tuplesize) = 0) and
-                 (abs(aInput.ref^.offset) div tuplesize <= 127) then
-              begin
-                aInput.ref^.offset := aInput.ref^.offset div tuplesize;
-                EVEXTupleState := etsIsTuple;
+	      if aInput.ref^.base <> NR_NO then
+	      begin	      
+	        if (aInput.ref^.offset <> 0) and
+                   ((aInput.ref^.offset mod tuplesize) = 0) and
+                   (abs(aInput.ref^.offset) div tuplesize <= 127) then
+                begin
+                  aInput.ref^.offset := aInput.ref^.offset div tuplesize;
+                  EVEXTupleState := etsIsTuple;
+    	        end;  
               end;
             end;
           end;
@@ -2474,9 +2483,9 @@ implementation
           (0, 1, 2, 3, 6, 7, 5, 4);
         maxsupreg: array[tregistertype] of tsuperregister=
 {$ifdef x86_64}
-          (0, 16, 9, 8, 32, 32, 8, 0);
+          (0, 16, 9, 8, 32, 32, 8, 0, 0, 0);
 {$else x86_64}
-          (0,  8, 9, 8,  8, 32, 8, 0);
+          (0,  8, 9, 8,  8, 32, 8, 0, 0, 0);
 {$endif x86_64}
       var
         rs: tsuperregister;
@@ -2823,7 +2832,7 @@ implementation
         if ((input.ref^.index<>NR_NO) and (getregtype(input.ref^.index)=R_MMREGISTER) and (input.ref^.base<>NR_NO) and (getregtype(input.ref^.base)<>R_INTREGISTER)) or // vector memory (AVX2)
            ((input.ref^.index<>NR_NO) and (getregtype(input.ref^.index)<>R_INTREGISTER) and (getregtype(input.ref^.index)<>R_MMREGISTER)) or
            ((input.ref^.base<>NR_NO) and (getregtype(input.ref^.base)<>R_INTREGISTER)) then
-         internalerror(200301081);
+         internalerror(2003010802);
 
 
         ir:=input.ref^.index;
@@ -2997,7 +3006,7 @@ implementation
         result:=false;
         if ((input.ref^.index<>NR_NO) and (getregtype(input.ref^.index)<>R_INTREGISTER)) or
            ((input.ref^.base<>NR_NO) and (getregtype(input.ref^.base)<>R_INTREGISTER)) then
-          internalerror(200301081);
+          internalerror(2003010803);
 
 
         ir:=input.ref^.index;
@@ -3095,9 +3104,6 @@ implementation
         codes : pchar;
         c     : byte;
         len     : shortint;
-        len_ea_data: shortint;
-        len_ea_data_evex: shortint;
-        mref_offset: asizeint;
         ea_data : ea;
         exists_evex: boolean;
         exists_vex: boolean;
@@ -3108,17 +3114,12 @@ implementation
         exists_l256: boolean;
         exists_l512: boolean;
         exists_EVEXW1: boolean;
-        pmref_operand: poper;
 {$ifdef x86_64}
         omit_rexw : boolean;
 {$endif x86_64}
       begin
 
         len:=0;
-        len_ea_data := 0;
-        len_ea_data_evex:= 0;
-        mref_offset := 0;
-        pmref_operand := nil;
 
         codes:=@p^.code[0];
         exists_vex := false;
@@ -3681,6 +3682,16 @@ implementation
              end;
 {$endif i386}
            objdata.writereloc(data,len,p,Reloctype);
+{$ifdef x86_64}
+	   { Computed offset is not yet correct for GOTPC relocation }
+           { RELOC_GOTPCREL, RELOC_REX_GOTPCRELX, RELOC_GOTPCRELX need special handling }
+           if assigned(p) and (RelocType in [RELOC_GOTPCREL, RELOC_REX_GOTPCRELX, RELOC_GOTPCRELX]) and
+              { These relocations seem to be used only for ELF
+                which always has relocs_use_addend set to true 
+                so that it is the orgsize of the last relocation which needs to be fixed PM  }
+              (insend<>objdata.CurrObjSec.size) then
+             dec(TObjRelocation(objdata.CurrObjSec.ObjRelocations.Last).orgsize,insend-objdata.CurrObjSec.size);
+{$endif}
          end;
 
 
@@ -3703,20 +3714,23 @@ implementation
         needed_VEX_Extension: boolean;
         needed_VEX: boolean;
         needed_EVEX: boolean;
+{$ifdef x86_64}
         needed_VSIB: boolean;
+{$endif x86_64}
         opmode: integer;
         VEXvvvv: byte;
         VEXmmmmm: byte;
+{
         VEXw    : byte;
         VEXpp   : byte;
         VEXll   : byte;
+}
         EVEXvvvv: byte;
         EVEXpp: byte;
         EVEXr: byte;
         EVEXx: byte;
         EVEXv: byte;
         EVEXll: byte;
-        EVEXw0: byte;
         EVEXw1: byte;
         EVEXz   : byte;
         EVEXaaa : byte;
@@ -3809,21 +3823,23 @@ implementation
         needed_VEX    := false;
         needed_EVEX   := false;
         needed_VEX_Extension := false;
+{$ifdef x86_64}
         needed_VSIB   := false;
+{$endif x86_64}
         opmode   := -1;
         VEXvvvv  := 0;
         VEXmmmmm := 0;
-
+{
         VEXll    := 0;
         VEXw     := 0;
         VEXpp    := 0;
+}
         EVEXpp   := 0;
         EVEXvvvv := 0;
         EVEXr    := 0;
         EVEXx    := 0;
         EVEXv    := 0;
         EVEXll   := 0;
-        EVEXw0   := 0;
         EVEXw1   := 0;
         EVEXz    := 0;
         EVEXaaa  := 0;
@@ -3870,23 +3886,25 @@ implementation
                                  begin
                                    // VSIB memory addresing
                                    if getsupreg(oper[opidx]^.ref^.index) and $10 = $0 then EVEXv := 1; // VECTOR-Index
+                                   {$ifdef x86_64}
                                    needed_VSIB := true;
+                                   {$endif x86_64}
                                  end;
                                end;
                       else
-                        Internalerror(2019081004);
+                        Internalerror(2019081014);
                     end;
 
 
                  end;
            &333: begin
                    VEXvvvv              := VEXvvvv  OR $02; // set SIMD-prefix $F3
-                   VEXpp                := $02;             // set SIMD-prefix $F3
+                   //VEXpp                := $02;             // set SIMD-prefix $F3
                    EVEXpp               := $02;             // set SIMD-prefix $F3
                  end;
            &334: begin
                    VEXvvvv              := VEXvvvv  OR $03; // set SIMD-prefix $F2
-                   VEXpp                := $03;             // set SIMD-prefix $F2
+                   //VEXpp                := $03;             // set SIMD-prefix $F2
                    EVEXpp               := $03;             // set SIMD-prefix $F2
                  end;
            &350: needed_EVEX            := true;            // AVX512 instruction or AVX128/256/512-instruction (depended on operands [x,y,z]mm16..)
@@ -3894,18 +3912,18 @@ implementation
            &352: EVEXw1                 := $01;
            &361: begin
                    VEXvvvv              := VEXvvvv  OR $01; // set SIMD-prefix $66
-                   VEXpp                := $01;             // set SIMD-prefix $66
+                   //VEXpp                := $01;             // set SIMD-prefix $66
                    EVEXpp               := $01;             // set SIMD-prefix $66
                  end;
            &362: needed_VEX             := true;
            &363: begin
                    needed_VEX_Extension := true;
                    VEXvvvv              := VEXvvvv  OR (1 shl 7); // set REX.W
-                   VEXw                 := 1;
+                   //VEXw                 := 1;
                  end;
            &364: begin
                    VEXvvvv              := VEXvvvv  OR $04; // vectorlength = 256 bits AND no scalar
-                   VEXll                := $01;
+                   //VEXll                := $01;
                    EVEXll               := $01;
                  end;
            &366,
@@ -4335,7 +4353,7 @@ implementation
                 else
                  objdata_writereloc(currval-insend,2,nil,currabsreloc)
 {$else i8086}
-                InternalError(777006);
+                InternalError(2020100821);
 {$endif i8086}
               end;
             &64,&65,&66 :  // 064..066 - select between 16/32 address mode, but we support only 32 (only 16 on i8086)
@@ -4492,7 +4510,7 @@ implementation
                 else
                   InternalError(2015041503);
 {$else i8086}
-                InternalError(777006);
+                InternalError(2020100822);
 {$endif i8086}
               end;
             else
@@ -4787,6 +4805,18 @@ implementation
                 R_SUBQ,
                 R_SUBMMWHOLE:
                   result:=taicpu.op_ref_reg(A_VMOVQ,S_NO,tmpref,r);
+                R_SUBMMY:
+                   if ref.alignment>=32 then
+                     result:=taicpu.op_ref_reg(A_VMOVDQA,S_NO,tmpref,r)
+                   else
+                     result:=taicpu.op_ref_reg(A_VMOVDQU,S_NO,tmpref,r);
+                R_SUBMMZ:
+                   if ref.alignment>=64 then
+                     result:=taicpu.op_ref_reg(A_VMOVDQA64,S_NO,tmpref,r)
+                   else
+                     result:=taicpu.op_ref_reg(A_VMOVDQU64,S_NO,tmpref,r);
+                R_SUBMMX:
+                  result:=taicpu.op_ref_reg(A_VMOVDQU,S_NO,tmpref,r);
                 else
                   internalerror(200506043);
               end
@@ -4799,11 +4829,13 @@ implementation
                 R_SUBQ,
                 R_SUBMMWHOLE:
                   result:=taicpu.op_ref_reg(A_MOVQ,S_NO,tmpref,r);
+                R_SUBMMX:
+                  result:=taicpu.op_ref_reg(A_MOVDQA,S_NO,tmpref,r);
                 else
-                  internalerror(200506043);
+                  internalerror(2005060405);
               end;
           else
-            internalerror(200401041);
+            internalerror(2004010411);
         end;
       end;
 
@@ -4842,6 +4874,16 @@ implementation
                   result:=taicpu.op_reg_ref(A_VMOVSD,S_NO,r,tmpref);
                 R_SUBMMS:
                   result:=taicpu.op_reg_ref(A_VMOVSS,S_NO,r,tmpref);
+                R_SUBMMY:
+                   if ref.alignment>=32 then
+                     result:=taicpu.op_reg_ref(A_VMOVDQA,S_NO,r,tmpref)
+                   else
+                     result:=taicpu.op_reg_ref(A_VMOVDQU,S_NO,r,tmpref);
+                R_SUBMMZ:
+                   if ref.alignment>=64 then
+                     result:=taicpu.op_reg_ref(A_VMOVDQA64,S_NO,r,tmpref)
+                   else
+                     result:=taicpu.op_reg_ref(A_VMOVDQU64,S_NO,r,tmpref);
                 R_SUBQ,
                 R_SUBMMWHOLE:
                   result:=taicpu.op_reg_ref(A_VMOVQ,S_NO,r,tmpref);
@@ -4858,10 +4900,10 @@ implementation
                 R_SUBMMWHOLE:
                   result:=taicpu.op_reg_ref(A_MOVQ,S_NO,r,tmpref);
                 else
-                  internalerror(200506042);
+                  internalerror(2005060404);
               end;
           else
-            internalerror(200401041);
+            internalerror(2004010412);
         end;
       end;
 
@@ -4902,8 +4944,6 @@ implementation
       AsmOp: TasmOp;
       i,j: longint;
       insentry  : PInsEntry;
-      codes : pchar;
-      c     : byte;
 
       MRefInfo: TMemRefSizeInfo;
       SConstInfo: TConstSizeInfo;
@@ -5173,7 +5213,7 @@ implementation
                                  msiYMem64: RegYMMSizeMask := RegYMMSizeMask or OT_BITS256;
                                  msiZMem32,
                                  msiZMem64: RegYMMSizeMask := RegYMMSizeMask or OT_BITS512;
-                                       else InternalError(777211);
+                                       else InternalError(2020100823);
                                end;
                     OT_ZMMREG: case MRefInfo of
                                  msiXMem32,
@@ -5182,7 +5222,7 @@ implementation
                                  msiYMem64: RegZMMSizeMask := RegZMMSizeMask or OT_BITS256;
                                  msiZMem32,
                                  msiZMem64: RegZMMSizeMask := RegZMMSizeMask or OT_BITS512;
-                                       else InternalError(777211);
+                                       else InternalError(2020100824);
                                end;
 
                           //else InternalError(777209);
@@ -5349,7 +5389,7 @@ implementation
                           end;
                     else begin
                            InsTabMemRefSizeInfoCache^[AsmOp].MemRefSizeBCST := msbMultiple;
-                         end;;
+                         end;
             end;
           end;
 

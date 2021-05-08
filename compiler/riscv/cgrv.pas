@@ -92,7 +92,6 @@ unit cgrv;
 
 {$ifdef extdebug}
      function ref2string(const ref : treference) : string;
-     function cgsize2string(const size : TCgSize) : string;
      function cgop2string(const op : TOpCg) : String;
 {$endif extdebug}
 
@@ -110,35 +109,6 @@ unit cgrv;
          result := 'base : ' + inttostr(ord(ref.base)) + ' index : ' + inttostr(ord(ref.index)) + ' refaddr : ' + inttostr(ord(ref.refaddr)) + ' offset : ' + inttostr(ref.offset) + ' symbol : ';
          if (assigned(ref.symbol)) then
            result := result + ref.symbol.name;
-       end;
-
-     function cgsize2string(const size : TCgSize) : string;
-       const
-       (* TCgSize = (OS_NO,
-                  OS_8,   OS_16,   OS_32,   OS_64,   OS_128,
-                  OS_S8,  OS_S16,  OS_S32,  OS_S64,  OS_S128,
-                 { single, double, extended, comp, float128 }
-                  OS_F32, OS_F64,  OS_F80,  OS_C64,  OS_F128,
-                 { multi-media sizes: split in byte, word, dword, ... }
-                 { entities, then the signed counterparts             }
-                  OS_M8,  OS_M16,  OS_M32,  OS_M64,  OS_M128,  OS_M256,  OS_M512,
-                  OS_MS8, OS_MS16, OS_MS32, OS_MS64, OS_MS128, OS_MS256, OS_MS512,
-                 { multi-media sizes: single-precision floating-point }
-                  OS_MF32, OS_MF128, OS_MF256, OS_MF512,
-                 { multi-media sizes: double-precision floating-point }
-                  OS_MD64, OS_MD128, OS_MD256, OS_MD512); *)
-
-          cgsize_strings : array[TCgSize] of string[8] = (
-           'OS_NO',
-           'OS_8', 'OS_16', 'OS_32', 'OS_64', 'OS_128',
-           'OS_S8', 'OS_S16', 'OS_S32', 'OS_S64', 'OS_S128',
-           'OS_F32', 'OS_F64', 'OS_F80', 'OS_C64', 'OS_F128',
-           'OS_M8', 'OS_M16', 'OS_M32', 'OS_M64', 'OS_M128', 'OS_M256', 'OS_M512',
-           'OS_MS8', 'OS_MS16', 'OS_MS32', 'OS_MS64', 'OS_MS128', 'OS_MS256', 'OS_MS512',
-           'OS_MF32', 'OS_MF128', 'OS_MF256', 'OS_MF512',
-           'OS_MD64', 'OS_MD128', 'OS_MD256', 'OS_MD512');
-       begin
-         result := cgsize_strings[size];
        end;
 
      function cgop2string(const op : TOpCg) : String;
@@ -163,16 +133,24 @@ unit cgrv;
         else
           reference_reset_symbol(href,current_asmdata.WeakRefAsmSymbol(s,AT_FUNCTION),0,0,[]);
 
-        current_asmdata.getjumplabel(l);
+        if cs_create_pic in current_settings.moduleswitches then
+          begin
+            href.refaddr:=addr_plt;
+            list.concat(taicpu.op_ref(A_CALL,href));
+          end
+        else
+          begin
+            current_asmdata.getjumplabel(l);
 
-        a_label(list,l);
+            a_label(list,l);
 
-        href.refaddr:=addr_pcrel_hi20;
-        list.concat(taicpu.op_reg_ref(A_AUIPC,NR_RETURN_ADDRESS_REG,href));
+            href.refaddr:=addr_pcrel_hi20;
+            list.concat(taicpu.op_reg_ref(A_AUIPC,NR_RETURN_ADDRESS_REG,href));
 
-        reference_reset_symbol(href,l,0,0,[]);
-        href.refaddr:=addr_pcrel_lo12;
-        list.concat(taicpu.op_reg_reg_ref(A_JALR,NR_RETURN_ADDRESS_REG,NR_RETURN_ADDRESS_REG,href));
+            reference_reset_symbol(href,l,0,0,[]);
+            href.refaddr:=addr_pcrel_lo12;
+            list.concat(taicpu.op_reg_reg_ref(A_JALR,NR_RETURN_ADDRESS_REG,NR_RETURN_ADDRESS_REG,href));
+          end;
 
         { not assigned while generating external wrappers }
         if assigned(current_procinfo) then
@@ -288,6 +266,10 @@ unit cgrv;
 
 
     procedure tcgrv.a_op_reg_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister);
+      var
+        name: String;
+        pd: tprocdef;
+        paraloc1, paraloc2: tcgpara;
       begin
         if op=OP_NOT then
           begin
@@ -325,6 +307,47 @@ unit cgrv;
               end
             else
 {$endif RISCV64}
+            if (op in [OP_IMUL,OP_MUL]) and not(CPURV_HAS_MUL in cpu_capabilities[current_settings.cputype]) then
+              begin
+                case size of
+                  OS_8:
+                    name:='fpc_mul_byte';
+                  OS_S8:
+                    name:='fpc_mul_shortint';
+                  OS_16:
+                    name:='fpc_mul_word';
+                  OS_S16:
+                    name:='fpc_mul_integer';
+                  OS_32:
+                    name:='fpc_mul_dword';
+                  OS_S32:
+                    name:='fpc_mul_longint';
+                  else
+                    Internalerror(2021030601);
+                end;
+
+//                if check_overflow then
+//                  name:=name+'_checkoverflow';
+
+                pd:=search_system_proc(name);
+                paraloc1.init;
+                paraloc2.init;
+                paramanager.getcgtempparaloc(list,pd,1,paraloc1);
+                paramanager.getcgtempparaloc(list,pd,2,paraloc2);
+                a_load_reg_cgpara(list,OS_8,src1,paraloc2);
+                a_load_reg_cgpara(list,OS_8,src2,paraloc1);
+                paramanager.freecgpara(list,paraloc2);
+                paramanager.freecgpara(list,paraloc1);
+                alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+                a_call_name(list,upper(name),false);
+                dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+                cg.a_reg_alloc(list,NR_FUNCTION_RESULT_REG);
+                cg.a_load_reg_reg(list,size,size,NR_FUNCTION_RESULT_REG,dst);
+                cg.a_reg_dealloc(list,NR_FUNCTION_RESULT_REG);
+                paraloc2.done;
+                paraloc1.done;
+              end
+            else
               begin
                 list.concat(taicpu.op_reg_reg_reg(TOpCG2AsmOp[op],dst,src2,src1));
                 maybeadjustresult(list,op,size,dst);
@@ -706,20 +729,44 @@ unit cgrv;
 
         if assigned(ref.symbol) then
           begin
-            reference_reset_symbol(href,ref.symbol,ref.offset,ref.alignment,ref.volatility);
-            ref.symbol:=nil;
-            ref.offset:=0;
+            if cs_create_pic in current_settings.moduleswitches then
+              begin
+                reference_reset_symbol(href,ref.symbol,0,0,[]);
+                ref.symbol:=nil;
 
-            tmpreg:=getintregister(list,OS_INT);
+                tmpreg:=getintregister(list,OS_INT);
 
-            current_asmdata.getaddrlabel(l);
-            a_label(list,l);
+                current_asmdata.getaddrlabel(l);
+                a_label(list,l);
 
-            href.refaddr:=addr_pcrel_hi20;
-            list.concat(taicpu.op_reg_ref(A_AUIPC,tmpreg,href));
-            reference_reset_symbol(href,l,0,0,ref.volatility);
-            href.refaddr:=addr_pcrel_lo12;
-            list.concat(taicpu.op_reg_reg_ref(A_ADDI,tmpreg,tmpreg,href));
+                href.refaddr:=addr_got_pcrel_hi;
+                list.concat(taicpu.op_reg_ref(A_AUIPC,tmpreg,href));
+                reference_reset_symbol(href,l,0,0,[]);
+                href.refaddr:=addr_pcrel_lo12;
+                href.base:=tmpreg;
+{$ifdef RISCV64}
+                list.concat(taicpu.op_reg_ref(A_LD,tmpreg,href));
+{$else}
+                list.concat(taicpu.op_reg_ref(A_LW,tmpreg,href));
+{$endif}
+              end
+            else
+              begin
+                reference_reset_symbol(href,ref.symbol,ref.offset,ref.alignment,ref.volatility);
+                ref.symbol:=nil;
+                ref.offset:=0;
+
+                tmpreg:=getintregister(list,OS_INT);
+
+                current_asmdata.getaddrlabel(l);
+                a_label(list,l);
+
+                href.refaddr:=addr_pcrel_hi20;
+                list.concat(taicpu.op_reg_ref(A_AUIPC,tmpreg,href));
+                reference_reset_symbol(href,l,0,0,ref.volatility);
+                href.refaddr:=addr_pcrel_lo12;
+                list.concat(taicpu.op_reg_reg_ref(A_ADDI,tmpreg,tmpreg,href));
+              end;
 
             if (ref.index<>NR_NO) and
                (ref.base<>NR_NO) then

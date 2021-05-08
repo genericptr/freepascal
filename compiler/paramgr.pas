@@ -161,6 +161,12 @@ unit paramgr;
           function use_fixed_stack: boolean;
           { whether stack pointer can be changed in the middle of procedure }
           function use_stackalloc: boolean;
+          { Returns true for platforms where the parameters are part of the signature
+            and checked by the runtime/backend compiler (e.g. JVM, LLVM).
+            The default implementation returns false. }
+          function has_strict_proc_signature: boolean; virtual;
+          { Returns true if parasym is unused and can be optimized. }
+          function can_opt_unused_para(parasym: tparavarsym): boolean;
          strict protected
           { common part of get_funcretloc; returns true if retloc is completely
             initialized afterwards }
@@ -191,6 +197,7 @@ implementation
 
     uses
        systems,
+       globals,
        cgobj,tgobj,
        defutil,verbose,
        hlcgobj;
@@ -461,7 +468,7 @@ implementation
           paraloc^.register:=NR_FUNCTION_RESULT_REG
         else
           paraloc^.register:=NR_FUNCTION_RETURN_REG;
-        result.Temporary:=true;;
+        result.Temporary:=true;
       end;
 
 
@@ -651,6 +658,12 @@ implementation
       end;
 
 
+    function tparamanager.has_strict_proc_signature: boolean;
+      begin
+        result:=false;
+      end;
+
+
     function tparamanager.set_common_funcretloc_info(p : tabstractprocdef; forcetempdef: tdef; out retcgsize: tcgsize; out retloc: tcgpara): boolean;
       var
         paraloc : pcgparalocation;
@@ -788,6 +801,12 @@ implementation
       var
         reg : tregisterrec;
       begin
+        { Explicitly zero the whole record, to avoid
+          trouble as this record is used as is in a
+          hash calculation, which might give unreliable
+          results if the record as gaps between fields
+          due to field alignment. PM 2021-05-06 }
+        fillchar(result,sizeof(trttiparaloc),#0);
         if paraloc^.Loc=LOC_REFERENCE then
           begin
             reg:=tregisterrec(paraloc^.reference.index);
@@ -822,6 +841,28 @@ implementation
         end;
       end;
 
+
+    function tparamanager.can_opt_unused_para(parasym: tparavarsym): boolean;
+      var
+        pd: tprocdef;
+      begin
+        { The parameter can be optimized as unused when:
+            this optimization is enabled
+            this is a direct call to a routine, not a procvar
+            and the routine is not an exception filter
+            and the parameter is not used by the routine
+            and implementation of the routine is already processed.
+        }
+        result:=(cs_opt_unused_para in current_settings.optimizerswitches) and
+          assigned(parasym.Owner) and
+          (parasym.Owner.defowner.typ=procdef);
+        if not result then
+          exit;
+        pd:=tprocdef(parasym.Owner.defowner);
+        result:=(pd.proctypeoption<>potype_exceptfilter) and
+          not parasym.is_used and
+          pd.is_implemented;
+      end;
 
 initialization
   ;

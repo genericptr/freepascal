@@ -113,7 +113,7 @@ interface
       procedure queue_emit_asmsym(sym: tasmsymbol; def: tdef); override;
       procedure queue_emit_ordconst(value: int64; def: tdef); override;
 
-      class function get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; out secname: TSymStr): boolean; override;
+      class function get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; options: ttcasmlistoptions; out secname: TSymStr): boolean; override;
 
       function emit_placeholder(def: tdef): ttypedconstplaceholder; override;
 
@@ -408,7 +408,7 @@ implementation
   procedure tllvmtai_typedconstbuilder.emit_tai_procvar2procdef(p: tai; pvdef: tprocvardef);
     begin
       if not pvdef.is_addressonly then
-        pvdef:=cprocvardef.getreusableprocaddr(pvdef);
+        pvdef:=cprocvardef.getreusableprocaddr(pvdef,pc_address_only);
       emit_tai(p,pvdef);
     end;
 
@@ -469,7 +469,7 @@ implementation
       if not assigned(ll.lab) then
         begin
           if ll.ofs<>0 then
-            internalerror(2015030701);
+            internalerror(2015030703);
           inherited;
           exit;
         end;
@@ -731,7 +731,7 @@ implementation
         the procdef }
       if (fromdef.typ=procdef) and
          (todef.typ<>procdef) then
-        fromdef:=cprocvardef.getreusableprocaddr(tprocdef(fromdef));
+        fromdef:=cprocvardef.getreusableprocaddr(tprocdef(fromdef),pc_address_only);
       { typecasting a pointer-sized entity to a complex procvardef -> convert
         to the pointer-component of the complex procvardef (not always, because
         e.g. a tmethod to complex procvar initialises the entire complex
@@ -739,7 +739,7 @@ implementation
       if (todef.typ=procvardef) and
          not tprocvardef(todef).is_addressonly and
          (fromdef.size<todef.size) then
-        todef:=cprocvardef.getreusableprocaddr(tprocvardef(todef));
+        todef:=cprocvardef.getreusableprocaddr(tprocvardef(todef),pc_address_only);
       op:=llvmconvop(fromdef,todef,false);
       case op of
         la_ptrtoint_to_x,
@@ -845,7 +845,7 @@ implementation
     end;
 
 
-  class function tllvmtai_typedconstbuilder.get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; out secname: TSymStr): boolean;
+  class function tllvmtai_typedconstbuilder.get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; options: ttcasmlistoptions; out secname: TSymStr): boolean;
     begin
       result:=inherited;
       if result then

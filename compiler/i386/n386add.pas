@@ -141,7 +141,7 @@ interface
           else
             begin
               { everything should be handled in pass_1 (JM) }
-              internalerror(200109051);
+              internalerror(2001090505);
             end;
         end;
 
@@ -409,7 +409,7 @@ interface
                 end;
             end;
         else
-          internalerror(200203282);
+          internalerror(2002032803);
         end;
 
       end;
@@ -486,13 +486,13 @@ interface
         begin
           cg.getcpuregister(current_asmdata.CurrAsmList,NR_EDX);
           hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,osuinttype,right.location,NR_EDX);
-          cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_EDX);
           reglo:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
           reghi:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
           if use_ref then
             current_asmdata.CurrAsmList.concat(Taicpu.Op_ref_reg_reg(A_MULX,S_L,ref,reglo,reghi))
           else
             emit_reg_reg_reg(A_MULX,S_L,reg,reglo,reghi);
+          cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_EDX);
 
           location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
           location.register64.reglo:=reglo;
@@ -622,7 +622,7 @@ interface
       else if (hreg2<>NR_NO) then
         emit_reg_reg(A_ADD,S_L,hreg2,NR_EDX)
       else
-        InternalError(2014011604);
+        InternalError(2014011601);
 
       { Result is now in EDX:EAX. Copy it to virtual registers. }
       set_mul_result_location;

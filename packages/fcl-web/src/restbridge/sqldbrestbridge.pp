@@ -1714,7 +1714,10 @@ begin
         Conn.OnLog:=@IO.DoSQLLog;
         end;
       if (rdoHandleCORS in DispatchOptions) then
+        begin
         IO.Response.SetCustomHeader('Access-Control-Allow-Origin',ResolvedCORSAllowedOrigins(IO.Request));
+        IO.Response.SetCustomHeader('Access-Control-Allow-Credentials',BoolToStr(CORSAllowCredentials,'true','false'));
+        end;
       if not AuthenticateRequest(IO,True) then
         exit;
       if Not CheckResourceAccess(IO) then
@@ -2008,7 +2011,7 @@ begin
       IO.RestOutput.InitStreaming;
       IO.RestInput.InitStreaming;
       IO.OnSQLLog:=@Self.DoSQLLog;
-      if AuthenticateRequest(IO,False) then
+      if SameText('OPTIONS',aRequest.Method) or AuthenticateRequest(IO,False) then
         DoHandleRequest(IO)
     except
       On E : Exception do
@@ -2016,8 +2019,9 @@ begin
     end;
   Finally
     // Make sure there is a document in case of error
-    if (aResponse.ContentStream.Size=0) and Not ((aResponse.Code div 100)=2) then
-      IO.RESTOutput.CreateErrorContent(aResponse.Code,aResponse.CodeText);
+    // MVC: Disabled for the moment, we need more reliable detection of this. it adds error twice in case of exception.
+    // if (aResponse.ContentStream.Size=0) and Not ((aResponse.Code div 100)=2) then
+    //  IO.RESTOutput.CreateErrorContent(aResponse.Code,aResponse.CodeText);
     if Not ((IO.Operation in [roOptions,roHEAD]) or aResponse.ContentSent) then
       IO.RestOutput.FinalizeOutput;
     aResponse.ContentStream.Position:=0;

@@ -41,7 +41,9 @@ interface
     procedure resolve_forward_types;
 
     { reads a string, file type or a type identifier }
-    procedure single_type(var def:tdef;options:TSingleTypeOptions);
+    procedure single_type(out def:tdef;options:TSingleTypeOptions);
+    { ... but rejects types that cannot be returned from functions }
+    function result_type(options:TSingleTypeOptions):tdef;
 
     { reads any type declaration, where the resulting type will get name as type identifier }
     procedure read_named_type(var def:tdef;const newsym:tsym;genericdef:tstoreddef;genericlist:tfphashobjectlist;parseprocvardir:boolean;var hadtypetoken:boolean);
@@ -454,7 +456,7 @@ implementation
       end;
 
 
-    procedure single_type(var def:tdef;options:TSingleTypeOptions);
+    procedure single_type(out def:tdef;options:TSingleTypeOptions);
        var
          t2 : tdef;
          isspecialize,
@@ -644,6 +646,14 @@ implementation
           end;
       end;
 
+
+    function result_type(options:TSingleTypeOptions):tdef;
+      begin
+        single_type(result,options);
+        { file types cannot be function results }
+        if result.typ=filedef then
+          message(parser_e_illegal_function_result);
+      end;
 
     procedure parse_record_members(recsym:tsym);
 
@@ -982,6 +992,7 @@ implementation
          old_parse_generic: boolean;
          recst: trecordsymtable;
          hadgendummy : boolean;
+         alignment: Integer;
       begin
          old_current_structdef:=current_structdef;
          old_current_genericdef:=current_genericdef;
@@ -1053,6 +1064,14 @@ implementation
                add_typedconst_init_routine(current_structdef);
              consume(_END);
             end;
+         if (token=_ID) and (pattern='ALIGN') then
+           begin
+             consume(_ID);
+             alignment:=get_intconst.svalue;
+             if not(alignment in [1,2,4,8,16,32,64]) then
+             else
+               recst.recordalignment:=shortint(alignment);
+           end;
          { make the record size aligned (has to be done before inserting the
            parameters, because that may depend on the record's size) }
          recst.addalignmentpadding;
@@ -1316,6 +1335,7 @@ implementation
 
       procedure array_dec(is_packed:boolean;genericdef:tstoreddef;genericlist:tfphashobjectlist);
         var
+          isgeneric : boolean;
           lowval,
           highval   : TConstExprInt;
           indexdef  : tdef;
@@ -1362,6 +1382,7 @@ implementation
                   lowval:=0;
                   highval:=1;
                   indexdef:=def;
+                  isgeneric:=true;
                 end;
               else
                 Message(sym_e_error_in_type_def);
@@ -1409,6 +1430,7 @@ implementation
              begin
                 { defaults }
                 indexdef:=generrordef;
+                isgeneric:=false;
                 { use defaults which don't overflow the compiler }
                 lowval:=0;
                 highval:=0;
@@ -1424,12 +1446,15 @@ implementation
                   else
                    begin
                      pt:=expr(true);
+                     isgeneric:=false;
                      if pt.nodetype=typen then
                        setdefdecl(pt.resultdef)
                      else
                        begin
                          if pt.nodetype=rangen then
                            begin
+                             if nf_generic_para in pt.flags then
+                               isgeneric:=true;
                              { pure ordconstn expressions can be checked for
                                generics as well, but don't give an error in case
                                of parsing a generic if that isn't yet the case }
@@ -1446,7 +1471,9 @@ implementation
                                  highval:=tordconstnode(trangenode(pt).right).value;
                                  if highval<lowval then
                                   begin
-                                    Message(parser_e_array_lower_less_than_upper_bound);
+                                    { ignore error if node is generic param }
+                                    if not (nf_generic_para in pt.flags) then
+                                      Message(parser_e_array_lower_less_than_upper_bound);
                                     highval:=lowval;
                                   end
                                  else if (lowval<int64(low(asizeint))) or
@@ -1494,6 +1521,8 @@ implementation
                     end;
                   if is_packed then
                     include(arrdef.arrayoptions,ado_IsBitPacked);
+                  if isgeneric then
+                    include(arrdef.arrayoptions,ado_IsGeneric);
 
                   if token=_COMMA then
                     consume(_COMMA)
@@ -1577,7 +1606,7 @@ implementation
             if is_func then
               begin
                 consume(_COLON);
-                single_type(pd.returndef,[]);
+                pd.returndef:=result_type([stoAllowSpecialization]);
               end;
             if try_to_consume(_OF) then
               begin

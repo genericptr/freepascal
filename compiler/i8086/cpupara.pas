@@ -101,8 +101,6 @@ unit cpupara;
 
 
     function tcpuparamanager.ret_in_param(def:tdef;pd:tabstractprocdef):boolean;
-      var
-        size: longint;
       begin
         if handle_common_ret_in_param(def,pd,result) then
           exit;
@@ -120,7 +118,7 @@ unit cpupara;
     function tcpuparamanager.asm_result_var(def:tdef;pd:tabstractprocdef):boolean;
       begin
         if not(po_assembler in pd.procoptions) then
-          internalerror(2018021501);
+          internalerror(2018021502);
         result:=ret_in_param(def,pd);
       end;
 
@@ -307,7 +305,6 @@ unit cpupara;
       var
         retcgsize  : tcgsize;
         paraloc : pcgparalocation;
-        sym: tfieldvarsym;
         usedef: tdef;
         handled: boolean;
       begin
@@ -495,7 +492,7 @@ unit cpupara;
             else
               begin
                 if paralen=0 then
-                  internalerror(200501163);
+                  internalerror(2005011604);
                 firstparaloc:=true;
                 while (paralen>0) do
                   begin
@@ -691,7 +688,7 @@ unit cpupara;
                           else
                             begin
                               if paralen=0 then
-                                internalerror(200501163);
+                                internalerror(2005011605);
                               firstparaloc:=true;
                               while (paralen>0) do
                                 begin

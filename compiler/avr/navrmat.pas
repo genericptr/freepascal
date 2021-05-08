@@ -59,13 +59,13 @@ implementation
 
     procedure tavrnotnode.second_boolean;
       var
-        tmpreg,lreg : tregister;
+        tmpreg : tregister;
         i : longint;
         falselabel,truelabel,skiplabel: TAsmLabel;
       begin
+        secondpass(left);
         if not handle_locjump then
           begin
-            secondpass(left);
             { short code? }
             if (left.location.loc in [LOC_SUBSETREG,LOC_CSUBSETREG]) and
               (left.location.sreg.bitlen=1) then
@@ -110,7 +110,7 @@ implementation
                  LOC_REGISTER,LOC_CREGISTER,LOC_REFERENCE,LOC_CREFERENCE :
                    begin
                      hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,true);
-                     current_asmdata.CurrAsmList.concat(taicpu.op_reg_const(A_CPI,left.location.register,0));
+                     current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CP,GetDefaultZeroReg,left.location.register));
 
                      tmpreg:=left.location.register;
                      for i:=2 to tcgsize2size[left.location.size] do
@@ -119,7 +119,7 @@ implementation
                            tmpreg:=left.location.registerhi
                          else
                            tmpreg:=cg.GetNextReg(tmpreg);
-                         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CPC,NR_R1,tmpreg));
+                         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CPC,GetDefaultZeroReg,tmpreg));
                        end;
                      location_reset(location,LOC_FLAGS,OS_NO);
                      location.resflags:=F_EQ;
@@ -166,7 +166,7 @@ implementation
           shln: op:=OP_SHL;
           shrn: op:=OP_SHR;
           else
-            internalerror(2013120102);
+            internalerror(2013120109);
         end;
         opsize:=left.location.size;
         opdef:=left.resultdef;

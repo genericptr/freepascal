@@ -34,7 +34,7 @@ type
 
   { using packed makes the compiler to generate ugly code on some CPUs, further
     using packed causes the compiler to handle arrays of text wrongly, see  see tw0754 e.g. on arm  }
-  TextRec = {$ifdef VER2_6} packed {$endif} Record
+  TextRec = Record
     Handle    : THandle;
 {$if defined(CPU8) or defined(CPU16)}
     Mode      : Word;
@@ -57,5 +57,8 @@ type
 {$ifdef FPC_HAS_CPSTRING}
     CodePage  : TSystemCodePage;
 {$endif}
+{$ifdef FPC_HAS_FEATURE_UNICODESTRINGS}
+    FullName  : Pointer;
+{$endif FPC_HAS_FEATURE_UNICODESTRINGS}
   End;
 

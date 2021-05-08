@@ -466,7 +466,7 @@ var
 
 function AddAppIconA(Id: LongWord location 'd0'; UserData: LongWord location 'd1'; Text_: PChar location 'a0'; MsgPort: PMsgPort location 'a1'; Lock: BPTR location 'a2'; DiskObj: PDiskObject location 'a3'; const TagList: PTagItem location 'a4'): PAppIcon; syscall WorkbenchBase 060;
 function AddAppMenuItemA(Id: LongWord location 'd0'; UserData: LongWord location 'd1'; Text_: PChar location 'a0'; MsgPort: PMsgPort location 'a1'; const TagList: PTagItem location 'a2'): PAppMenuItem; syscall WorkbenchBase 072;
-function AddAppWindowA(Id: LongWord location 'd0'; UserData: LongWord location 'd1'; Window: PWindow location 'a0'; MsgPort: PMsgPort location 'a1'; const TagList: PTagItem location 'a2'): PAppWindow; syscall WorkbenchBase 042;
+function AddAppWindowA(Id: LongWord location 'd0'; UserData: LongWord location 'd1'; Window: PWindow location 'a0'; MsgPort: PMsgPort location 'a1'; const TagList: PTagItem location 'a2'): PAppWindow; syscall WorkbenchBase 048;
 function RemoveAppIcon(AppIcon: PAppIcon location 'a0'): LongBool; syscall WorkbenchBase 066;
 function RemoveAppMenuItem(AppMenuItem: PAppMenuItem location 'a0'): LongBool; syscall WorkbenchBase 078;
 function RemoveAppWindow(AppWindow: PAppWindow location 'a0'): LongBool; syscall WorkbenchBase 054;
@@ -479,6 +479,10 @@ function MakeWorkbenchObjectVisibleA(Name: STRPTR location 'a0'; const Tags: PTa
 function OpenWorkbenchObjectA(Name: STRPTR location 'a0'; const Tags: PTagItem location 'a1'): LongBool; syscall WorkbenchBase 096;
 function RemoveAppWindowDropZone(Aw: PAppWindow location 'a0'; DropZone: PAppWindowDropZone location 'a1'): LongBool; syscall WorkbenchBase 120;
 function WorkbenchControlA(Name: STRPTR location 'a0'; const Tags: PTagItem location 'a1'): LongBool; syscall WorkbenchBase 108;
+// V51
+function ManageDesktopObjectA(Name: PChar; Action: LongInt; Tags: PTagItem): Boolean; syscall BaseSysV WorkbenchBase 148;
+function CreateDrawerA(Drawer: PChar; Tags: PTagItem): Boolean; syscall BaseSysV WorkbenchBase 154;
+function CreateIconA(Name: PChar; Tags: PTagItem): Boolean; syscall BaseSysV WorkbenchBase 160;
 
 function AddAppIcon(Id: LongWord; UserData: LongWord; Text_: PChar; MsgPort: PMsgPort; Lock: BPTR; DiskObj: PDiskObject; const TagList: array of PtrUInt): PAppIcon; inline;
 function AddAppMenuItem(Id: LongWord; UserData: LongWord; Text_: PChar; MsgPort: PMsgPort; const Tags: array of PtrUInt): PAppMenuItem; inline;
@@ -490,6 +494,10 @@ function WorkbenchControl(Name: PChar; const Tags: array of PtrUInt): LongBool; 
 function AddAppWindowDropZone(Aw: PAppWindow; Id: LongWord; UserData: LongWord; const Tags: array of PtrUInt): PAppWindowDropZone; inline;
 function ChangeWorkbenchSelection(Name: STRPTR; Hook: PHook; const Tags: array of PtrUInt): LongBool; inline;
 function MakeWorkbenchObjectVisible(Name: STRPTR; const Tags: array of PtrUInt): LongBool; inline;
+// V51
+function ManageDesktopObjectTags(Name: PChar; Action: LongInt; const Tags: array of PtrUInt): Boolean; inline;
+function CreateDrawerTags(Drawer: PChar; const Tags: array of PtrUInt): Boolean; inline;
+function CreateIconTags(Name: PChar; const Tags: array of PtrUInt): Boolean; inline;
 
 implementation
 
@@ -536,6 +544,21 @@ end;
 function MakeWorkbenchObjectVisible(Name: STRPTR; const Tags: array of PtrUInt): LongBool;
 begin
   MakeWorkbenchObjectVisible := MakeWorkbenchObjectVisibleA(Name, @Tags);
+end;
+
+function ManageDesktopObjectTags(Name: PChar; Action: LongInt; const Tags: array of PtrUInt): Boolean;
+begin
+  ManageDesktopObjectTags := ManageDesktopObjectA(Name, Action, @Tags);
+end;
+
+function CreateDrawerTags(Drawer: PChar; const Tags: array of PtrUInt): Boolean;
+begin
+  CreateDrawerTags := CreateDrawerA(Drawer, @Tags);
+end;
+
+function CreateIconTags(Name: PChar; const Tags: array of PtrUInt): Boolean;
+begin
+  CreateIconTags := CreateIconA(Name, @Tags);
 end;
 
 const

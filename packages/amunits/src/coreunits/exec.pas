@@ -1074,7 +1074,7 @@ tExecBase =  Record
 { ***** V36 Exec additions start here ************************************* }
 
         ex_Pad0           : Word;
-        ex_Reserved0      : ULONG;
+        ex_LaunchPoint    : ULONG;
         ex_RamLibPrivate  : Pointer;
 
         {  The next ULONG contains the system "E" clock frequency,
@@ -1173,7 +1173,8 @@ CONST
        PAVLKEYCOMP = ^AVLKEYCOMP;
        AVLKEYCOMP = APTR;
 
-
+var
+  ExecBase: PExecBase absolute _ExecBase;
 
 PROCEDURE AbortIO(ioRequest : pIORequest location 'a1'); syscall _ExecBase 480;
 PROCEDURE AddDevice(device : pDevice location 'a1'); syscall _ExecBase 432;

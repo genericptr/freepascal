@@ -60,6 +60,10 @@ interface
  {$endif darwin}
 {$endif}
 
+{$if defined(Darwin) or defined(iphonesim)}
+  {$define dynpthreads}
+{$endif darwin}
+
 {$define basicevents_with_pthread_cond}
 
 Procedure SetCThreadManager;
@@ -116,40 +120,68 @@ Type  PINTRTLEvent = ^TINTRTLEvent;
     procedure CInitThreadvar(var offset : dword;size : dword);
       begin
         {$ifdef cpusparc}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,16);
         {$endif cpusparc}
         
         {$ifdef cpusparc64}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,16);
         {$endif cpusparc64}
 
         {$ifdef cpupowerpc}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,8);
         {$endif cpupowerc}
 
         {$ifdef cpui386}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,8);
         {$endif cpui386}
 
         {$ifdef cpuarm}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,4);
         {$endif cpuarm}
 
         {$ifdef cpum68k}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,2);
         {$endif cpum68k}
 
         {$ifdef cpux86_64}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,16);
         {$endif cpux86_64}
 
         {$ifdef cpupowerpc64}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,16);
         {$endif cpupowerpc64}
 
         {$ifdef cpuaarch64}
+        {$define threadvarblocksize_set}
         threadvarblocksize:=align(threadvarblocksize,16);
         {$endif cpuaarch64}
+
+        {$ifdef cpuriscv}
+        {$define threadvarblocksize_set}
+        threadvarblocksize:=align(threadvarblocksize,16);
+        {$endif cpuriscv}
+
+        {$ifdef cpumips}
+        {$define threadvarblocksize_set}
+        threadvarblocksize:=align(threadvarblocksize,16);
+        {$endif cpumips}
+
+        {$ifdef cpuxtensa}
+        {$define threadvarblocksize_set}
+        threadvarblocksize:=align(threadvarblocksize,16);
+        {$endif cpuxtensa}
+
+        {$ifndef threadvarblocksize_set}
+        {$error threadvarblocksize must be set! }
+        {$endif threadvarblocksize_set}
 
         offset:=threadvarblocksize;
 
@@ -357,7 +389,12 @@ Type  PINTRTLEvent = ^TINTRTLEvent;
       { Initialize multithreading if not done }
       if not TLSInitialized then
         InitCTLS;
-      IsMultiThread:=true;
+      if not IsMultiThread then
+        begin
+          { We're still running in single thread mode, lazy initialize thread support }
+           LazyInitThreading;
+           IsMultiThread:=true;
+        end;
 
       { the only way to pass data to the newly created thread
         in a MT safe way, is to use the heap }
@@ -484,6 +521,67 @@ Type  PINTRTLEvent = ^TINTRTLEvent;
   function  CGetCurrentThreadId : TThreadID;
     begin
       CGetCurrentThreadId := TThreadID (pthread_self());
+    end;
+
+
+  procedure CSetThreadDebugNameA(threadHandle: TThreadID; const ThreadName: AnsiString);
+{$if defined(Linux) or defined(Android)}
+    var
+      CuttedName: AnsiString;
+{$endif}
+    begin
+{$if defined(Linux) or defined(Android)}
+      if ThreadName = '' then
+        Exit;
+  {$ifdef dynpthreads}
+      if Assigned(pthread_setname_np) then
+  {$endif dynpthreads}
+      begin
+        // length restricted to 16 characters including terminating null byte
+        CuttedName:=Copy(ThreadName, 1, 15);
+        if threadHandle=TThreadID(-1) then
+        begin
+          pthread_setname_np(pthread_self(), @CuttedName[1]);
+        end
+        else
+        begin
+          pthread_setname_np(pthread_t(threadHandle), @CuttedName[1]);
+        end;
+      end;
+{$elseif defined(Darwin) or defined(iphonesim)}
+  {$ifdef dynpthreads}
+      if Assigned(pthread_setname_np) then
+  {$endif dynpthreads}
+      begin
+        // only allowed to set from within the thread
+        if threadHandle=TThreadID(-1) then
+          pthread_setname_np(@ThreadName[1]);
+      end;
+{$else}
+       {$Warning SetThreadDebugName needs to be implemented}
+{$endif}
+    end;
+
+
+  procedure CSetThreadDebugNameU(threadHandle: TThreadID; const ThreadName: UnicodeString);
+    begin
+{$if defined(Linux) or defined(Android)}
+  {$ifdef dynpthreads}
+      if Assigned(pthread_setname_np) then
+  {$endif dynpthreads}
+      begin
+        CSetThreadDebugNameA(threadHandle, AnsiString(ThreadName));
+      end;
+{$elseif defined(Darwin) or defined(iphonesim)}
+  {$ifdef dynpthreads}
+      if Assigned(pthread_setname_np) then
+  {$endif dynpthreads}
+      begin
+        CSetThreadDebugNameA(threadHandle, AnsiString(ThreadName));
+      end;
+{$else}
+       {$Warning SetThreadDebugName needs to be implemented}
+{$endif}
     end;
 
 
@@ -944,6 +1042,8 @@ begin
     ThreadSetPriority      :=@CThreadSetPriority;
     ThreadGetPriority      :=@CThreadGetPriority;
     GetCurrentThreadId     :=@CGetCurrentThreadId;
+    SetThreadDebugNameA    :=@CSetThreadDebugNameA;
+    SetThreadDebugNameU    :=@CSetThreadDebugNameU;
     InitCriticalSection    :=@CInitCriticalSection;
     DoneCriticalSection    :=@CDoneCriticalSection;
     EnterCriticalSection   :=@CEnterCriticalSection;

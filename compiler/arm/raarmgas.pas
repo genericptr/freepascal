@@ -151,6 +151,7 @@ Unit raarmgas;
     function tarmattreader.is_targetdirective(const s: string): boolean;
       begin
         case s of
+          '.force_thumb',
           '.thumb_func',
           '.code',
           '.thumb_set':
@@ -988,7 +989,7 @@ Unit raarmgas;
                        OPR_REFERENCE :
                          inc(oper.opr.ref.offset,l);
                        else
-                         internalerror(200309202);
+                         internalerror(2003092021);
                      end;
                    end
                end;
@@ -1464,6 +1465,11 @@ Unit raarmgas;
             begin
               consume(AS_TARGET_DIRECTIVE);
               curList.concat(tai_directive.create(asd_thumb_func,''));
+            end;
+          '.force_thumb':
+            begin
+              consume(AS_TARGET_DIRECTIVE);
+              curList.concat(tai_directive.create(asd_force_thumb,''));
             end
           else
             inherited HandleTargetDirective;

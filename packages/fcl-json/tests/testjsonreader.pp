@@ -42,6 +42,8 @@ type
 
   { TTestReader }
 
+  { TBaseTestReader }
+
   TBaseTestReader = class(TTestJSON)
   private
     FOptions : TJSONOptions;
@@ -60,6 +62,7 @@ type
     procedure TestTrue;
     procedure TestFalse;
     procedure TestFloat;
+    procedure TestFloatError;
     procedure TestInteger;
     procedure TestInt64;
     procedure TestString;
@@ -72,6 +75,8 @@ type
     procedure TestMixed;
     Procedure TestComment;
     procedure TestErrors;
+    procedure TestGarbageOK;
+    procedure TestGarbageFail;
   end;
 
   TTestReader = Class(TBaseTestReader)
@@ -299,12 +304,33 @@ begin
   DoTestFloat(0,'0.0');
 end;
 
+procedure TBaseTestReader.TestFloatError;
+begin
+  DoTestError('.12',[joStrict]);
+  DoTestError('.12E',[]);
+  DoTestError('0.12E+',[]);
+  DoTestError('.12E+-1',[]);
+end;
+
 procedure TBaseTestReader.TestString;
+
+const
+  GlowingStar = #$F0#$9F#$8C#$9F;
+  Chinese = #$95e8#$88ab#$8111#$5b50#$6324#$574f#$4e86;
+  Chinese4b = #$95e8#$d867#$de3d#$88ab#$8111#$5b50#$6324#$574f#$4e86;
 
 begin
   DoTestString('A string');
   DoTestString('');
   DoTestString('\"','"');
+  DoTestString('\u00f8','ø'); // this is ø
+  DoTestString('\u00f8\"','ø"'); // this is ø"
+  DoTestString('\ud83c\udf1f',GlowingStar);
+  DoTestString('\u0041\u0042','AB');   //issue #0038622
+  DoTestString('\u0041\u0042\u0043','ABC');
+  DoTestString('\u0041\u0042\u0043\u0044','ABCD');
+  DoTestString('\u95e8\u88ab\u8111\u5b50\u6324\u574f\u4e86',Utf8Encode(Chinese));
+  DoTestString('\u95e8\ud867\ude3d\u88ab\u8111\u5b50\u6324\u574f\u4e86',Utf8Encode(Chinese4b));   
 end;
 
 
@@ -437,6 +463,18 @@ begin
   DoTestError('[,,]');
   DoTestError('[1,,]');
 
+end;
+
+procedure TBaseTestReader.TestGarbageOK;
+begin
+  TestRead('"a"sss',['string:a']);
+  TestRead('[null]xxx',['sa','null','ea']);
+end;
+
+procedure TBaseTestReader.TestGarbageFail;
+begin
+  DoTestError('"a"sss',[joStrict]);
+  DoTestError('[null]aaa',[joStrict]);
 end;
 
 

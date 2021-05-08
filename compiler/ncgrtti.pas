@@ -133,6 +133,9 @@ implementation
                   { Skip forward defs }
                   if (oo_is_forward in tobjectdef(def).objectoptions) then
                     continue;
+                  { skip unique type aliases, they use the RTTI from the parent class }
+                  if tobjectdef(def).is_unique_objpasdef then
+                    continue;
                   write_persistent_type_info(tobjectdef(def).symtable,is_global);
                 end;
               procdef :
@@ -623,7 +626,7 @@ implementation
           begin
             sym:=tsym(fields[i]);
             write_rtti_reference(tcb,tfieldvarsym(sym).vardef,rt);
-            tcb.emit_ord_const(tfieldvarsym(sym).fieldoffset,ptruinttype);
+            tcb.emit_ord_const(tfieldvarsym(sym).fieldoffset,sizeuinttype);
           end;
         fields.free;
       end;
@@ -1385,7 +1388,7 @@ implementation
                     internalerror(201603021)
                   else
                     tcb.emit_tai(Tai_const.Createname(procdef.mangledname,AT_FUNCTION,0),
-                      cprocvardef.getreusableprocaddr(procdef));
+                      cprocvardef.getreusableprocaddr(procdef,pc_address_only));
                 end;
             end;
 
@@ -1860,7 +1863,7 @@ implementation
       end;
 
     var
-      count,i,len: word;
+      count,i: word;
       attr : trtti_attribute;
       tbltcb : ttai_typedconstbuilder;
       tbllab : tasmlabel;

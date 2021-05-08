@@ -83,7 +83,8 @@ unit cpupara;
       begin
         { d0 and d1 are considered volatile }
         Result:=VOLATILE_INTREGISTERS;
-        if target_info.system in [system_m68k_palmos] then
+        if (target_info.system in [system_m68k_palmos,system_m68k_macosclassic]) or
+           ((target_info.system in [system_m68k_atari]) and (calloption in [pocall_syscall])) then
           include(result,RS_D2);
       end;
 
@@ -92,7 +93,8 @@ unit cpupara;
       begin
         { a0 and a1 are considered volatile }
         Result:=VOLATILE_ADDRESSREGISTERS;
-        if target_info.system in [system_m68k_palmos] then
+        if (target_info.system in [system_m68k_palmos]) or
+           ((target_info.system in [system_m68k_atari]) and (calloption in [pocall_syscall])) then
           include(result,RS_A2);
       end;
 
@@ -481,10 +483,7 @@ unit cpupara;
           pass all unhandled parameters are done }
         for pass:=1 to 2 do
           begin
-            if pass=1 then
-              i:=0
-            else
-              i:=paras.count-1;
+            i:=0;
             while true do
               begin
                 hp:=tparavarsym(paras[i]);
@@ -629,22 +628,9 @@ unit cpupara;
                             end;
                         end;
                   end;
-                case pass of
-                  1:
-                    begin
-                      if i=paras.count-1 then
-                        break;
-                      inc(i);
-                    end;
-                  2:
-                    begin
-                      if i=0 then
-                        break;
-                      dec(i);
-                    end;
-                  else
-                    ;
-                end;
+                if i=paras.count-1 then
+                  break;
+                inc(i);
               end;
           end;
         result:=cur_stack_offset;
@@ -697,7 +683,7 @@ unit cpupara;
               end;
           end
         else
-          internalerror(200410231);
+          internalerror(2004102304);
         create_funcretloc_info(p,side);
       end;
 

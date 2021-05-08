@@ -53,7 +53,7 @@ unit raatt;
         AS_DB,AS_DW,AS_DD,AS_DQ,AS_GLOBAL,
         AS_ALIGN,AS_BALIGN,AS_P2ALIGN,AS_ASCII,
         AS_ASCIIZ,AS_LCOMM,AS_COMM,AS_SINGLE,AS_DOUBLE,AS_EXTENDED,AS_CEXTENDED,
-        AS_DATA,AS_TEXT,AS_INIT,AS_FINI,AS_RVA,
+        AS_DATA,AS_TEXT,AS_INIT,AS_FINI,AS_RVA,AS_DC_A,
         AS_SET,AS_WEAK,AS_SECTION,AS_END,
         {------------------ Assembler Operators  --------------------}
         AS_TYPE,AS_SIZEOF,AS_VMTOFFSET,AS_MOD,AS_SHL,AS_SHR,AS_NOT,AS_AND,AS_OR,AS_XOR,AS_NOR,AS_AT,
@@ -80,7 +80,7 @@ unit raatt;
         '.byte','.word','.long','.quad','.globl',
         '.align','.balign','.p2align','.ascii',
         '.asciz','.lcomm','.comm','.single','.double','.tfloat','.tcfloat',
-        '.data','.text','.init','.fini','.rva',
+        '.data','.text','.init','.fini','.rva','.dc.a',
         '.set','.weak','.section','END',
         'TYPE','SIZEOF','VMTOFFSET','%','<<','>>','!','&','|','^','~','@','reltype',
         'directive');
@@ -227,7 +227,7 @@ unit raatt;
               actasmpattern[len]:=c;
               { Let us point to the next character }
               c:=current_scanner.asmgetchar;
-              while c in ['A'..'Z','a'..'z','0'..'9','_','$'] do
+              while c in ['A'..'Z','a'..'z','0'..'9','_','$','.'] do
                begin
                  inc(len);
                  actasmpattern[len]:=c;
@@ -319,14 +319,14 @@ unit raatt;
            end;
 {$endif ARM}
 {$ifdef aarch64}
-           { b.cond }
+           { b.cond, ldX.arrangement }
            case c of
              '.':
                begin
                  repeat
                    actasmpattern:=actasmpattern+c;
                    c:=current_scanner.asmgetchar;
-                 until not(c in ['a'..'z','A'..'Z']);
+                 until not(c in ['a'..'z','A'..'Z','0'..'9']);
                end;
            end;
 {$endif aarch64}
@@ -346,6 +346,23 @@ unit raatt;
                end;
            end;
 {$endif riscv}
+{$ifdef xtensa}
+           {
+             Xtensa can have multiple postfixes
+             MULA.DD.LL.LDDEC
+             or postfixes with numbers
+             RSR.CCOMPARE2
+           }
+           case c of
+             '.':
+               begin
+                 repeat
+                   actasmpattern:=actasmpattern+c;
+                   c:=current_scanner.asmgetchar;
+                 until not(c in ['a'..'z','A'..'Z', '0'..'9', '.']);
+               end;
+           end;
+{$endif xtensa}
            { Opcode ? }
            If is_asmopcode(upper(actasmpattern)) then
             Begin
@@ -675,7 +692,7 @@ unit raatt;
 
              '{' :
                begin
-{$ifdef arm}
+{$if defined(arm) or defined(aarch64)}
                  // the arm assembler uses { ... } for register sets
                  // but compiler directives {$... } are still allowed
                  c:=current_scanner.asmgetchar;
@@ -686,21 +703,22 @@ unit raatt;
                      current_scanner.skipcomment(false);
                      GetToken;
                    end;
-{$else arm}
+{$else arm or aarch64}
                  current_scanner.skipcomment(true);
                  GetToken;
 {$endif arm}
                  exit;
                end;
 
-{$ifdef arm}
+{$if defined(arm) or defined(aarch64)}
              '}' :
                begin
                  actasmtoken:=AS_RSBRACKET;
                  c:=current_scanner.asmgetchar;
                  exit;
                end;
-
+{$endif arm or aarch64}
+{$ifdef arm}
              '=' :
                begin
                  actasmtoken:=AS_EQUAL;
@@ -912,7 +930,7 @@ unit raatt;
                  begin
                    if constsize<>sizeof(pint) then
                     Message(asmr_w_32bit_const_for_address);
-                   ConcatConstSymbol(curlist,asmsym,asmsymtyp,value,constsize,true)
+                   ConcatConstSymbol(curlist,asmsym,'',asmsymtyp,value,constsize,true)
                  end
                 else
                  ConcatConstant(curlist,value,constsize);
@@ -1058,6 +1076,7 @@ unit raatt;
        section    : tai_section;
        secflags   : TSectionFlags;
        secprogbits : TSectionProgbits;
+       i: Integer;
      Begin
        Message1(asmr_d_start_reading,'GNU AS');
        firsttoken:=TRUE;
@@ -1143,6 +1162,12 @@ unit raatt;
              Begin
                Consume(AS_DD);
                BuildConstant(4);
+             end;
+
+           AS_DC_A:
+             Begin
+               Consume(AS_DC_A);
+               BuildConstant(sizeof(aint));
              end;
 
            AS_DQ:
@@ -1324,18 +1349,17 @@ unit raatt;
                    Consume(AS_COMMA);
                    if actasmtoken=AS_STRING then
                      begin
-                       case actasmpattern of
-                         'a':
-                           Include(secflags,SF_A);
-                         'w':
-                           Include(secflags,SF_W);
-                         'x':
-                           Include(secflags,SF_X);
-                         '':
-                           ;
-                         else
-                           Message(asmr_e_syntax_error);
-                       end;
+                       for i:=1 to length(actasmpattern) do
+                         case actasmpattern[i] of
+                           'a':
+                             Include(secflags,SF_A);
+                           'w':
+                             Include(secflags,SF_W);
+                           'x':
+                             Include(secflags,SF_X);
+                           else
+                             Message(asmr_e_syntax_error);
+                         end;
                        Consume(AS_STRING);
                        if actasmtoken=AS_COMMA then
                          begin
@@ -1570,6 +1594,11 @@ unit raatt;
                  4 :
                   l:=ord(actasmpattern[4]) + ord(actasmpattern[3]) shl 8 +
                      Ord(actasmpattern[2]) shl 16 + ord(actasmpattern[1]) shl 24;
+                 8 :
+                  begin
+                    move(actasmpattern[1],l,8);
+                    l:=SwapEndian(l);
+                  end;
                 else
                   Message1(asmr_e_invalid_string_as_opcode_operand,actasmpattern);
                 end;

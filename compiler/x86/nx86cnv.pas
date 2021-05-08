@@ -72,11 +72,6 @@ implementation
     function tx86typeconvnode.first_real_to_real : tnode;
       begin
          first_real_to_real:=nil;
-        { comp isn't a floating type }
-         if (tfloatdef(resultdef).floattype=s64comp) and
-            (tfloatdef(left.resultdef).floattype<>s64comp) and
-            not (nf_explicit in flags) then
-           CGMessage(type_w_convert_real_2_comp);
          if use_vectorfpu(resultdef) then
            expectloc:=LOC_MMREGISTER
          else
@@ -262,7 +257,10 @@ implementation
           hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,false);
         if use_vectorfpu(resultdef) and
 {$ifdef cpu64bitalu}
-           (torddef(left.resultdef).ordtype in [s32bit,s64bit]) then
+           ((torddef(left.resultdef).ordtype in [s32bit,s64bit]) or
+            ((torddef(left.resultdef).ordtype in [u32bit,u64bit]) and
+             (FPUX86_HAS_AVX512F in fpu_capabilities[current_settings.fputype]))
+           ) then
 {$else cpu64bitalu}
            (torddef(left.resultdef).ordtype=s32bit) then
 {$endif cpu64bitalu}
@@ -272,29 +270,41 @@ implementation
             if UseAVX then
               case location.size of
                 OS_F32:
-                  op:=A_VCVTSI2SS;
+                  if is_signed(left.resultdef) then
+                    op:=A_VCVTSI2SS
+                  else
+                    op:=A_VCVTUSI2SS;
                 OS_F64:
-                  op:=A_VCVTSI2SD;
+                  if is_signed(left.resultdef) then
+                    op:=A_VCVTSI2SD
+                  else
+                    op:=A_VCVTUSI2SD;
                 else
                   internalerror(2007120902);
               end
             else
-              case location.size of
-                OS_F32:
-                  op:=A_CVTSI2SS;
-                OS_F64:
-                  op:=A_CVTSI2SD;
-                else
-                  internalerror(2007120902);
+              begin
+                { do not use is_signed here as it checks the boundaries instead
+                  of the ordtype }
+                if not(torddef(left.resultdef).ordtype in [s32bit,s64bit]) then
+                  Internalerror(2020101001);
+                case location.size of
+                  OS_F32:
+                    op:=A_CVTSI2SS;
+                  OS_F64:
+                    op:=A_CVTSI2SD;
+                  else
+                    internalerror(2007120904);
+                end;
               end;
 
             { don't use left.location.size, because that one may be OS_32/OS_64
               if the lower bound of the orddef >= 0
             }
             case torddef(left.resultdef).ordtype of
-              s32bit:
+              s32bit,u32bit:
                 opsize:=S_L;
-              s64bit:
+              s64bit,u64bit:
                 opsize:=S_Q;
               else
                 internalerror(2007120903);

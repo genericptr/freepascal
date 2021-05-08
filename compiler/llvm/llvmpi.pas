@@ -88,6 +88,8 @@ implementation
 
       class procedure tllvmexceptionstatehandler.get_exception_temps(list: TAsmList; var t: texceptiontemps);
         begin
+          if not assigned(exceptionreasontype) then
+            exceptionreasontype:=ossinttype;
           tg.gethltemp(list,ossinttype,ossinttype.size,tt_persistent,t.reasonbuf);
         end;
 
@@ -408,7 +410,7 @@ implementation
       begin
         result:=TAsmLabel(fexceptlabelstack.last);
         if not assigned(result) then
-          internalerror(2016121703);
+          internalerror(2016121706);
       end;
 
 

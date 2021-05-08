@@ -449,7 +449,7 @@ implementation
         errdef: tdef;
       begin
         if not jvmtryencodetype(def,result,false,errdef) then
-          internalerror(2011012205);
+          internalerror(2011012201);
         primitivetype:=false;
         if length(result)=1 then
           begin
@@ -463,7 +463,7 @@ implementation
               'F': result:='float';
               'D': result:='double';
               else
-                internalerror(2011012206);
+                internalerror(2011012203);
               end;
             primitivetype:=true;
           end
@@ -517,7 +517,8 @@ implementation
             result:=(tarraydef(def).highrange>=tarraydef(def).lowrange) or
                 is_open_array(def) or
                 is_array_of_const(def) or
-                is_array_constructor(def);
+                is_array_constructor(def) or
+                is_conststring_array(def);
           filedef,
           recorddef,
           setdef:

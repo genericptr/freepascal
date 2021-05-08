@@ -39,8 +39,6 @@ unit aoptcpu;
         function PeepHoleOptPass1Cpu(var p: tai): boolean; override;
         function PeepHoleOptPass2Cpu(var p: tai): boolean; override;
         function PostPeepHoleOptsCpu(var p : tai) : boolean; override;
-
-        procedure PostPeepHoleOpts; override;
       end;
 
     Var
@@ -129,9 +127,7 @@ unit aoptcpu;
 
     function TCPUAsmOPtimizer.PeepHoleOptPass1Cpu(var p: tai): boolean;
       var
-        hp1,hp2 : tai;
-        hp3,hp4: tai;
-        v:aint;
+        hp1 : tai;
       begin
         result:=False;
         case p.Typ Of
@@ -141,10 +137,24 @@ unit aoptcpu;
               if InsContainsSegRef(taicpu(p)) then
                 exit;
               case taicpu(p).opcode Of
+                A_ADD:
+                  Result:=OptPass1ADD(p);
                 A_AND:
                   Result:=OptPass1And(p);
+                A_IMUL:
+                  Result:=OptPass1Imul(p);
                 A_CMP:
                   Result:=OptPass1Cmp(p);
+                A_VPXORD,
+                A_VPXORQ,
+                A_VXORPS,
+                A_VXORPD,
+                A_VPXOR:
+                  Result:=OptPass1VPXor(p);
+                A_XORPS,
+                A_XORPD,
+                A_PXOR:
+                  Result:=OptPass1PXor(p);
                 A_FLD:
                   Result:=OptPass1FLD(p);
                 A_FSTP,A_FISTP:
@@ -197,9 +207,7 @@ unit aoptcpu;
                 A_VANDPD,
                 A_VANDPS,
                 A_VORPD,
-                A_VORPS,
-                A_VXORPD,
-                A_VXORPS:
+                A_VORPS:
                   Result:=OptPass1VOP(p);
                 A_MULSD,
                 A_MULSS,
@@ -232,6 +240,8 @@ unit aoptcpu;
               if InsContainsSegRef(taicpu(p)) then
                 exit;
               case taicpu(p).opcode Of
+                A_ADD:
+                  Result:=OptPass2ADD(p);
                 A_Jcc:
                   Result:=OptPass2Jcc(p);
                 A_Lea:
@@ -244,6 +254,10 @@ unit aoptcpu;
                   Result:=OptPass2Jmp(p);
                 A_MOV:
                   Result:=OptPass2MOV(p);
+                A_MOVZX:
+                  Result:=OptPass2Movx(p);
+                A_SUB:
+                  Result:=OptPass2SUB(p);
                 else
                   ;
               end;
@@ -278,7 +292,9 @@ unit aoptcpu;
                   {   "cmpl $3,%eax; movzbl 8(%ebp),%ebx; je .Lxxx"           }
                   { so we can't safely replace the movzx then with xor/mov,   }
                   { since that would change the flags (JM)                    }
-                  if not(cs_opt_regvar in current_settings.optimizerswitches) then
+                  if PostPeepholeOptMovzx(p) then
+                    Result := True
+                  else if not(cs_opt_regvar in current_settings.optimizerswitches) then
                     begin
                       if (taicpu(p).oper[1]^.typ = top_reg) then
                         if (taicpu(p).oper[0]^.typ = top_reg)
@@ -299,6 +315,7 @@ unit aoptcpu;
                                       taicpu(p).opcode := A_MOV;
                                       taicpu(p).changeopsize(S_B);
                                       setsubreg(taicpu(p).oper[1]^.reg,R_SUBL);
+                                      Result := True;
                                     end;
                                 end;
                               else
@@ -320,24 +337,29 @@ unit aoptcpu;
                               taicpu(p).changeopsize(S_B);
                               setsubreg(taicpu(p).oper[1]^.reg,R_SUBL);
                               InsertLLItem(p.previous, p, hp1);
+                              Result := True;
                             end;
                    end;
                 A_TEST, A_OR:
                   Result:=PostPeepholeOptTestOr(p);
+                A_AND:
+                  Result:=PostPeepholeOptAnd(p);
+                A_MOVSX:
+                  Result:=PostPeepholeOptMOVSX(p);
+                A_SHR:
+                  Result:=PostPeepholeOptShr(p);
                 else
                   ;
               end;
+
+              { Optimise any reference-type operands (if Result is True, the
+                instruction will be checked on the next iteration) }
+              if not Result then
+                OptimizeRefs(taicpu(p));
             end;
           else
             ;
         end;
-      end;
-
-
-    procedure TCpuAsmOptimizer.PostPeepHoleOpts;
-      begin
-        inherited;
-        OptReferences;
       end;
 
 

@@ -22,7 +22,7 @@ unit fpreport;
 // Global debugging
 { $define gdebug}
 // Separate for aggregate variables
-{$define gdebuga}
+{ $define gdebuga}
 
 interface
 
@@ -246,6 +246,8 @@ const
        bmOncePerDataloop,bmUnrestricted,bmOncePerDataloop,bmUnrestricted,
        bmOncePerDataloop,bmOncePerPage,bmOncePerPage,bmOncePerPage,
        bmUnrestricted);
+
+  DefaultImageType = 'png';
 
 const
   cMMperInch = 25.4;
@@ -1676,6 +1678,7 @@ type
     Procedure SaveDataToNames;
     Procedure RestoreDataFromNames;
     procedure WriteElement(AWriter: TFPReportStreamer; AOriginal: TFPReportElement = nil); override;
+    procedure WriteRTElement(AWriter: TFPReportStreamer; AOriginal: TFPReportElement = nil);
     procedure ReadElement(AReader: TFPReportStreamer); override;
     procedure AddPage(APage: TFPReportCustomPage);
     procedure RemovePage(APage: TFPReportCustomPage);
@@ -2089,10 +2092,12 @@ type
     FImage: TFPCustomImage;
     FStretched: boolean;
     FFieldName: TFPReportString;
+    FDBImageType : TFPReportString;
     FImageID: integer;
     procedure   SetImage(AValue: TFPCustomImage);
     procedure   SetStretched(AValue: boolean);
-    procedure   SetFieldName(AValue: TFPReportString);
+    procedure   SetFieldName(AValue: TFPReportString); 
+    procedure   SetDBImageType(AValue: TFPReportString);
     procedure   LoadDBData(AData: TFPReportData);
     procedure   SetImageID(AValue: integer);
     function    GetImage: TFPCustomImage;
@@ -2104,6 +2109,7 @@ type
     property    ImageID: integer read FImageID write SetImageID;
     property    Stretched: boolean read FStretched write SetStretched;
     property    FieldName: TFPReportString read FFieldName write SetFieldName;
+    property    DBImageType : TFPReportString read FDBImageType write SetDBImageType;
   public
     constructor Create(AOwner: TComponent); override;
     destructor  Destroy; override;
@@ -2125,6 +2131,7 @@ type
     property    ImageID;
     property    Stretched;
     property    FieldName;
+    property    DBImageType;
     property    OnBeforePrint;
   end;
 
@@ -2343,11 +2350,14 @@ Function ReportExportManager : TFPReportExportManager;
 { this should probably be more configurable or flexible per platform }
 
 Const
+
+  { Note, these are the postscript names, not the human-readable ones. }
+
 {$IFDEF UNIX}
   cDefaultFont = 'LiberationSans';
 {$ELSE}
 {$IFDEF WINDOWS}
-  cDefaultFont = 'Arial';
+  cDefaultFont = 'ArialMT';
 {$ELSE}
   cDefaultFont = 'Helvetica';
 {$ENDIF}
@@ -3302,9 +3312,9 @@ begin
   if (aNode is TFPExprVariable) then
     begin
     DS:=ExtractWord(1,TFPExprVariable(ANode).Identifier.Name,['.']);
-    If AData.FindReportData(DS)<>Nil then
+      If AData.FindReportData(DS)<>Nil then
       FDataName:=DS;
-    end
+      end
   else if (ANode is TFPExprFunction) then
     begin
     I:=0;
@@ -3509,11 +3519,7 @@ begin
   if Not SameText(aData.Name,FDataName) then
     exit;
   If not IsFirstPass then
-    begin
-    FLastValue.ResultType:=rtFloat;
-    FLastValue.ResFloat:=0;
     exit;
-    end;
   if (FResetValue=#0) then
     begin
     FResetValue:=#255;
@@ -3620,8 +3626,8 @@ begin
         inc(FAggregateValuesIndex);
         end;
       FResetValue:=lResetValue;
-      FAggregateValue:=PFPExpressionResult(FAggregateValues[FAggregateValuesIndex])^;
       FLastValue:=FAggregateValue;
+      FAggregateValue:=PFPExpressionResult(FAggregateValues[FAggregateValuesIndex])^;
       end
     else
       begin
@@ -3640,7 +3646,7 @@ begin
     begin
     WriteString('Name',Self.Name);
     WriteString('DataType',ResultTypeName(DataType));
-    WriteString('Value',Value);
+//    WriteString('Value',Value);
     WriteString('Expression',Expression);
     WriteString('ResetValueExpression',ResetValueExpression);
     WriteString('ResetType',GetEnumName(TypeInfo(TFPReportResetType),Ord(ResetType)));
@@ -3665,7 +3671,7 @@ begin
       DataType:=rtString
     else
       DataType:=TResultType(I);
-    Value:=ReadString('Value','');
+//    Value:=ReadString('Value','');
     Expression:=ReadString('Expression','');
     ResetValueExpression:=ReadString('ResetValueExpression','');
     S:=ReadString('ResetType','');
@@ -5134,6 +5140,7 @@ begin
   FUseParentFont := True;
   FFont := TFPReportFont.Create;
   FFont.OnChanged:=@HandleFontChange;
+  ReassignParentFont;
   FCullThreshold := 75;
 end;
 
@@ -5330,16 +5337,55 @@ begin
   Changed;
 end;
 
+procedure TFPReportCustomImage.SetDBImageType(AValue: TFPReportString);
+begin
+  if FDBImageType = AValue then
+    exit;
+  FDBImageType := AValue;
+  Changed;
+end;
+
+function TryVarByteArrayToStream(var AValue : Variant; Stream : TMemoryStream) : boolean;
+var
+  p : Pointer;
+  c : Integer;
+begin
+  Result := False;
+  if not VarIsArray(AValue) then
+    exit;
+  c := VarArrayHighBound(AValue,1) - VarArrayLowBound(AValue,1) + 1;
+  Result := (c > 0) and VarIsType(AValue[VarArrayLowBound(AValue,1)],varByte);
+  if not Result then
+    exit;
+  p := VarArrayLock(AValue);
+  try
+    Stream.SetSize(c);
+    Move(p^,Stream.Memory^,c);
+  finally
+    VarArrayUnlock(AValue);
+  end;
+end;
+
 procedure TFPReportCustomImage.LoadDBData(AData: TFPReportData);
 var
+  v : Variant;
   s: string;
   lStream: TMemoryStream;
+  irc : TFPCustomImageReaderClass;
 begin
-  s := AData.FieldValues[FFieldName];
+  v := AData.FieldValues[FFieldName];
   lStream := TMemoryStream.Create;
   try
-    FPReportMIMEEncodeStringToStream(s, lStream);
-    LoadPNGFromStream(lStream)
+    if not TryVarByteArrayToStream(v,lStream) then
+    begin
+      s := v;
+      FPReportMIMEEncodeStringToStream(s, lStream);
+    end;
+    s := Trim(DBImageType);
+    if (s = '') then
+      s := DefaultImageType;
+    irc := TFPCustomImage.FindReaderFromExtension(s);
+    LoadFromStream(lStream,irc);
   finally
     lStream.Free;
   end;
@@ -5388,7 +5434,8 @@ begin
   idx := TFPReportCustomBand(Parent).Page.Report.Images.GetIndexFromID(ImageID);
   AWriter.WriteInteger('ImageIndex', idx);
   AWriter.WriteBoolean('Stretched', Stretched);
-  AWriter.WriteString('FieldName', FieldName);
+  AWriter.WriteString('FieldName', FieldName);  
+  AWriter.WriteString('DBImageType', DBImageType);
 end;
 
 procedure TFPReportCustomImage.RecalcLayout;
@@ -5401,15 +5448,25 @@ function TFPReportCustomImage.PrepareObject(aRTParent: TFPReportElement): TFPRep
 Var
   Img : TFPReportCustomImage;
   B : TFPReportCustomBand;
+  D : TFPReportData;
 
 begin
   Result:=inherited PrepareObject(aRTParent);
   if Result=Nil then
     exit;
   img := TFPReportCustomImage(Result);
-  B:=artParent as TFPReportCustomBand;
-  if (img.FieldName <> '') and Assigned(B.GetData) then
-    img.LoadDBData(B.GetData);
+  if Assigned(Band) then
+    B := Band
+  else
+    B := artParent as TFPReportCustomBand;
+  if (img.FieldName <> '') then
+  begin
+    D := B.GetData;
+    if not(Assigned(D)) and Assigned(B.Page.Data) then
+      D := B.Page.Data;
+    if Assigned(D) then
+      img.LoadDBData(D);
+  end;
 end;
 
 constructor TFPReportCustomImage.Create(AOwner: TComponent);
@@ -5418,6 +5475,7 @@ begin
   FImage := nil;
   FStretched := False;
   FImageID := -1;
+  FDBImageType := DefaultImageType;
 end;
 
 destructor TFPReportCustomImage.Destroy;
@@ -5457,6 +5515,7 @@ begin
     end;
     FStretched := i.Stretched;
     FFieldName := i.FieldName;
+    FDBImageType := i.DBImageType;
     FImageID := i.ImageID;
   end;
 end;
@@ -5467,7 +5526,8 @@ begin
   { See code comments in DoWriteLocalProperties() }
   ImageID := AReader.ReadInteger('ImageIndex', -1);
   Stretched := AReader.ReadBoolean('Stretched', Stretched);
-  FieldName := AReader.ReadString('FieldName', FieldName);
+  FieldName := AReader.ReadString('FieldName', FieldName);  
+  DBImageType := AReader.ReadString('DBImageType', DBImageType);
 end;
 
 procedure TFPReportCustomImage.LoadFromFile(const AFileName: string);
@@ -7730,6 +7790,7 @@ begin
     Report := E.Report;
     Font.Assign(E.Font);
     ColumnCount := E.ColumnCount;
+    ColumnGap := E.ColumnGap;
   end;
   inherited Assign(Source);
 end;
@@ -8721,6 +8782,39 @@ begin
   // TODO: Implement writing OnRenderReport, OnBeginReport, OnEndReport
 end;
 
+procedure TFPCustomReport.WriteRTElement(AWriter: TFPReportStreamer; AOriginal: TFPReportElement);
+var
+  i: integer;
+begin
+  // ignore AOriginal here as we don't support whole report diffs, only element diffs
+  AWriter.PushElement('Report');
+  try
+    inherited WriteElement(AWriter, AOriginal);
+    // local properties
+    AWriter.WriteString('Title', Title);
+    AWriter.WriteString('Author', Author);
+    AWriter.WriteBoolean('TwoPass',TwoPass);
+    AWriter.WriteDateTime('DateCreated', DateCreated);
+    // now the pages
+    AWriter.PushElement('Pages');
+    try
+      for i := 0 to RTObjects.Count - 1 do
+      begin
+        AWriter.PushElement(IntToStr(i)); // use page index as identifier
+        try
+          TFPReportComponent(RTObjects[i]).WriteElement(AWriter);
+        finally
+          AWriter.PopElement;
+        end;
+      end;
+    finally
+      AWriter.PopElement;
+    end;
+  finally
+    AWriter.PopElement;
+  end;
+end;
+
 procedure TFPCustomReport.ReadElement(AReader: TFPReportStreamer);
 var
   E: TObject;
@@ -8924,6 +9018,7 @@ end;
 procedure TFPCustomReport.RunReport;
 begin
   DoBeginReport;
+  ClearPreparedReport;
   StartLayout;
   CollectReportData;
   Validate;
@@ -9436,6 +9531,7 @@ begin
   FBandPosition := bpNormal;
   FFont:=TFPReportFont.Create;
   FFont.OnChanged:=@HandleFontChange;
+  ReassignParentFont;
 end;
 
 destructor TFPReportCustomBand.Destroy;
@@ -11892,12 +11988,11 @@ begin
         {$endif}
         // DumpData(lData);
         PrepareRecord(lData);
+        Report.UpdateAggregates(lPage,lData);
         if FNewPage then
           StartNewPage;
         ShowDataHeaderBand;
         HandleGroupBands;
-        // This must be done after the groups were handled.
-        Report.UpdateAggregates(lPage,lData);
         ShowDataBand;
         lData.Next;
         end;  { while not lData.EOF }
@@ -12093,12 +12188,11 @@ begin
         {$endif}
         // DumpData(aPageData);
         PrepareRecord(aData);
+        Report.UpdateAggregates(aPage,aData);
         if FNewPage then
           StartNewPage;
         ShowDataHeaderBand;
         HandleGroupBands;
-        // This must be done after the groups were handled.
-        Report.UpdateAggregates(aPage,aData);
         ShowDataBand;
         aData.Next;
         end;
@@ -12248,7 +12342,7 @@ begin
       if CurrentLoop.FGroupHeaderList.Count > 0 then
       begin
         { when data band overflows use start with lowest gropup header }
-        if aBand is TFPReportCustomDataBand and
+        if (aBand is TFPReportCustomDataBand) and
         not Assigned(TFPReportCustomDataBand(aband).MasterBand) then
           lToMoveGrp := TFPReportCustomGroupHeaderBand(CurrentLoop.FGroupHeaderList[0])
         { when group header overflows use start with parent group header }

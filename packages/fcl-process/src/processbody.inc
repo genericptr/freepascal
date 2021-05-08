@@ -48,10 +48,6 @@ Type
     FProcessOptions : TProcessOptions;
     FRunCommandSleepTime: Integer;
     FStartupOptions : TStartupOptions;
-    FProcessID : Integer;
-    FThreadID : Integer;
-    FProcessHandle : Thandle;
-    FThreadHandle : Thandle;
     FFillAttribute : Cardinal;
     FApplicationName : TProcessString;
     FConsoleTitle : TProcessString;
@@ -103,6 +99,10 @@ Type
     FInputStream  : TOutputPipeStream;
     FOutputStream : TInputPipeStream;
     FStderrStream : TInputPipeStream;
+    FProcessID : Integer;
+    FThreadID : Integer;
+    FProcessHandle : Thandle;
+    FThreadHandle : Thandle;
     procedure CloseProcessHandles; virtual;
     Procedure CreateStreams(InHandle,OutHandle,ErrHandle : Longint);virtual;
     procedure FreeStream(var AStream: THandleStream);
@@ -492,7 +492,7 @@ begin
       begin
         if (BytesRead + available > DataLength) then
           begin
-            DataLength:=BytesRead + READ_BYTES;
+            DataLength:=BytesRead + max(READ_BYTES,available);
             Setlength(Data,DataLength);
           end;
         NumBytes := p.Read(data[1+BytesRead], Available);
@@ -562,7 +562,7 @@ begin
         if assigned(stderr) then
             gotoutputstderr:=ReadInputStream(StdErr,StdErrBytesRead,StdErrLength,StdErrString,1);
  
-        if not gotoutput and not gotoutputstderr and Assigned(FOnRunCommandEvent) Then
+        if (porunidle in options) and not gotoutput and not gotoutputstderr and Assigned(FOnRunCommandEvent) Then
           FOnRunCommandEvent(self,Nil,RunCommandIdle,'');
       end;
     // Get left output after end of execution

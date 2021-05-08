@@ -67,7 +67,7 @@ interface
        private
           { number of parameters passed from the source, this does not include the hidden parameters }
           paralength   : smallint;
-          function getforcedprocname: TSymStr;
+          function getoverrideprocnamedef: tprocdef; inline;
           function  is_simple_para_load(p:tnode; may_be_in_reg: boolean):boolean;
           procedure maybe_load_in_temp(var p:tnode);
           function  gen_high_tree(var p:tnode;paradef:tdef):tnode;
@@ -90,8 +90,10 @@ interface
           function  pass1_normal:tnode;
           procedure register_created_object_types;
           function get_expect_loc: tcgloc;
+
        protected
           function safe_call_self_node: tnode;
+          procedure load_in_temp(var p:tnode);
           procedure gen_vmt_entry_load; virtual;
           procedure gen_syscall_para(para: tcallparanode); virtual;
           procedure objc_convert_to_message_send;virtual;
@@ -123,12 +125,8 @@ interface
             to ppu, is set while processing the node). Also used on the JVM
             target for calling virtual methods, as this is name-based and not
             based on VMT entry locations }
-{$ifdef symansistr}
-          fforcedprocname: TSymStr;
-{$else symansistr}
-          fforcedprocname: pshortstring;
-{$endif symansistr}
-          property forcedprocname: TSymStr read getforcedprocname;
+          foverrideprocnamedef: tprocdef;
+          property overrideprocnamedef: tprocdef read getoverrideprocnamedef;
        public
           { the symbol containing the definition of the procedure }
           { to call                                               }
@@ -231,17 +229,17 @@ interface
           fcontains_stack_tainting_call_cached,
           ffollowed_by_stack_tainting_call_cached : boolean;
        protected
-          { in case of copy-out parameters: initialization code, and the code to
-            copy back the parameter value after the call (including any required
-            finalization code }
-          fparainit,
-          fparacopyback: tnode;
           procedure handlemanagedbyrefpara(orgparadef: tdef);virtual;
           { on some targets, value parameters that are passed by reference must
             be copied to a temp location by the caller (and then a reference to
             this temp location must be passed) }
           procedure copy_value_by_ref_para;
        public
+          { in case of copy-out parameters: initialization code, and the code to
+            copy back the parameter value after the call (including any required
+            finalization code) }
+          fparainit,
+          fparacopyback: tnode;
           callparaflags : tcallparaflags;
           parasym       : tparavarsym;
           { only the processor specific nodes need to override this }
@@ -579,7 +577,9 @@ implementation
 
         if variantdispatch then
           begin
-            tcb.emit_pchar_const(pchar(methodname),length(methodname),true);
+            { length-1, because the following names variable *always* starts
+              with #0 which will be the terminator for methodname }
+            tcb.emit_pchar_const(pchar(methodname),length(methodname)-1,true);
             { length-1 because we added a null terminator to the string itself
               already }
             tcb.emit_pchar_const(pchar(names),length(names)-1,true);
@@ -733,7 +733,6 @@ implementation
     procedure tcallparanode.copy_value_by_ref_para;
       var
         initstat,
-        copybackstat,
         finistat: tstatementnode;
         finiblock: tblocknode;
         paratemp: ttempcreatenode;
@@ -747,13 +746,15 @@ implementation
           to be copied by the caller. It's basically the node-level equivalent
           of thlcgobj.g_copyvalueparas }
 
+        if assigned(fparainit) then
+          exit;
+
         { in case of an array constructor, we don't need a copy since the array
           constructor itself is already constructed on the fly (and hence if
           it's modified by the caller, that's no problem) }
         if not is_array_constructor(left.resultdef) then
           begin
             fparainit:=internalstatements(initstat);
-            fparacopyback:=internalstatements(copybackstat);
             finiblock:=internalstatements(finistat);
             paratemp:=nil;
 
@@ -929,11 +930,12 @@ implementation
                   reused above) }
                 left:=ctemprefnode.create(paratemp);
               end;
+            { add the finish statements to the call cleanup block }
             addstatement(finistat,ctempdeletenode.create(paratemp));
-            addstatement(copybackstat,finiblock);
+            aktcallnode.add_done_statement(finiblock);
+
             firstpass(fparainit);
             firstpass(left);
-            firstpass(fparacopyback);
           end;
       end;
 
@@ -1195,6 +1197,13 @@ implementation
                     (parasym.vardef.typ=setdef) then
                    inserttypeconv(left,parasym.vardef);
 
+                 { if an array constructor can be a set and it is passed to
+                   a formaldef, a set must be passed, see also issue #37796 }
+                 if (left.nodetype=arrayconstructorn) and
+                    (parasym.vardef.typ=formaldef) and
+                    (arrayconstructor_can_be_set(left)) then
+                   left:=arrayconstructor_to_set(left,false);
+
                  { set some settings needed for arrayconstructor }
                  if is_array_constructor(left.resultdef) then
                   begin
@@ -1360,6 +1369,16 @@ implementation
                  if parasym.varspez in [vs_var,vs_out,vs_constref] then
                    set_unique(left);
 
+                 if (parasym.varspez=vs_const) and (parasym.vardef.typ=formaldef) then
+                   begin
+                     { compilerprocs never capture the address of their
+                       parameters }
+                     if not(po_compilerproc in aktcallnode.procdefinition.procoptions) then
+                       make_not_regable(left,[ra_addr_regable,ra_addr_taken])
+                     else
+                       make_not_regable(left,[ra_addr_regable])
+                   end
+                 else
                   case parasym.varspez of
                     vs_out :
                       begin
@@ -1464,8 +1483,38 @@ implementation
 
 
     procedure tcallparanode.printnodetree(var t:text);
+      var
+        hp: tbinarynode;
       begin
-        printnodelist(t);
+        hp:=self;
+        while assigned(hp) do
+         begin
+           write(t,printnodeindention,'(');
+           printnodeindent;
+           hp.printnodeinfo(t);
+           writeln(t);
+           if assigned(tcallparanode(hp).fparainit) then
+             begin
+               writeln(t,printnodeindention,'(parainit =');
+               printnodeindent;
+               printnode(t,tcallparanode(hp).fparainit);
+               printnodeunindent;
+               writeln(t,printnodeindention,')');
+             end;
+           if assigned(tcallparanode(hp).fparacopyback) then
+             begin
+               writeln(t,printnodeindention,'(fparacopyback =');
+               printnodeindent;
+               printnode(t,tcallparanode(hp).fparacopyback);
+               printnodeunindent;
+               writeln(t,printnodeindention,')');
+             end;
+           printnode(t,hp.left);
+           writeln(t);
+           printnodeunindent;
+           writeln(t,printnodeindention,')');
+           hp:=tbinarynode(hp.right);
+         end;
       end;
 
 
@@ -1635,9 +1684,6 @@ implementation
          call_vmt_node.free;
          vmt_entry.free;
          spezcontext.free;
-{$ifndef symansistr}
-         stringdispose(fforcedprocname);
-{$endif symansistr}
          inherited destroy;
       end;
 
@@ -1823,14 +1869,7 @@ implementation
          end
         else
          n.varargsparas:=nil;
-{$ifdef symansistr}
-        n.fforcedprocname:=fforcedprocname;
-{$else symansistr}
-        if assigned(fforcedprocname) then
-          n.fforcedprocname:=stringdup(fforcedprocname^)
-        else
-          n.fforcedprocname:=nil;
-{$endif symansistr}
+        n.foverrideprocnamedef:=foverrideprocnamedef;
         result:=n;
       end;
 
@@ -1958,7 +1997,8 @@ implementation
 
     procedure tcallnode.add_init_statement(n:tnode);
       var
-        lastinitstatement : tstatementnode;
+        lastinitstatement, before_firstpass : tstatementnode;
+        was_first_statement : boolean;
       begin
         if not assigned(n) then
           exit;
@@ -1971,6 +2011,7 @@ implementation
             exit;
           end;
         lastinitstatement:=laststatement(callinitblock);
+        was_first_statement:=(lastinitstatement=callinitblock.statements);
         { all these nodes must be immediately typechecked, because this routine }
         { can be called from pass_1 (i.e., after typecheck has already run) and }
         { moreover, the entire blocks themselves are also only typechecked in   }
@@ -1978,7 +2019,10 @@ implementation
         { typecheck pass for simplify purposes (not yet perfect, because the    }
         { statementnodes themselves are not typechecked this way)               }
         addstatement(lastinitstatement,n);
+        before_firstpass:=lastinitstatement;
         firstpass(tnode(lastinitstatement));
+        if was_first_statement and (lastinitstatement<>before_firstpass) then
+          callinitblock.statements:=lastinitstatement;
         { Update expectloc for callinitblock }
         callinitblock.expectloc:=lastinitstatement.expectloc;
       end;
@@ -1986,7 +2030,8 @@ implementation
 
     procedure tcallnode.add_done_statement(n:tnode);
       var
-        lastdonestatement : tstatementnode;
+        lastdonestatement, before_firstpass : tstatementnode;
+        was_first_statement : boolean;
       begin
         if not assigned(n) then
           exit;
@@ -1999,9 +2044,13 @@ implementation
             exit;
           end;
         lastdonestatement:=laststatement(callcleanupblock);
+        was_first_statement:=(lastdonestatement=callcleanupblock.statements);
         { see comments in add_init_statement }
         addstatement(lastdonestatement,n);
+        before_firstpass:=lastdonestatement;
         firstpass(tnode(lastdonestatement));
+        if was_first_statement and (lastdonestatement<>before_firstpass) then
+          callcleanupblock.statements:=lastdonestatement;
         { Update expectloc for callcleanupblock }
         callcleanupblock.expectloc:=lastdonestatement.expectloc;
       end;
@@ -2063,16 +2112,9 @@ implementation
       end;
 
 
-    function tcallnode.getforcedprocname: TSymStr;
+    function tcallnode.getoverrideprocnamedef: tprocdef; inline;
       begin
-{$ifdef symansistr}
-        result:=fforcedprocname;
-{$else}
-        if assigned(fforcedprocname) then
-          result:=fforcedprocname^
-        else
-          result:='';
-{$endif}
+        result:=foverrideprocnamedef;
       end;
 
 
@@ -2089,6 +2131,16 @@ implementation
       end;
 
     procedure tcallnode.maybe_load_in_temp(var p:tnode);
+      begin
+        { Load all complex loads into a temp to prevent
+          double calls to a function. We can't simply check for a hp.nodetype=calln }
+        if assigned(p) and
+           foreachnodestatic(p,@look_for_call,nil) then
+          load_in_temp(p);
+      end;
+
+
+    procedure tcallnode.load_in_temp(var p:tnode);
       var
         loadp,
         refp  : tnode;
@@ -2096,10 +2148,7 @@ implementation
         ptemp : ttempcreatenode;
         usederef : boolean;
       begin
-        { Load all complex loads into a temp to prevent
-          double calls to a function. We can't simply check for a hp.nodetype=calln }
-        if assigned(p) and
-           foreachnodestatic(p,@look_for_call,nil) then
+        if assigned(p) then
           begin
             { temp create }
             usederef:=(p.resultdef.typ in [arraydef,recorddef]) or
@@ -2642,7 +2691,7 @@ implementation
         vmt_def: trecorddef;
       begin
         if not assigned(right) and
-           (forcedprocname='') and
+           not assigned(overrideprocnamedef) and
            (po_virtualmethod in procdefinition.procoptions) and
            not is_objectpascal_helper(tprocdef(procdefinition).struct) and
            assigned(methodpointer) and
@@ -2752,11 +2801,7 @@ implementation
            (srsym.typ<>procsym) or
            (tprocsym(srsym).ProcdefList.count<>1) then
           Message1(cg_f_unknown_compilerproc,'objc.'+msgsendname);
-{$ifdef symansistr}
-        fforcedprocname:=tprocdef(tprocsym(srsym).ProcdefList[0]).mangledname;
-{$else symansistr}
-        fforcedprocname:=stringdup(tprocdef(tprocsym(srsym).ProcdefList[0]).mangledname);
-{$endif symansistr}
+        foverrideprocnamedef:=tprocdef(tprocsym(srsym).ProcdefList[0]);
 
         { B) Handle self }
         { 1) in case of sending a message to a superclass, self is a pointer to
@@ -3494,7 +3539,18 @@ implementation
                   if not assigned(right) then
                     begin
                       if assigned(procdefinition.owner.defowner) then
-                        hiddentree:=cloadparentfpnode.create(tprocdef(procdefinition.owner.defowner),lpf_forpara)
+                        begin
+                          if paramanager.can_opt_unused_para(currpara) then
+                            { If parentfp is unused by the target proc, create a dummy
+                              pointerconstnode which will be discarded later. }
+                            hiddentree:=cpointerconstnode.create(0,currpara.vardef)
+                          else
+                            begin
+                              hiddentree:=cloadparentfpnode.create(tprocdef(procdefinition.owner.defowner),lpf_forpara);
+                              if is_nested_pd(current_procinfo.procdef) then
+                                current_procinfo.set_needs_parentfp(tprocdef(procdefinition.owner.defowner).parast.symtablelevel);
+                           end;
+                        end
                       { exceptfilters called from main level are not owned }
                       else if procdefinition.proctypeoption=potype_exceptfilter then
                         hiddentree:=cloadparentfpnode.create(current_procinfo.procdef,lpf_forpara)
@@ -3586,15 +3642,28 @@ implementation
       end;
 
     function tcallnode.pass_typecheck:tnode;
+
+      function is_undefined_recursive(def:tdef):boolean;
+        begin
+          { might become more refined in the future }
+          if def.typ=undefineddef then
+            result:=true
+          else if def.typ=arraydef then
+            result:=is_undefined_recursive(tarraydef(def).elementdef)
+          else
+            result:=false;
+        end;
+
       var
         candidates : tcallcandidates;
         oldcallnode : tcallnode;
-        hpt : tnode;
+        hpt,tmp : tnode;
         pt : tcallparanode;
         lastpara : longint;
         paraidx,
         cand_cnt : integer;
         i : longint;
+        ignoregenericparacall,
         ignorevisibility,
         is_const : boolean;
         statements : tstatementnode;
@@ -3782,12 +3851,33 @@ implementation
                       { Multiple candidates left? }
                       if cand_cnt>1 then
                        begin
-                         CGMessage(type_e_cant_choose_overload_function);
+                         { if we're inside a generic and call another function
+                           with generic types as arguments we don't complain in
+                           the generic, but only during the specialization }
+                         ignoregenericparacall:=false;
+                         if df_generic in current_procinfo.procdef.defoptions then
+                           begin
+                             pt:=tcallparanode(left);
+                             while assigned(pt) do
+                              begin
+                                if is_undefined_recursive(pt.resultdef) then
+                                  begin
+                                    ignoregenericparacall:=true;
+                                    break;
+                                  end;
+                                pt:=tcallparanode(pt.right);
+                              end;
+                           end;
+
+                         if not ignoregenericparacall then
+                           begin
+                             CGMessage(type_e_cant_choose_overload_function);
 {$ifdef EXTDEBUG}
-                         candidates.dump_info(V_Hint);
+                             candidates.dump_info(V_Hint);
 {$else EXTDEBUG}
-                         candidates.list(false);
+                             candidates.list(false);
 {$endif EXTDEBUG}
+                           end;
                          { we'll just use the first candidate to make the
                            call }
                        end;
@@ -3991,8 +4081,27 @@ implementation
 
               if methodpointer.nodetype<>typen then
                begin
-                  { Remove all postfix operators }
+                 { if the value a type helper works on is a derefentiation (before
+                   removing postix operators) we need to pass the original pointer
+                   as Self as the Self value might be changed by the helper }
+                 if is_objectpascal_helper(tdef(procdefinition.owner.defowner)) and
+                    not is_implicit_pointer_object_type(tobjectdef(procdefinition.owner.defowner).extendeddef) then
+                   begin
+                     hpt:=methodpointer;
+
+                     hpt:=actualtargetnode(@hpt)^;
+                     if hpt.nodetype=derefn then
+                       begin
+                         tmp:=tderefnode(hpt).left;
+                         tderefnode(hpt).left:=nil;
+                         methodpointer.free;
+                         methodpointer:=tmp;
+                       end;
+                   end;
+
                   hpt:=methodpointer;
+
+                  { Remove all postfix operators }
                   while assigned(hpt) and (hpt.nodetype in [subscriptn,vecn]) do
                     hpt:=tunarynode(hpt).left;
 
@@ -4191,19 +4300,19 @@ implementation
                               That means the for pushes the para with the
                               highest offset (see para3) needs to be pushed first
                             }
-{$if defined(i386) or defined(i8086) or defined(m68k)}
-                            { the i386, i8086, m68k and jvm code generators expect all reference }
+{$if defined(i386) or defined(i8086) or defined(m68k) or defined(z80)}
+                            { the i386, i8086, m68k, z80 and jvm code generators expect all reference }
                             { parameters to be in this order so they can use   }
                             { pushes in case of no fixed stack                 }
                             if (not paramanager.use_fixed_stack and
                                 (hpcurr.parasym.paraloc[callerside].location^.reference.offset>
                                  hp.parasym.paraloc[callerside].location^.reference.offset)) or
                                (paramanager.use_fixed_stack and
-                                (node_complexity(hpcurr)<node_complexity(hp))) then
-{$elseif defined(jvm)}
+                                (node_complexity(hpcurr.left)<node_complexity(hp.left))) then
+{$elseif defined(jvm) or defined(wasm)}
                             if (hpcurr.parasym.paraloc[callerside].location^.reference.offset<hp.parasym.paraloc[callerside].location^.reference.offset) then
 {$else jvm}
-                            if (node_complexity(hpcurr)<node_complexity(hp)) then
+                            if (node_complexity(hpcurr.left)<node_complexity(hp.left)) then
 {$endif jvm}
                               break;
                           end;
@@ -4220,7 +4329,7 @@ implementation
                   LOC_REGISTER :
                     begin
                       if (hp.parasym.paraloc[callerside].location^.loc<>LOC_REFERENCE) and
-                         (node_complexity(hpcurr)>node_complexity(hp)) then
+                         (node_complexity(hpcurr.left)>node_complexity(hp.left)) then
                         break;
                     end;
                   else
@@ -4400,7 +4509,7 @@ implementation
              end;
 
            { can we get rid of the call? }
-           if (cs_opt_remove_emtpy_proc in current_settings.optimizerswitches) and
+           if (cs_opt_remove_empty_proc in current_settings.optimizerswitches) and
               not(cnf_return_value_used in callnodeflags) and
              (procdefinition.typ=procdef) and
              tprocdef(procdefinition).isempty and
@@ -4466,6 +4575,10 @@ implementation
            if assigned(right) and (right.resultdef.typ=procvardef) and
               not tabstractprocdef(right.resultdef).is_addressonly then
              maybe_load_in_temp(right);
+
+           { the return value might be stored on the current stack by allocating a temp. }
+           if not(paramanager.ret_in_param(procdefinition.returndef,procdefinition)) then
+             inc(current_procinfo.estimatedtempsize,procdefinition.returndef.size);
 
            { Create destination (temp or assignment-variable reuse) for function result if it not yet set }
            maybe_create_funcret_node;
@@ -4739,6 +4852,15 @@ implementation
 
     function tcallnode.paraneedsinlinetemp(para: tcallparanode; const pushconstaddr, complexpara: boolean): boolean;
       begin
+        { if it's an assignable call-by-reference parameter, we cannot pass a
+          temp since then the modified valua will be lost }
+        if para.parasym.varspez in [vs_var,vs_out] then
+          exit(false);
+
+        { We cannot create a formaldef temp and assign something to it }
+        if para.parasym.vardef.typ=formaldef then
+          exit(false);
+
         { We don't need temps for parameters that are already temps, except if
           the passed temp could be put in a regvar while the parameter inside
           the routine cannot be (e.g., because its address is taken in the
@@ -4755,10 +4877,6 @@ implementation
         if (tparavarsym(para.parasym).varregable in [vr_none,vr_addr]) and
            not(para.left.expectloc in [LOC_REFERENCE,LOC_CREFERENCE]) then
           exit(true);
-
-        { We cannot create a formaldef temp and assign something to it }
-        if para.parasym.vardef.typ=formaldef then
-          exit(false);
 
         { We try to handle complex expressions later by taking their address
           and storing this address in a temp (which is then dereferenced when
@@ -4917,6 +5035,9 @@ implementation
 
             result:=true;
           end
+        { for formaldefs, we do not need a temp., but it must be inherited if they are not regable }
+        else if (para.parasym.vardef.typ=formaldef) and not(tparavarsym(para.parasym).is_regvar(false)) then
+          make_not_regable(para.left,[ra_addr_regable]);
       end;
 
 
@@ -5190,13 +5311,10 @@ implementation
               end;
           end;
 
-        { consider it must not be inlined if called
-          again inside the args or itself }
-        exclude(procdefinition.procoptions,po_inline);
         typecheckpass(tnode(inlineblock));
         doinlinesimplify(tnode(inlineblock));
+        node_reset_flags(tnode(inlineblock),[nf_pass1_done]);
         firstpass(tnode(inlineblock));
-        include(procdefinition.procoptions,po_inline);
         result:=inlineblock;
 
         { if the function result is used then verify that the blocknode
@@ -5211,18 +5329,7 @@ implementation
         inlineinitstatement:=nil;
         inlinecleanupstatement:=nil;
 
-        { we cannot replace the whole block by a single assignment if the call
-          has an init/cleanup block
-
-          we could though (not yet done), convert this into a bew block
-          consisting of the init code, the single assignment and the cleanup block
-          This might even enable new transformations }
-        if not(assigned(callinitblock)) and not(assigned(callcleanupblock)) then
-          { if all that's left of the inlined function is an constant assignment
-            to the result, replace the whole block with the constant only }
-          n:=optimize_funcret_assignment(inlineblock)
-        else
-          n:=nil;
+        n:=optimize_funcret_assignment(inlineblock);
         if assigned(n) then
           begin
             inlineblock.free;

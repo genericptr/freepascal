@@ -92,10 +92,11 @@ interface
     function lower(const s : ansistring) : ansistring;
     function rpos(const needle: char; const haystack: shortstring): longint; overload;
     function rpos(const needle: shortstring; const haystack: shortstring): longint; overload;
-    function trimbspace(const s:string):string;
     function trimspace(const s:string):string;
+    function trimspace(const s:AnsiString):AnsiString;
     function space (b : longint): string;
     function PadSpace(const s:string;len:longint):string;
+    function PadSpace(const s:AnsiString;len:longint):AnsiString;
     function GetToken(var s:string;endchar:char):string;
     procedure uppervar(var s : string);
     function realtostr(e:extended):string;{$ifdef USEINLINE}inline;{$endif}
@@ -116,12 +117,6 @@ interface
     }
     function isabspowerof2(const value : Tconstexprint;out power : longint) : boolean;
     function nextpowerof2(value : int64; out power: longint) : int64;
-{$ifdef VER2_6}  { only 2.7.1+ has a popcnt function in the system unit }
-    function PopCnt(AValue : Byte): Byte;
-    function PopCnt(AValue : Word): Word;
-    function PopCnt(AValue : DWord): DWord;
-    function PopCnt(Const AValue : QWord): QWord;
-{$endif VER2_6}
 
     function backspace_quote(const s:string;const qchars:Tcharset):string;
     function octal_quote(const s:string;const qchars:Tcharset):string;
@@ -769,23 +764,24 @@ implementation
       end;
 
 
-    function trimbspace(const s:string):string;
+    function trimspace(const s:string):string;
     {
-      return s with all leading spaces and tabs removed
+      return s with all leading and ending spaces and tabs removed
     }
       var
         i,j : longint;
       begin
-        j:=1;
         i:=length(s);
+        while (i>0) and (s[i] in [#9,' ']) do
+         dec(i);
+        j:=1;
         while (j<i) and (s[j] in [#9,' ']) do
          inc(j);
-        trimbspace:=Copy(s,j,i-j+1);
+        trimspace:=Copy(s,j,i-j+1);
       end;
 
 
-
-    function trimspace(const s:string):string;
+    function trimspace(const s:AnsiString):AnsiString;
     {
       return s with all leading and ending spaces and tabs removed
     }
@@ -814,6 +810,18 @@ implementation
 
 
     function PadSpace(const s:string;len:longint):string;
+    {
+      return s with spaces add to the end
+    }
+      begin
+         if length(s)<len then
+          PadSpace:=s+Space(len-length(s))
+         else
+          PadSpace:=s;
+      end;
+
+
+    function PadSpace(const s:AnsiString;len:longint):AnsiString;
     {
       return s with spaces add to the end
     }
@@ -1000,48 +1008,6 @@ implementation
             result:=result shl 1;
           end;
       end;
-
-{$ifdef VER2_6}
-    const
-      PopCntData : array[0..15] of byte = (0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4);
-
-    function PopCnt(AValue : Byte): Byte;
-      begin
-        Result:=PopCntData[AValue and $f]+PopCntData[(AValue shr 4) and $f];
-      end;
-
-
-    function PopCnt(AValue : Word): Word;
-      var
-        i : SizeInt;
-      begin
-        Result:=0;
-        for i:=0 to 3 do
-          begin
-            inc(Result,PopCntData[AValue and $f]);
-            AValue:=AValue shr 4;
-          end;
-      end;
-
-
-    function PopCnt(AValue : DWord): DWord;
-      var
-        i : SizeInt;
-      begin
-        Result:=0;
-        for i:=0 to 7 do
-          begin
-            inc(Result,PopCntData[AValue and $f]);
-            AValue:=AValue shr 4;
-          end;
-      end;
-
-
-    function PopCnt(Const AValue : QWord): QWord;
-      begin
-        Result:=PopCnt(lo(AValue))+PopCnt(hi(AValue))
-      end;
- {$endif VER2_6}
 
 
     function backspace_quote(const s:string;const qchars:Tcharset):string;
@@ -1284,9 +1250,10 @@ implementation
           { if one of the two is at the end while the other isn't, add a '.0' }
           if (i1>length(s1)) and
              (i2<=length(s2)) then
-            s1:=s1+'.0'
-          else if i2>length(s2) then
-            s2:=s2+'.0';
+            s1:=s1+'.0';
+          if (i2>length(s2)) and
+             (i1<=length(s1)) then
+             s2:=s2+'.0';
           { compare non-numerical characters normally }
           while (i1<=length(s1)) and
                 not(s1[i1] in ['0'..'9']) and
@@ -1632,11 +1599,10 @@ implementation
 
     function LengthSleb128(a: int64) : byte;
       var
-        b, size: byte;
+        b: byte;
         more: boolean;
       begin
         more := true;
-        size := sizeof(a)*8;
         result:=0;
         repeat
           b := a and $7f;
@@ -1677,12 +1643,11 @@ implementation
 
     function EncodeSleb128(a: int64;out buf;len : byte) : byte;
       var
-        b, size: byte;
+        b: byte;
         more: boolean;
         pbuf : pbyte;
       begin
         more := true;
-        size := sizeof(a)*8;
         result:=0;
         pbuf:=@buf;
         repeat

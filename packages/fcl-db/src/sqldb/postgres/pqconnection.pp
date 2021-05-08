@@ -77,7 +77,7 @@ type
   TPQTranConnection = class
   protected
     FPGConn        : PPGConn;
-    FTranActive    : boolean
+    FTranActive    : boolean;
   end;
 
   { TPQConnection }
@@ -103,6 +103,8 @@ type
     procedure AddConnection(T: TPQTranConnection);
     // Release connection in pool.
     procedure ReleaseConnection(Conn: PPGConn; DoClear : Boolean);
+
+    function PortParamName: string; override;
 
     procedure DoInternalConnect; override;
     procedure DoInternalDisconnect; override;
@@ -843,7 +845,7 @@ const TypeStrings : array[TFieldType] of string =
       'time',      // ftTime
       'timestamp', // ftDateTime
       'Unknown',   // ftBytes
-      'Unknown',   // ftVarBytes
+      'bytea',     // ftVarBytes
       'Unknown',   // ftAutoInc
       'bytea',     // ftBlob 
       'text',      // ftMemo
@@ -869,7 +871,13 @@ const TypeStrings : array[TFieldType] of string =
       'Unknown',   // ftTimeStamp
       'numeric',   // ftFMTBcd
       'Unknown',   // ftFixedWideChar
-      'Unknown'    // ftWideMemo
+      'Unknown',   // ftWideMemo
+      'Unknown',   // ftOraTimeStamp
+      'Unknown',   // ftOraInterval
+      'Unknown',   // ftLongWord
+      'Unknown',   // ftShortint
+      'Unknown',   // ftByte
+      'Unknown'    // ftExtended
     );
 
 
@@ -916,15 +924,15 @@ begin
             end
           else
             begin
-            if AParams[i].DataType = ftUnknown then
+            if P.DataType = ftUnknown then
               begin
-              if AParams[i].IsNull then
+              if P.IsNull then
                 s:=s+' unknown ,'
               else
-                DatabaseErrorFmt(SUnknownParamFieldType,[AParams[i].Name],self)
+                DatabaseErrorFmt(SUnknownParamFieldType,[P.Name],self)
               end
             else
-              DatabaseErrorFmt(SUnsupportedParameter,[Fieldtypenames[AParams[i].DataType]],self);
+              DatabaseErrorFmt(SUnsupportedParameter,[Fieldtypenames[P.DataType]],self);
             end;
           end;
         s[length(s)] := ')';
@@ -1033,7 +1041,7 @@ begin
               end;
             ftFmtBCD:
               s := BCDToStr(AParams[i].AsFMTBCD, FSQLFormatSettings);
-            ftBlob, ftGraphic:
+            ftBlob, ftGraphic, ftVarBytes:
               begin
               Handled:=true;
               bd:= AParams[i].AsBlob;
@@ -1056,7 +1064,7 @@ begin
             StrMove(PAnsiChar(ar[i]), PAnsiChar(s), L+1);
             lengths[i]:=L;
             end;
-          if (AParams[i].DataType in [ftBlob,ftMemo,ftGraphic,ftCurrency]) then
+          if (AParams[i].DataType in [ftBlob,ftMemo,ftGraphic,ftCurrency,ftVarBytes]) then
             Formats[i]:=1
           else
             Formats[i]:=0;  
@@ -1330,7 +1338,7 @@ begin
           end;
           pchar(Buffer + li)^ := #0;
           end;
-        ftBlob, ftMemo :
+        ftBlob, ftMemo, ftVarBytes :
           CreateBlob := True;
         ftDate :
           begin
@@ -1411,6 +1419,11 @@ begin
       end;
       end;
     end;
+end;
+
+function TPQConnection.PortParamName: string;
+begin
+  Result := 'port';
 end;
 
 procedure TPQConnection.UpdateIndexDefs(IndexDefs : TIndexDefs;TableName : string);

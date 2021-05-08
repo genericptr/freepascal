@@ -201,7 +201,7 @@ implementation
             hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
 
             location.register := cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
-            cg.a_loadfpu_reg_reg(current_asmdata.CurrAsmlist,OS_NO,OS_NO,left.location.register,location.register);
+            cg.a_loadfpu_reg_reg(current_asmdata.CurrAsmlist,left.location.size,location.size,left.location.register,location.register);
           end;
 
         { emit the actual operation }
@@ -410,7 +410,7 @@ implementation
                 cgop:=OP_IMUL;
             end;
           else
-            internalerror(2013120104);
+            internalerror(2013120111);
         end;
 
         pass_left_right;

@@ -35,14 +35,20 @@ implementation
              Targets
 **************************************}
 
-    {$ifndef NOTARGETLINUX}
-      ,t_linux
-    {$endif}
     {$ifndef NOTARGETBSD}
       ,t_bsd
     {$endif}
+    {$ifndef NOTARGETLINUX}
+      ,t_linux
+    {$endif}
+    {$ifndef NOTARGETDARWIN}
+      ,t_darwin
+    {$endif}
     {$ifndef NOTARGETANDROID}
       ,t_android
+    {$endif}
+    {$ifndef NOTARGETWIN64}
+      ,t_win
     {$endif}
 
 {**************************************

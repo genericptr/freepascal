@@ -105,9 +105,9 @@ interface
       class procedure insertbsssym(list: tasmlist; sym: tstaticvarsym; size: asizeint; varalign: shortint; _typ: Tasmsymtype); virtual;
 
       { initialization of iso styled program parameters }
-      class procedure initialize_textrec(p : TObject; statn : pointer);
+      class procedure initialize_filerecs(p : TObject; statn : pointer);
       { finalization of iso styled program parameters }
-      class procedure finalize_textrec(p : TObject; statn : pointer);
+      class procedure finalize_filerecs(p : TObject; statn : pointer);
      public
       class procedure insertbssdata(sym : tstaticvarsym); virtual;
 
@@ -197,7 +197,7 @@ implementation
                   nil));
             end
           else
-            internalerror(200305108);
+            internalerror(2003051002);
         end
       else
         if is_object(current_structdef) then
@@ -546,49 +546,83 @@ implementation
     end;
 
 
-  class procedure tnodeutils.initialize_textrec(p:TObject;statn:pointer);
+  class procedure tnodeutils.initialize_filerecs(p:TObject;statn:pointer);
     var
       stat: ^tstatementnode absolute statn;
     begin
       if (tsym(p).typ=staticvarsym) and
-       (tstaticvarsym(p).vardef.typ=filedef) and
-       (tfiledef(tstaticvarsym(p).vardef).filetyp=ft_text) and
-       (tstaticvarsym(p).isoindex<>0) then
-       begin
-         if cs_transparent_file_names in current_settings.globalswitches then
-           addstatement(stat^,ccallnode.createintern('fpc_textinit_filename_iso',
-             ccallparanode.create(
-               cstringconstnode.createstr(tstaticvarsym(p).Name),
-             ccallparanode.create(
-               cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
-             ccallparanode.create(
-               cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
-             nil)))))
-         else
-           addstatement(stat^,ccallnode.createintern('fpc_textinit_iso',
-             ccallparanode.create(
-               cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
-             ccallparanode.create(
-               cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
-             nil))));
-       end;
+        (tstaticvarsym(p).vardef.typ=filedef) and
+        (tstaticvarsym(p).isoindex<>0) then
+        case tfiledef(tstaticvarsym(p).vardef).filetyp of
+          ft_text:
+            begin
+              if cs_transparent_file_names in current_settings.globalswitches then
+                addstatement(stat^,ccallnode.createintern('fpc_textinit_filename_iso',
+                  ccallparanode.create(
+                    cstringconstnode.createstr(tstaticvarsym(p).Name),
+                  ccallparanode.create(
+                    cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
+                  ccallparanode.create(
+                    cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                  nil)))))
+              else
+                addstatement(stat^,ccallnode.createintern('fpc_textinit_iso',
+                  ccallparanode.create(
+                    cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
+                  ccallparanode.create(
+                    cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                  nil))));
+            end;
+          ft_typed:
+            begin
+              if cs_transparent_file_names in current_settings.globalswitches then
+                addstatement(stat^,ccallnode.createintern('fpc_typedfile_init_filename_iso',
+                  ccallparanode.create(
+                    cstringconstnode.createstr(tstaticvarsym(p).Name),
+                  ccallparanode.create(
+                    cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
+                  ccallparanode.create(
+                    cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                  nil)))))
+              else
+                addstatement(stat^,ccallnode.createintern('fpc_typedfile_init_iso',
+                  ccallparanode.create(
+                    cordconstnode.create(tstaticvarsym(p).isoindex,uinttype,false),
+                  ccallparanode.create(
+                    cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                  nil))));
+            end;
+          else
+            ;
+        end;
     end;
 
 
-  class procedure tnodeutils.finalize_textrec(p:TObject;statn:pointer);
+  class procedure tnodeutils.finalize_filerecs(p:TObject;statn:pointer);
     var
       stat: ^tstatementnode absolute statn;
     begin
       if (tsym(p).typ=staticvarsym) and
-       (tstaticvarsym(p).vardef.typ=filedef) and
-       (tfiledef(tstaticvarsym(p).vardef).filetyp=ft_text) and
-       (tstaticvarsym(p).isoindex<>0) then
-       begin
-         addstatement(stat^,ccallnode.createintern('fpc_textclose_iso',
-           ccallparanode.create(
-             cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
-           nil)));
-       end;
+        (tstaticvarsym(p).vardef.typ=filedef) and
+        (tstaticvarsym(p).isoindex<>0) then
+        case tfiledef(tstaticvarsym(p).vardef).filetyp of
+          ft_text:
+            begin
+              addstatement(stat^,ccallnode.createintern('fpc_textclose_iso',
+                ccallparanode.create(
+                  cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                nil)));
+            end;
+          ft_typed:
+            begin
+              addstatement(stat^,ccallnode.createintern('fpc_typedfile_close_iso',
+                ccallparanode.create(
+                  cloadnode.create(tstaticvarsym(p),tstaticvarsym(p).Owner),
+                nil)));
+            end;
+          else
+            ;
+        end;
     end;
 
 
@@ -637,9 +671,9 @@ implementation
         (pd.proctypeoption=potype_proginit) then
         begin
           block:=internalstatements(stat);
-          pd.localst.SymList.ForEachCall(@initialize_textrec,@stat);
+          pd.localst.SymList.ForEachCall(@initialize_filerecs,@stat);
           addstatement(stat,result);
-          pd.localst.SymList.ForEachCall(@finalize_textrec,@stat);
+          pd.localst.SymList.ForEachCall(@finalize_filerecs,@stat);
           result:=block;
         end;
 
@@ -1162,7 +1196,7 @@ implementation
         unitinits.get_final_asmlist(
           current_asmdata.DefineAsmSymbol('INITFINAL',AB_GLOBAL,AT_DATA,tabledef),
           tabledef,
-          sec_data,'INITFINAL',sizeof(pint)
+          sec_data,'INITFINAL',const_align(sizeof(pint))
         )
       );
 
@@ -1183,9 +1217,7 @@ implementation
         exit;
       count:=0;
       tcb:=ctai_typedconstbuilder.create([tcalo_make_dead_strippable,tcalo_new_section]);
-      tcb.begin_anonymous_record('',1,sizeof(pint),
-        targetinfos[target_info.system]^.alignment.recordalignmin
-      );
+      tcb.begin_anonymous_record('',default_settings.packrecords,voidpointertype.alignment,targetinfos[target_info.system]^.alignment.recordalignmin);
       placeholder:=tcb.emit_placeholder(u32inttype);
 
       hp:=tused_unit(usedunits.first);
@@ -1219,7 +1251,7 @@ implementation
       sym:=current_asmdata.DefineAsmSymbol('FPC_THREADVARTABLES',AB_GLOBAL,AT_DATA,tabledef);
       current_asmdata.asmlists[al_globals].concatlist(
         tcb.get_final_asmlist(
-          sym,tabledef,sec_data,'FPC_THREADVARTABLES',sizeof(pint)
+          sym,tabledef,sec_data,'FPC_THREADVARTABLES',const_align(sizeof(pint))
         )
       );
       tcb.free;
@@ -1259,8 +1291,7 @@ implementation
        if (tf_section_threadvars in target_info.flags) then
          exit;
        tcb:=ctai_typedconstbuilder.create([tcalo_make_dead_strippable,tcalo_new_section]);
-       tabledef:=tcb.begin_anonymous_record('',1,sizeof(pint),
-         targetinfos[target_info.system]^.alignment.recordalignmin);
+       tabledef:=tcb.begin_anonymous_record('',default_settings.packrecords,voidpointertype.alignment,targetinfos[target_info.system]^.alignment.recordalignmin);
        if assigned(current_module.globalsymtable) then
          current_module.globalsymtable.SymList.ForEachCall(@AddToThreadvarList,tcb);
        current_module.localsymtable.SymList.ForEachCall(@AddToThreadvarList,tcb);
@@ -1274,7 +1305,7 @@ implementation
            s:=make_mangledname('THREADVARLIST',current_module.localsymtable,'');
            sym:=current_asmdata.DefineAsmSymbol(s,AB_GLOBAL,AT_DATA_FORCEINDIRECT,tabledef);
            current_asmdata.asmlists[al_globals].concatlist(
-             tcb.get_final_asmlist(sym,tabledef,sec_data,s,sizeof(pint)));
+             tcb.get_final_asmlist(sym,tabledef,sec_data,s,const_align(sizeof(pint))));
            include(current_module.moduleflags,mf_threadvars);
            current_module.add_public_asmsym(sym);
          end
@@ -1328,7 +1359,7 @@ implementation
         tcb.get_final_asmlist(
           current_asmdata.DefineAsmSymbol(tablename,AB_GLOBAL,AT_DATA,tabledef),
           tabledef,
-          sec_data,tablename,sizeof(pint)
+          sec_data,tablename,const_align(sizeof(pint))
         )
       );
       tcb.free;
@@ -1370,7 +1401,7 @@ implementation
       current_asmdata.asmlists[al_globals].concatList(
         tcb.get_final_asmlist(
           current_asmdata.DefineAsmSymbol(s,AB_GLOBAL,AT_DATA,rawdatadef),
-          rawdatadef,sec_data,s,sizeof(pint)));
+          rawdatadef,sec_data,s,const_align(sizeof(pint))));
       tcb.free;
       include(current_module.moduleflags,unitflag);
     end;
@@ -1438,7 +1469,7 @@ implementation
       current_asmdata.AsmLists[al_globals].concatList(
         tcb.get_final_asmlist(
           current_asmdata.DefineAsmSymbol('FPC_RESOURCESTRINGTABLES',AB_GLOBAL,AT_DATA,tabledef),
-          tabledef,sec_rodata,'FPC_RESOURCESTRINGTABLES',sizeof(pint)
+          tabledef,sec_rodata,'FPC_RESOURCESTRINGTABLES',const_align(sizeof(pint))
         )
       );
       tcb.free;
@@ -1467,7 +1498,7 @@ implementation
               voidpointertype,
               sec_rodata,
               'FPC_RESLOCATION',
-              sizeof(puint)
+              const_align(sizeof(puint))
             )
           );
 
@@ -1512,9 +1543,21 @@ implementation
           tcb.emit_tai(Tai_const.Create_int_dataptr(stacksize),ptruinttype);
           sym:=current_asmdata.DefineAsmSymbol('__stklen',AB_GLOBAL,AT_DATA,ptruinttype);
           current_asmdata.asmlists[al_globals].concatlist(
-            tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__stklen',sizeof(pint))
+            tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__stklen',const_align(sizeof(pint)))
           );
           tcb.free;
+        end;
+
+      { allocate the stack on the ZX Spectrum system }
+      if target_info.system in [system_z80_zxspectrum] then
+        begin
+          { tai_datablock cannot yet be handled via the high level typed const
+            builder, because it implies the generation of a symbol, while this
+            is separate in the builder }
+          maybe_new_object_file(current_asmdata.asmlists[al_globals]);
+          new_section(current_asmdata.asmlists[al_globals],sec_stack,'__fpc_stackarea_start',current_settings.alignment.varalignmax);
+          current_asmdata.asmlists[al_globals].concat(tai_datablock.Create_global('__fpc_stackarea_start',stacksize-1,carraydef.getreusable(u8inttype,stacksize-1),AT_DATA));
+          current_asmdata.asmlists[al_globals].concat(tai_datablock.Create_global('__fpc_stackarea_end',1,carraydef.getreusable(u8inttype,1),AT_DATA));
         end;
 {$IFDEF POWERPC}
       { AmigaOS4 "stack cookie" support }
@@ -1542,12 +1585,12 @@ implementation
       tcb.emit_tai(Tai_const.Create_int_dataptr(heapsize),ptruinttype);
       sym:=current_asmdata.DefineAsmSymbol('__heapsize',AB_GLOBAL,AT_DATA,ptruinttype);
       current_asmdata.asmlists[al_globals].concatlist(
-        tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__heapsize',sizeof(pint))
+        tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__heapsize',const_align(sizeof(pint)))
       );
       tcb.free;
 
       { allocate an initial heap on embedded systems }
-      if target_info.system in systems_embedded then
+      if target_info.system in (systems_embedded+systems_freertos+[system_z80_zxspectrum,system_z80_msxdos]) then
         begin
           { tai_datablock cannot yet be handled via the high level typed const
             builder, because it implies the generation of a symbol, while this
@@ -1562,7 +1605,7 @@ implementation
       tcb.emit_ord_const(byte(cs_gdb_valgrind in current_settings.globalswitches),u8inttype);
       sym:=current_asmdata.DefineAsmSymbol('__fpc_valgrind',AB_GLOBAL,AT_DATA,u8inttype);
       current_asmdata.asmlists[al_globals].concatlist(
-        tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__fpc_valgrind',sizeof(pint))
+        tcb.get_final_asmlist(sym,ptruinttype,sec_data,'__fpc_valgrind',const_align(sizeof(pint)))
       );
       tcb.free;
     end;
@@ -1607,7 +1650,7 @@ implementation
       current_asmdata.asmlists[al_objc_data].concatList(
         tcb.get_final_asmlist(
           current_asmdata.DefineAsmSymbol(target_asm.labelprefix+'_OBJC_IMAGE_INFO',AB_LOCAL,AT_DATA,u64inttype),
-          u64inttype,sec_objc_image_info,'_OBJC_IMAGE_INFO',sizeof(pint)
+          u64inttype,sec_objc_image_info,'_OBJC_IMAGE_INFO',const_align(sizeof(pint))
         )
       );
       tcb.free;
@@ -1620,7 +1663,7 @@ implementation
      begin
        { stub for calling FPC_SYSTEMMAIN from the C main -> add argc/argv/argp }
        if (tprocdef(pd).proctypeoption=potype_mainstub) and
-          (target_info.system in (systems_darwin+[system_powerpc_macos]+systems_aix)) then
+          (target_info.system in (systems_darwin+[system_powerpc_macosclassic]+systems_aix)) then
          begin
            pvs:=cparavarsym.create('ARGC',1,vs_const,s32inttype,[]);
            tprocdef(pd).parast.insert(pvs);

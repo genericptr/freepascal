@@ -29,7 +29,7 @@ const
 type
  { using packed makes the compiler to generate ugly code on some CPUs, further
     using packed causes the compiler to handle arrays of text wrongly, see  see tw0754 e.g. on arm  }
-  FileRec = {$ifdef VER2_6} packed {$endif} Record
+  FileRec = Record
     Handle    : THandle;
 {$if defined(CPU8) or defined(CPU16)}
     Mode      : Word;
@@ -40,5 +40,8 @@ type
     _private  : array[1..3 * SizeOf(SizeInt) + 5 * SizeOf (pointer)] of byte;
     UserData  : array[1..32] of byte;
     name      : array[0..filerecnamelength] of TFileTextRecChar;
+{$ifdef USE_FILEREC_FULLNAME}
+    FullName  : Pointer;
+{$endif USE_FILEREC_FULLNAME}
   End;
 

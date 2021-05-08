@@ -102,7 +102,7 @@ Type
     function PeerSubject : String;
     Function PeerIssuer : String;
     Function PeerSerialNo : Integer;
-    Function PeerFingerprint : String;
+    Function PeerFingerprint(const name: string = 'MD5') : String;
     Function CertInfo : String;
     function CipherName: string;
     function CipherBits: integer;
@@ -657,14 +657,16 @@ var
 begin
   Result:='';
   S:=PeerSubject;
-  P:=Pos(S,'/CN=');
+  P:=Pos('/CN=', S);
   if (P>0) then
     begin
     Delete(S,1,P+3);
     P:=Pos('/',S);
     if (P>0) then
-      Result:=Copy(S,1,P-1);
-    end;
+      Result:=Copy(S,1,P-1)
+    else
+      Result := S;
+    end
 end;
 
 function TSSL.PeerNameHash: cardinal;
@@ -737,7 +739,7 @@ begin
   end;
 end;
 
-Function TSSL.PeerFingerprint: String;
+Function TSSL.PeerFingerprint(const name: string): String;
 var
   C : PX509;
   L : integer;
@@ -750,7 +752,7 @@ begin
   try
     Result:=StringOfChar(#0,EVP_MAX_MD_SIZE);
     L:=0;
-    X509Digest(C,EvpGetDigestByName('MD5'),Result,L);
+    X509Digest(C,EvpGetDigestByName(name),Result,L);
     SetLength(Result,L);
   finally
     X509Free(C);

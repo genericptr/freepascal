@@ -475,8 +475,8 @@ implementation
          { Generate temp procdefs to search for matching read/write
            procedures. the readprocdef will store all definitions }
          paranr:=0;
-         readprocdef:=cprocdef.create(normal_function_level,true);
-         writeprocdef:=cprocdef.create(normal_function_level,true);
+         readprocdef:=cprocdef.create(normal_function_level,false);
+         writeprocdef:=cprocdef.create(normal_function_level,false);
 
          readprocdef.struct:=astruct;
          writeprocdef.struct:=astruct;
@@ -1012,11 +1012,29 @@ implementation
                message1(parser_e_implements_uses_non_implemented_interface,def.typename);
            until not try_to_consume(_COMMA);
 
-         { remove unneeded procdefs }
-         if readprocdef.proctypeoption<>potype_propgetter then
-           readprocdef.owner.deletedef(readprocdef);
-         if writeprocdef.proctypeoption<>potype_propsetter then
-           writeprocdef.owner.deletedef(writeprocdef);
+         { register propgetter and propsetter procdefs }
+         if assigned(current_module) and current_module.in_interface then
+           begin
+             if readprocdef.proctypeoption=potype_propgetter then
+               readprocdef.register_def
+             else
+               readprocdef.free;
+             if writeprocdef.proctypeoption=potype_propsetter then
+               writeprocdef.register_def
+             else
+               writeprocdef.free;
+           end
+         else
+           begin
+             if readprocdef.proctypeoption=potype_propgetter then
+               readprocdef.maybe_put_in_symtable_stack
+             else
+               readprocdef.free;
+             if writeprocdef.proctypeoption=potype_propsetter then
+               writeprocdef.maybe_put_in_symtable_stack
+             else
+               writeprocdef.free;
+           end;
 
          result:=p;
       end;
@@ -1791,6 +1809,7 @@ implementation
          is_first_type: boolean;
 {$endif powerpc or powerpc64}
          old_block_type: tblock_type;
+         tmpidx: Integer;
       begin
          old_block_type:=block_type;
          block_type:=bt_var;
@@ -1864,6 +1883,10 @@ implementation
                    { for error recovery or compiler will crash later }
                    hdef:=generrordef;
                end;
+
+             { field type is a generic param so set a flag in the struct }
+             if assigned(hdef.typesym) and (sp_generic_para in hdef.typesym.symoptions) then
+               include(current_structdef.defoptions,df_has_generic_fields);
 
              { Process procvar directives }
              if maybe_parse_proc_directives(hdef) then
@@ -2126,7 +2149,7 @@ implementation
               unionsymtable.addalignmentpadding;
 {$if defined(powerpc) or defined(powerpc64)}
               { parent inherits the alignment padding if the variant is the first "field" of the parent record/variant }
-              if (target_info.system in [system_powerpc_darwin, system_powerpc_macos, system_powerpc64_darwin]) and
+              if (target_info.system in [system_powerpc_darwin, system_powerpc_macosclassic, system_powerpc64_darwin]) and
                  is_first_type and
                  (recst.usefieldalignment=C_alignment) and
                  (maxpadalign>recst.padalignment) then
@@ -2157,6 +2180,10 @@ implementation
 
               trecordsymtable(recst).insertunionst(Unionsymtable,offset);
               uniondef.owner.deletedef(uniondef);
+              { this prevents a dangling pointer and use after free }
+              tmpidx:=current_module.deflist.IndexOfItem(uniondef,FromEnd);
+              if tmpidx<>-1 then
+                current_module.deflist[tmpidx]:=nil;
            end;
          { free the list }
          sc.free;

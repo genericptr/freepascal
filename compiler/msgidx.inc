@@ -129,6 +129,7 @@ const
   scan_w_setpeosversion_not_support=02103;
   scan_w_setpesubsysversion_not_support=02104;
   scan_n_changecputype=02105;
+  scan_e_emptymacroname=02106;
   parser_e_syntax_error=03000;
   parser_e_dont_nest_interrupt=03004;
   parser_w_proc_directive_ignored=03005;
@@ -464,6 +465,13 @@ const
   parser_e_unbound_attribute=03351;
   parser_e_enumeration_out_of_range=03352;
   parser_w_enumeration_out_of_range=03353;
+  parser_e_method_for_type_in_other_unit=03354;
+  parser_e_generic_constraints_not_allowed_here=03355;
+  parser_e_location_size_too_small=03356;
+  parser_e_location_size_too_large=03357;
+  parser_e_location_regpair_only_data=03358;
+  parser_e_location_regpair_only_consecutive=03359;
+  parser_e_constructurs_cannot_take_type_parameters=03360;
   type_e_mismatch=04000;
   type_e_incompatible_types=04001;
   type_e_not_equal_types=04002;
@@ -581,6 +589,10 @@ const
   type_e_seg_procvardef_wrong_memory_model=04124;
   type_w_empty_constant_range_set=04125;
   type_e_cblock_callconv=04126;
+  type_e_forward_interface_type_does_not_match=04127;
+  type_e_generic_const_type_not_allowed=04128;
+  type_e_cant_read_write_type_in_iso_mode=04129;
+  type_w_array_size_does_not_match_size_of_constant_string=04130;
   sym_e_id_not_found=05000;
   sym_f_internal_error_in_symtablestack=05001;
   sym_e_duplicate_id=05002;
@@ -704,6 +716,8 @@ const
   cg_n_no_inline=06058;
   cg_e_case_missing_value=06059;
   cg_w_case_incomplete=06060;
+  cg_w_cannot_compile_subroutine=06061;
+  cg_w_interrupt_does_not_save_registers=06062;
   asmr_d_start_reading=07000;
   asmr_d_finish_reading=07001;
   asmr_e_none_label_contain_at=07002;
@@ -842,6 +856,9 @@ const
   asmr_w_multiple_segment_overrides=07140;
   asmr_w_segment_override_ignored_in_64bit_mode=07141;
   asmr_e_mismatch_broadcasting_elements=07142;
+  asmr_e_invalid_arrangement=07143;
+  asmr_e_a64_invalid_regset=07144;
+  asmr_e_unknown_field=07145;
   asmw_f_too_many_asm_files=08000;
   asmw_f_assembler_output_not_supported=08001;
   asmw_f_comp_not_supported=08002;
@@ -877,6 +894,7 @@ const
   asmw_e_instruction_not_supported_by_cpu=08032;
   asmw_e_brxx_out_of_range=08033;
   asmw_e_illegal_use_of_rip=08034;
+  asmw_e_seh_invalid_data_size=08035;
   exec_w_source_os_redefined=09000;
   exec_i_assembling_pipe=09001;
   exec_d_cant_create_asmfile=09002;
@@ -1066,6 +1084,8 @@ const
   option_invalid_target_architecture=11059;
   option_features_only_for_system_unit=11060;
   option_debug_info_requires_external_linker=11061;
+  option_valgrind_heaptrc_mismatch=11062;
+  option_unsupported_fpu=11063;
   wpo_cant_find_file=12000;
   wpo_begin_processing=12001;
   wpo_end_processing=12002;
@@ -1119,9 +1139,9 @@ const
   option_info=11024;
   option_help_pages=11025;
 
-  MsgTxtSize = 84053;
+  MsgTxtSize = 87808;
 
   MsgIdxMax : array[1..20] of longint=(
-    28,106,354,127,99,61,143,35,223,68,
-    62,20,30,1,1,1,1,1,1,1
+    28,107,361,131,99,63,146,36,223,68,
+    64,20,30,1,1,1,1,1,1,1
   );

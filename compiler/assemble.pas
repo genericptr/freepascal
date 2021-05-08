@@ -153,6 +153,7 @@ interface
         procedure WriteSourceLine(hp: tailineinfo);
         procedure WriteTempalloc(hp: tai_tempalloc);
         procedure WriteRealConstAsBytes(hp: tai_realconst; const dbdir: string; do_line: boolean);
+        function WriteComments(var hp: tai): boolean;
         function single2str(d : single) : string; virtual;
         function double2str(d : double) : string; virtual;
         function extended2str(e : extended) : string; virtual;
@@ -204,6 +205,10 @@ interface
 
       TInternalAssembler=class(TAssembler)
       private
+{$ifdef ARM}
+        { true, if thumb instructions are generated }
+        Code16 : Boolean;
+{$endif ARM}
         FCObjOutput : TObjOutputclass;
         FCInternalAr : TObjectWriterClass;
         { the aasmoutput lists that need to be processed }
@@ -264,7 +269,7 @@ Implementation
 {$endif FPC_SOFT_FPUX80}
 {$endif}
       cscript,fmodule,verbose,
-      cpuinfo,
+      cpubase,cpuinfo,triplet,
       aasmcpu;
 
     var
@@ -586,7 +591,7 @@ Implementation
         index: longint;
       begin
         MaybeAddLinePostfix;
-        if (cs_link_on_target in current_settings.globalswitches) then
+        if (cs_assemble_on_target in current_settings.globalswitches) then
           newline:=@target_info.newline
         else
           newline:=@source_info.newline;
@@ -622,7 +627,7 @@ Implementation
           compiler itself, especially on hardware with slow disk I/O.
           Consider this as a poor man's pipe on Amiga, because real pipe handling
           would be much more complex and error prone to implement. (KB) }
-        if (([cs_asm_extern,cs_asm_leave,cs_link_on_target] * current_settings.globalswitches) = []) then
+        if (([cs_asm_extern,cs_asm_leave,cs_assemble_on_target] * current_settings.globalswitches) = []) then
          begin
           { try to have an unique name for the .s file }
           tempFileName:=HexStr(GetProcessID shr 4,7)+ExtractFileName(owner.AsmFileName);
@@ -744,8 +749,8 @@ Implementation
       begin
 {$ifdef hasunix}
         DoPipe:=(cs_asm_pipe in current_settings.globalswitches) and
-                (([cs_asm_extern,cs_asm_leave,cs_link_on_target] * current_settings.globalswitches) = []) and
-                ((asminfo^.id in [as_gas,as_ggas,as_darwin,as_powerpc_xcoff,as_clang,as_solaris_as]));
+                (([cs_asm_extern,cs_asm_leave,cs_assemble_on_target] * current_settings.globalswitches) = []) and
+                ((asminfo^.id in [as_gas,as_ggas,as_darwin,as_powerpc_xcoff,as_clang_gas,as_clang_llvm,as_solaris_as,as_clang_asdarwin]));
 {$else hasunix}
         DoPipe:=false;
 {$endif}
@@ -822,16 +827,20 @@ Implementation
       var
         asfound : boolean;
         UtilExe  : string;
+        asmbin : TCmdStr;
       begin
         asfound:=false;
-        if cs_link_on_target in current_settings.globalswitches then
+        asmbin:=asminfo^.asmbin;
+        if (af_llvm in asminfo^.flags) then
+          asmbin:=asmbin+llvmutilssuffix;
+        if cs_assemble_on_target in current_settings.globalswitches then
          begin
-           { If linking on target, don't add any path PM }
-           FindAssembler:=utilsprefix+ChangeFileExt(asminfo^.asmbin,target_info.exeext);
+           { If assembling on target, don't add any path PM }
+           FindAssembler:=utilsprefix+ChangeFileExt(asmbin,target_info.exeext);
            exit;
          end
         else
-         UtilExe:=utilsprefix+ChangeFileExt(asminfo^.asmbin,source_info.exeext);
+         UtilExe:=utilsprefix+ChangeFileExt(asmbin,source_info.exeext);
         if lastas<>ord(asminfo^.id) then
          begin
            lastas:=ord(asminfo^.id);
@@ -925,18 +934,14 @@ Implementation
 
       begin
         result:=asminfo^.asmcmd;
-        { for Xcode 7.x and later }
-        if MacOSXVersionMin<>'' then
-          Replace(result,'$DARWINVERSION','-mmacosx-version-min='+MacOSXVersionMin)
-        else if iPhoneOSVersionMin<>'' then
-          Replace(result,'$DARWINVERSION','-miphoneos-version-min='+iPhoneOSVersionMin)
-        else
-          Replace(result,'$DARWINVERSION','');
+        if af_llvm in target_asm.flags then
+          Replace(result,'$TRIPLET',targettriplet(triplet_llvm))
 {$ifdef arm}
-        if (target_info.system=system_arm_darwin) then
-          Replace(result,'$ARCH',lower(cputypestr[current_settings.cputype]));
+        else if (target_info.system=system_arm_ios) then
+          Replace(result,'$ARCH',lower(cputypestr[current_settings.cputype]))
 {$endif arm}
-        if (cs_link_on_target in current_settings.globalswitches) then
+        ;
+        if (cs_assemble_on_target in current_settings.globalswitches) then
          begin
            Replace(result,'$ASM',maybequoted(ScriptFixFileName(AsmFileName)));
            Replace(result,'$OBJ',maybequoted(ScriptFixFileName(ObjFileName)));
@@ -945,7 +950,7 @@ Implementation
          begin
 {$ifdef hasunix}
           if DoPipe then
-            if asminfo^.id<>as_clang then
+            if not(asminfo^.id in [as_clang_gas,as_clang_asdarwin,as_clang_llvm]) then
               Replace(result,'$ASM','')
             else
               Replace(result,'$ASM','-')
@@ -1139,7 +1144,7 @@ Implementation
 	      else if sizeof(tai_realconst(hp).value.s80val) = sizeof(single) then
 	        eextended:=float32_to_floatx80(float32(single(tai_realconst(hp).value.s80val)))
 	      else
-	        internalerror(2017091901);
+	        internalerror(2017091902);
               pdata:=@eextended;
             end;
 {$pop}
@@ -1195,6 +1200,58 @@ Implementation
       end;
 
 
+    function TExternalAssembler.WriteComments(var hp: tai): boolean;
+      begin
+        result:=true;
+        case hp.typ of
+          ait_comment :
+            Begin
+              writer.AsmWrite(asminfo^.comment);
+              writer.AsmWritePChar(tai_comment(hp).str);
+              writer.AsmLn;
+            End;
+
+          ait_regalloc :
+            begin
+              if (cs_asm_regalloc in current_settings.globalswitches) then
+                begin
+                  writer.AsmWrite(#9+asminfo^.comment+'Register ');
+                  repeat
+                    writer.AsmWrite(std_regname(Tai_regalloc(hp).reg));
+                    if (hp.next=nil) or
+                       (tai(hp.next).typ<>ait_regalloc) or
+                       (tai_regalloc(hp.next).ratype<>tai_regalloc(hp).ratype) then
+                      break;
+                    hp:=tai(hp.next);
+                    writer.AsmWrite(',');
+                  until false;
+                  writer.AsmWrite(' ');
+                  writer.AsmWriteLn(regallocstr[tai_regalloc(hp).ratype]);
+                end;
+            end;
+
+          ait_tempalloc :
+            begin
+              if (cs_asm_tempalloc in current_settings.globalswitches) then
+                WriteTempalloc(tai_tempalloc(hp));
+            end;
+
+          ait_varloc:
+            begin
+              { ait_varloc is present here only when register allocation is not done ( -sr option ) }
+              if tai_varloc(hp).newlocationhi<>NR_NO then
+                writer.AsmWriteLn(asminfo^.comment+'Var '+tai_varloc(hp).varsym.realname+' located in register '+
+                  std_regname(tai_varloc(hp).newlocationhi)+':'+std_regname(tai_varloc(hp).newlocation))
+              else
+                writer.AsmWriteLn(asminfo^.comment+'Var '+tai_varloc(hp).varsym.realname+' located in register '+
+                  std_regname(tai_varloc(hp).newlocation));
+            end;
+          else
+            result:=false;
+        end;
+      end;
+
+
     procedure TExternalAssembler.WriteTree(p:TAsmList);
       begin
       end;
@@ -1237,6 +1294,9 @@ Implementation
         ObjOutput:=nil;
         ObjData:=nil;
         SmartAsm:=smart;
+{$ifdef ARM}
+        Code16:=current_settings.instructionset=is_thumb;
+{$endif ARM}
       end;
 
 
@@ -1343,8 +1403,8 @@ Implementation
                   len:=p-pstart;
                   if len>255 then
                     internalerror(200509187);
-                  move(pstart^,hs[1],len);
                   hs[0]:=chr(len);
+                  move(pstart^,hs[1],len);
                   sym:=objdata.symbolref(hs);
                   { Second symbol? }
                   if assigned(relocsym) then
@@ -1659,9 +1719,17 @@ Implementation
 {$ifdef ARM}
                    asd_thumb_func:
                      ObjData.ThumbFunc:=true;
+                   asd_force_thumb:
+                     begin
+                       ObjData.ThumbFunc:=true;
+                       Code16:=true;
+                     end;
                    asd_code:
-                     { ai_directive(hp).name can be only 16 or 32, this is checked by the reader }
-                     ObjData.ThumbFunc:=tai_directive(hp).name='16';
+                     begin
+                       { ai_directive(hp).name can be only 16 or 32, this is checked by the reader }
+                       ObjData.ThumbFunc:=tai_directive(hp).name='16';
+                       Code16:=tai_directive(hp).name='16';
+                     end
 {$endif ARM}
 {$ifdef RISCV}
                    asd_option:
@@ -1693,6 +1761,12 @@ Implementation
                ObjData.alloc(Tai_string(hp).len);
              ait_instruction :
                begin
+{$ifdef arm}
+                 if code16 then
+                   include(taicpu(hp).flags,cf_thumb)
+                 else
+                   exclude(taicpu(hp).flags,cf_thumb);
+{$endif arm}
                  { reset instructions which could change in pass 2 }
                  Taicpu(hp).resetpass2;
                  ObjData.alloc(Taicpu(hp).Pass1(ObjData));
@@ -1855,6 +1929,9 @@ Implementation
                    asd_thumb_func:
                      { ignore for now, but should be added}
                      ;
+                   asd_force_thumb:
+                     { ignore for now, but should be added}
+                     ;
                    asd_code:
                      { ignore for now, but should be added}
                      ;
@@ -2009,7 +2086,7 @@ Implementation
 		       else if sizeof(tai_realconst(hp).value.s80val) = sizeof(single) then
 			 eextended:=float32_to_floatx80(float32(single(tai_realconst(hp).value.s80val)))
 		       else
-			 internalerror(2017091901);
+			 internalerror(2017091903);
                        pdata:=@eextended;
                      end;
            {$pop}
@@ -2048,7 +2125,7 @@ Implementation
                      else if Tai_const(hp).consttype in [aitconst_tlsgd,aitconst_tlsdesc] then
                        begin
                          if objsymend.objsection<>ObjData.CurrObjSec then
-                           Internalerror(2019092802);
+                           Internalerror(2019092803);
                          Tai_const(hp).value:=ObjData.CurrObjSec.Size-objsymend.address+Tai_const(hp).symofs;
                        end
                      else if objsymend.objsection<>objsym.objsection then
@@ -2082,7 +2159,7 @@ Implementation
                    aitconst_rva_symbol :
                      begin
                        { PE32+? }
-                       if target_info.system=system_x86_64_win64 then
+                       if target_info.system in systems_peoptplus then
                          ObjData.writereloc(Tai_const(hp).symofs,sizeof(longint),Objdata.SymbolRef(tai_const(hp).sym),RELOC_RVA)
                        else
                          ObjData.writereloc(Tai_const(hp).symofs,sizeof(pint),Objdata.SymbolRef(tai_const(hp).sym),RELOC_RVA);
@@ -2532,7 +2609,7 @@ Implementation
       var
         asmkind: tasm;
       begin
-        for asmkind in [as_gas,as_ggas,as_darwin] do
+        for asmkind in [as_gas,as_ggas,as_darwin,as_clang_gas,as_clang_asdarwin] do
           if assigned(asminfos[asmkind]) and
              (target_info.system in asminfos[asmkind]^.supported_targets) then
             begin

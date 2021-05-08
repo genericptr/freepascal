@@ -61,6 +61,7 @@ interface
          procedure rangecheck_array;
          procedure rangecheck_string;
        protected
+         function get_address_type: tdef;virtual;
          {# This routine is used to calculate the address of the reference.
             On entry reg contains the index in the array,
            and l contains the size of each element in the array.
@@ -167,29 +168,29 @@ implementation
           end
         else
           begin
-            currpi:=current_procinfo;
             location_reset(location,LOC_REGISTER,def_cgsize(parentfpvoidpointertype));
-            location.register:=hlcg.getaddressregister(current_asmdata.CurrAsmList,parentfpvoidpointertype);
+            currpi:=current_procinfo;
             { load framepointer of current proc }
-            hsym:=tparavarsym(currpi.procdef.parast.Find('parentfp'));
-            if not assigned(hsym) then
-              internalerror(200309281);
-            hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,parentfpvoidpointertype,parentfpvoidpointertype,hsym.localloc,location.register);
-            { walk parents }
-            while (currpi.procdef.owner.symtablelevel>parentpd.parast.symtablelevel) do
+            hsym:=tparavarsym(currpi.procdef.parentfpsym);
+            if (currpi.procdef.owner.symtablelevel=parentpd.parast.symtablelevel) and (hsym.localloc.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+              location.register:=hsym.localloc.register
+            else
               begin
-                currpi:=currpi.parent;
-                if not assigned(currpi) then
-                  internalerror(200311201);
-                hsym:=tparavarsym(currpi.procdef.parast.Find('parentfp'));
-                if not assigned(hsym) then
-                  internalerror(200309282);
+                location.register:=hlcg.getaddressregister(current_asmdata.CurrAsmList,parentfpvoidpointertype);
+                hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,parentfpvoidpointertype,parentfpvoidpointertype,hsym.localloc,location.register);
+                { walk parents }
+                while (currpi.procdef.owner.symtablelevel>parentpd.parast.symtablelevel) do
+                  begin
+                    currpi:=currpi.parent;
+                    if not assigned(currpi) then
+                      internalerror(200311201);
+                    hsym:=tparavarsym(currpi.procdef.parentfpsym);
+                    if hsym.localloc.loc<>LOC_REFERENCE then
+                      internalerror(200309283);
 
-                if hsym.localloc.loc<>LOC_REFERENCE then
-                  internalerror(200309283);
-
-                hlcg.reference_reset_base(href,parentfpvoidpointertype,location.register,hsym.localloc.reference.offset,ctempposinvalid,parentfpvoidpointertype.alignment,[]);
-                hlcg.a_load_ref_reg(current_asmdata.CurrAsmList,parentfpvoidpointertype,parentfpvoidpointertype,href,location.register);
+                    hlcg.reference_reset_base(href,parentfpvoidpointertype,location.register,hsym.localloc.reference.offset,ctempposinvalid,parentfpvoidpointertype.alignment,[]);
+                    hlcg.a_load_ref_reg(current_asmdata.CurrAsmList,parentfpvoidpointertype,parentfpvoidpointertype,href,location.register);
+                  end;
               end;
           end;
       end;
@@ -624,6 +625,12 @@ implementation
        end;
 
 
+     function tcgvecnode.get_address_type: tdef;
+       begin
+         result:=cpointerdef.getreusable(resultdef);
+       end;
+
+
      { this routine must, like any other routine, not change the contents }
      { of base/index registers of references, as these may be regvars.    }
      { The register allocator can coalesce one LOC_REGISTER being moved   }
@@ -636,10 +643,11 @@ implementation
        var
          hreg: tregister;
        begin
+         hlcg.g_ptrtypecast_reg(current_asmdata.CurrAsmList,regsize,get_address_type,maybe_const_reg);
          if l<>1 then
            begin
-             hreg:=cg.getaddressregister(current_asmdata.CurrAsmList);
-             cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_IMUL,OS_ADDR,l,maybe_const_reg,hreg);
+             hreg:=hlcg.getaddressregister(current_asmdata.CurrAsmList,get_address_type);
+             hlcg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_IMUL,get_address_type,l,maybe_const_reg,hreg);
              maybe_const_reg:=hreg;
            end;
          if location.reference.base=NR_NO then
@@ -648,8 +656,8 @@ implementation
            location.reference.index:=maybe_const_reg
          else
           begin
-            hreg:=cg.getaddressregister(current_asmdata.CurrAsmList);
-            cg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,location.reference,hreg);
+            hreg:=hlcg.getaddressregister(current_asmdata.CurrAsmList,get_address_type);
+            hlcg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,resultdef,get_address_type,location.reference,hreg);
             reference_reset_base(location.reference,hreg,0,location.reference.temppos,location.reference.alignment,location.reference.volatility);
             { insert new index register }
             location.reference.index:=maybe_const_reg;
@@ -685,25 +693,26 @@ implementation
            end;
          if (l > 8*sizeof(aint)) then
            internalerror(200608051);
+         hlcg.g_ptrtypecast_reg(current_asmdata.CurrAsmList,regsize,get_address_type,maybe_const_reg);
          sref.ref := location.reference;
-         hreg := cg.getaddressregister(current_asmdata.CurrAsmList);
-         cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_ADDR,tarraydef(left.resultdef).lowrange,maybe_const_reg,hreg);
-         cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_IMUL,OS_ADDR,l,hreg);
+         hreg := hlcg.getaddressregister(current_asmdata.CurrAsmList,get_address_type);
+         hlcg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,get_address_type,tarraydef(left.resultdef).lowrange,maybe_const_reg,hreg);
+         hlcg.a_op_const_reg(current_asmdata.CurrAsmList,OP_IMUL,get_address_type,l,hreg);
          { keep alignment for index }
          sref.ref.alignment := left.resultdef.alignment;
          if not ispowerof2(packedbitsloadsize(l),temp) then
            internalerror(2006081201);
          alignpower:=temp;
-         offsetreg := cg.getaddressregister(current_asmdata.CurrAsmList);
-         cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SHR,OS_ADDR,3+alignpower,hreg,offsetreg);
-         cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_SHL,OS_ADDR,alignpower,offsetreg);
+         offsetreg := hlcg.getaddressregister(current_asmdata.CurrAsmList,get_address_type);
+         hlcg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SHR,get_address_type,3+alignpower,hreg,offsetreg);
+         hlcg.a_op_const_reg(current_asmdata.CurrAsmList,OP_SHL,get_address_type,alignpower,offsetreg);
          if (sref.ref.base = NR_NO) then
            sref.ref.base := offsetreg
          else if (sref.ref.index = NR_NO) then
            sref.ref.index := offsetreg
          else
            begin
-             cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_ADD,OS_ADDR,sref.ref.base,offsetreg);
+             hlcg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_ADD,get_address_type,sref.ref.base,offsetreg);
              sref.ref.base := offsetreg;
            end;
 
@@ -721,7 +730,7 @@ implementation
            sref.bitindexreg:=hreg;
 {$pop}
 
-         cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_AND,OS_INT,(1 shl (3+alignpower))-1,sref.bitindexreg);
+         hlcg.a_op_const_reg(current_asmdata.CurrAsmList,OP_AND,ossinttype,(1 shl (3+alignpower))-1,sref.bitindexreg);
          sref.startbit := 0;
          sref.bitlen := resultdef.packedbitsize;
          if (left.location.loc = LOC_REFERENCE) then
@@ -857,7 +866,9 @@ implementation
          temp : longint;
          hreg : tregister;
          indexdef : tdef;
+         {$if defined(cpu8bitalu) or defined(cpu16bitalu)}
          i : Integer;
+         {$endif}
       begin
          paraloc1.init;
          paraloc2.init;
@@ -944,9 +955,13 @@ implementation
                LOC_REGISTER:
                  begin
                    if not(is_constnode(right)) or (tarraydef(left.resultdef).elementdef.size<>alusinttype.size) then
-                     hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
-                   { we use location here only to get the right offset }
-                   location_reset_ref(location,LOC_REFERENCE,OS_NO,1,[]);
+                     begin
+                       hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
+                       location_copy(location,left.location);
+                     end
+                   else
+                     { we use location here only to get the right offset }
+                     location_reset_ref(location,LOC_REFERENCE,OS_NO,1,[]);
                  end;
                LOC_CSUBSETREG,
                LOC_CMMREGISTER,

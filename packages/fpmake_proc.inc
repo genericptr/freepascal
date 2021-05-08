@@ -679,6 +679,12 @@ begin
 {$include tosunits/fpmake.pp}
 end;
 
+procedure add_tplylib(const ADirectory: string);
+begin
+  with Installer do
+{$include tplylib/fpmake.pp}
+end;
+
 procedure add_univint(const ADirectory: string);
 begin
   with Installer do
@@ -809,5 +815,16 @@ begin
 {$include vcl-compat/fpmake.pp}
 end;
 
+procedure add_qlunits(const ADirectory: string);
+begin
+  with Installer do
+{$include qlunits/fpmake.pp}
+end;
+
+procedure add_mustache(const ADirectory: string);
+begin
+  with Installer do
+{$include fcl-mustache/fpmake.pp}
+end;
 
 {$include ide/fpmake.pp}

@@ -82,10 +82,12 @@
 {$define FPC_HAS_FEATURE_UNICODESTRINGS}
 {$endif FPC_HAS_FEATURE_SUPPORT}
 
-{ bootstrapping, the starting compiler cannot be a downstripped compiler without unicodestring support }
-{$ifdef VER2_6}
-{$define FPC_HAS_FEATURE_UNICODESTRINGS}
-{$endif VER2_6}
+{ for now, the presence of unicode strings is just an approximation,
+  USE_FILEREC_FULLNAME can be also enabled for other targets if
+  they need file names longer than 255 chars }
+{$if defined(FPC_HAS_FEATURE_UNICODESTRINGS)}
+{$define USE_FILEREC_FULLNAME}
+{$endif defined(FPC_HAS_FEATURE_UNICODESTRINGS)}
 
 {****************************************************************************
                          Global Types and Constants
@@ -115,10 +117,9 @@ Type
     on Real <-> Double, so use type here, see also tw7425.pp (FK) }
 {$ifndef FPUNONE}
   Real = type Double;
+{ Include generic version of float64 record }
+{$I genmathh.inc}
 {$endif}
-
-{ Can be individually defined/undefined on a per-platform basis }
-{ define FLOAT_ASCII_FALLBACK}
 
 {$ifdef CPUI386}
   {$define CPU32}
@@ -134,9 +135,7 @@ Type
     ValReal = Extended;
   {$endif}
 
-  {$ifndef VER2_6}
   FarPointer = NearFsPointer;
-  {$endif}
 {$endif CPUI386}
 
 {$ifdef CPUI8086}
@@ -348,6 +347,60 @@ Type
   {$endif}
 {$endif CPURISCV64}
 
+{$ifdef CPUXTENSA}
+  {$define DEFAULT_DOUBLE}
+
+  {$define FPC_INCLUDE_SOFTWARE_MOD_DIV}
+  {$define FPC_INCLUDE_SOFTWARE_MUL}
+  {$define FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
+
+  {$ifndef FPUNONE}
+    {$define SUPPORT_SINGLE}
+    {$define SUPPORT_DOUBLE}
+
+    ValReal = Double;
+  {$endif}
+{$endif CPUXTENSA}
+
+{$ifdef CPUZ80}
+  {$define DEFAULT_SINGLE}
+
+  {$define FPC_INCLUDE_SOFTWARE_MOD_DIV}
+  {$define FPC_INCLUDE_SOFTWARE_MUL}
+  {$define FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
+
+  {$ifndef FPUNONE}
+    {$define SUPPORT_SINGLE}
+    {$define SUPPORT_DOUBLE}
+
+    {$define FPC_INCLUDE_SOFTWARE_INT64_TO_DOUBLE}
+
+    ValReal = Real;
+  {$endif}
+
+  FarPointer = Pointer;
+{$endif CPUZ80}
+
+{$ifdef CPUWASM32}
+  {$define DEFAULT_DOUBLE}
+
+  {$ifndef FPUNONE}
+    {$define SUPPORT_SINGLE}
+    {$define SUPPORT_DOUBLE}
+
+    ValReal = Double;
+  {$endif}
+
+  FarPointer = Pointer;
+{$endif CPUWASM32}
+
+
+{ By default enable a simple implementation of Random for 8/16 bit CPUs }
+{$if (defined(CPU16) or defined(CPU8)) and not defined(FPC_NO_SIMPLE_RANDOM)}
+  {$define FPC_USE_SIMPLE_RANDOM}
+{$endif}
+
+
 {$if not declared(FarPointer)}
   FarPointer = Pointer;
 {$endif}
@@ -363,6 +416,7 @@ Type
   CodePointer = Pointer;
   CodePtrInt = PtrInt;
   CodePtrUInt = PtrUInt;
+  TExitCode = Longint;
 {$endif CPU64}
 
 {$ifdef CPU32}
@@ -375,6 +429,7 @@ Type
   CodePointer = Pointer;
   CodePtrInt = PtrInt;
   CodePtrUInt = PtrUInt;
+  TExitCode = Longint;
 {$endif CPU32}
 
 {$ifdef CPU16}
@@ -406,9 +461,11 @@ Type
   {$endif}
   ValSInt = Integer;
   ValUInt = Word;
+  { this is TP compatible }
+  TExitCode = Word;
 {$endif CPU16}
 
-{$if defined(VER2) or defined(VER3_0)}
+{$if defined(VER3_0)}
 {$if defined(CPU16)}
 {$define CPUINT16}
 {$elseif defined(CPU32)}
@@ -416,7 +473,7 @@ Type
 {$elseif defined(CPU64)}
 {$define CPUINT64}
 {$endif defined(CPU64)}
-{$endif defined(VER2) or defined(VER3_0)}
+{$endif defined(VER3_0)}
 
 {$if defined(CPUINT8)}
   ALUSInt = ShortInt;
@@ -603,11 +660,6 @@ Type
 
   TSystemCodePage     = Word;
 
-{$ifdef VER2_6}
-  { the size of textrec/filerec is hardcoded in the 2.6 compiler binary }
-  {$define FPC_ANSI_TEXTFILEREC}
-{$endif}
-
   TFileTextRecChar    = {$if defined(FPC_ANSI_TEXTFILEREC) or not(defined(FPC_HAS_FEATURE_WIDESTRINGS))}AnsiChar{$else}UnicodeChar{$endif};
   PFileTextRecChar    = ^TFileTextRecChar;
 
@@ -734,7 +786,7 @@ const
   ModuleIsCpp : Boolean = FALSE;
 
 var
-  ExitCode    : Longint; public name 'operatingsystem_result';
+  ExitCode    : TExitCode; public name 'operatingsystem_result';
   RandSeed    : Cardinal;
   { Delphi compatibility }
 
@@ -773,9 +825,14 @@ Var
 {$endif FPC_HAS_FEATURE_THREADING}
   ThreadID    : TThreadID;
   { Standard In- and Output }
+{$ifndef FPC_STDERR_IS_ALIAS_FOR_STDOUT}
   ErrOutput,
+{$endif FPC_STDERR_IS_ALIAS_FOR_STDOUT}
   Output,
   Input       : Text;
+{$ifdef FPC_STDERR_IS_ALIAS_FOR_STDOUT}
+  ErrOutput   : Text Absolute Output;
+{$endif FPC_STDERR_IS_ALIAS_FOR_STDOUT}
 {$ifndef FPC_STDOUT_TRUE_ALIAS}
   StdOut,
   StdErr      : Text;
@@ -837,7 +894,6 @@ procedure WriteBarrier;
 procedure MoveData(srcseg,srcoff,destseg,destoff:Word;n:Word);
 {$endif cpui8086}
 
-
 {****************************************************************************
                           Math Routines
 ****************************************************************************}
@@ -868,6 +924,9 @@ Function Align (Addr : PtrUInt; Alignment : PtrUInt) : PtrUInt;{$ifdef SYSTEMINL
 Function Align (Addr : Pointer; Alignment : PtrUInt) : Pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
 
 {$ifdef FPC_HAS_FEATURE_RANDOM}
+{$ifdef FPC_USE_SIMPLE_RANDOM}
+Function  Random(l:word):word;
+{$endif FPC_USE_SIMPLE_RANDOM}
 Function  Random(l:longint):longint;
 Function  Random(l:int64):int64;
 {$ifndef FPUNONE}
@@ -1096,7 +1155,7 @@ function fpc_SarInt64(Const AValue : Int64;const Shift : Byte): Int64;compilerpr
 {$endif}
 
 {$ifdef FPC_HAS_INTERNAL_BSR}
-{$if defined(cpui386) or defined(cpux86_64) or defined(cpuarm) or defined(cpuaarch64) or defined(cpupowerpc32) or defined(cpupowerpc64)}
+{$if defined(cpui386) or defined(cpux86_64) or defined(cpuarm) or defined(cpuaarch64) or defined(cpupowerpc32) or defined(cpupowerpc64) or defined(cpuxtensa)}
 {$define FPC_HAS_INTERNAL_BSR_BYTE}
 {$define FPC_HAS_INTERNAL_BSR_WORD}
 {$define FPC_HAS_INTERNAL_BSR_DWORD}
@@ -1235,7 +1294,9 @@ Function  HexStr(Val:Pointer):shortstring;
 {$endif CPUI8086}
 
 { Char functions }
+{$if defined(VER3_2) or defined(VER3_0)}
 Function Chr(b : byte) : Char;      [INTERNPROC: fpc_in_chr_byte];
+{$endif defined(VER3_2) or defined(VER3_0)}
 Function  UpCase(c:Char):Char;
 Function  LowerCase(c:Char):Char; overload;
 function  Pos(const substr : shortstring;c:char; Offset: Sizeint = 1): SizeInt;
@@ -1246,7 +1307,7 @@ function  Pos(const substr : shortstring;c:char; Offset: Sizeint = 1): SizeInt;
 ****************************************************************************}
 
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure UniqueString(var S : RawByteString);{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}external name 'FPC_ANSISTR_UNIQUE';
+Procedure UniqueString(var S : RawByteString);{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}{$ifdef SYSTEMINLINE}inline;{$endif}
 Function  Pos (const Substr : RawByteString; const Source : RawByteString; Offset: Sizeint = 1) : SizeInt;
 Function  Pos (c : AnsiChar; const s : RawByteString; Offset: Sizeint = 1) : SizeInt;
 {$ifdef VER3_0}
@@ -1321,6 +1382,9 @@ Procedure Seek(var f:File;Pos:Int64);
 Function  EOF(var f:File):Boolean;
 Procedure Erase(var f:File);
 Procedure Truncate (var F:File);
+{$ifdef FPC_HAS_FEATURE_UNICODESTRINGS}
+Function GetFullName(var f:File) : UnicodeString;
+{$endif FPC_HAS_FEATURE_UNICODESTRINGS}
 {$endif FPC_HAS_FEATURE_FILEIO}
 
 
@@ -1380,6 +1444,30 @@ Procedure SetTextBuf(var f:Text; var Buf; Size:SizeInt);
 Procedure SetTextLineEnding(var f:Text; Ending:string);
 function GetTextCodePage(var T: Text): TSystemCodePage;
 procedure SetTextCodePage(var T: Text; CodePage: TSystemCodePage);
+{$ifdef FPC_HAS_FEATURE_UNICODESTRINGS}
+Function GetFullName(var T:Text) : UnicodeString;
+{$endif FPC_HAS_FEATURE_UNICODESTRINGS}
+procedure SetTextAutoFlush (var T: Text; AutoFlush: boolean);
+(* By default, output to text files is buffered in case of "regular" files,  *)
+(* i.e. files on regular block devices, and not buffered in case of various  *)
+(* other devices like console or sockets. Calling this procedure right after *)
+(* opening the file (i.e. after Rewrite or Append) allows changing the       *)
+(* default behaviour either to always perform flush after every Write or     *)
+(* WriteLn in case of AutoFlush = true, i.e. disable output buffering for    *)
+(* the given particular open text file even in case of regular files on      *)
+(* block devices, or to enforce output buffering even in case of text files  *)
+(* used for output to other devices like console or sockets in case of       *)
+(* AutoFlush = false. Note that reopening the file resets the behaviour to   *)
+(* the default. Runtime error 103 is triggered if the text file is not open, *)
+(* runtime error 105 if the text file is open strictly for input. The call   *)
+(* is ignored if InOutRes is not 0 before the call.                          *)
+function GetTextAutoFlush (var T: Text): boolean;
+(* Check whether output buffering is enabled for the currently open file, or *)
+(* not - either due to default behaviour for the associated device, or due   *)
+(* a previous call of SetTextAutoFlush. Runtime error 103 is triggered if    *)
+(* the text file is not open, runtime error 105 if the text file is open     *)
+(* strictly for input. The call is ignored if InOutRes is not 0 before the   *)
+(* call.                                                                     *)
 {$endif FPC_HAS_FEATURE_TEXTIO}
 
 {****************************************************************************
@@ -1426,15 +1514,15 @@ function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;[INTERNPROC:
 function get_frame:pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
 {$ENDIF}
 
-Function Get_pc_addr : CodePointer;
+Function Get_pc_addr : CodePointer;{$ifdef SYSTEMINLINE}inline;{$endif}
 
 { Writes at most 'count' caller stack frames to pre-allocated buffer pointed to
   by 'frames', skipping 'skipframes' initial frames. Returns number of frames written. }
 function CaptureBacktrace(skipframes,count:sizeint;frames:PCodePointer):sizeint;
 
-function get_caller_addr(framebp:pointer;addr:codepointer=nil):codepointer;
-function get_caller_frame(framebp:pointer;addr:codepointer=nil):pointer;
-procedure get_caller_stackinfo(var framebp : pointer; var addr : codepointer);
+function get_caller_addr(framebp:pointer;addr:codepointer=nil):codepointer;{$ifdef SYSTEMINLINE}inline;{$endif}
+function get_caller_frame(framebp:pointer;addr:codepointer=nil):pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
+procedure get_caller_stackinfo(var framebp : pointer; var addr : codepointer);{$ifdef SYSTEMINLINE}inline;{$endif}
 
 Function IOResult:Word;
 Function SPtr:Pointer;[internconst:fpc_in_const_ptr];
@@ -1514,7 +1602,7 @@ function InterlockedIncrement64 (var Target: qword) : qword; external name 'FPC_
 function InterlockedDecrement64 (var Target: qword) : qword; external name 'FPC_INTERLOCKEDDECREMENT64';
 function InterlockedExchange64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGE64';
 function InterlockedExchangeAdd64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGEADD64';
-function InterlockedCompareExchange64(var Target: qword; NewValue: qword; Comperand: qword): int64; external name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64';
+function InterlockedCompareExchange64(var Target: qword; NewValue: qword; Comperand: qword): qword; external name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64';
 {$endif cpu64}
 
 
@@ -1557,7 +1645,7 @@ procedure DumpExceptionBacktrace(var f:text);
 
 Procedure RunError(w:Word);noreturn;
 Procedure RunError;{$ifdef SYSTEMINLINE}inline;{$endif}noreturn;
-Procedure Halt(errnum:Longint);noreturn;
+Procedure Halt(errnum:TExitCode);noreturn;
 {$ifdef FPC_HAS_FEATURE_HEAP}
 Procedure AddExitProc(Proc:TProcedure);
 {$endif FPC_HAS_FEATURE_HEAP}
@@ -1568,10 +1656,12 @@ Procedure Halt;{$ifdef SYSTEMINLINE}inline;{$endif}noreturn;
 Procedure SysInitExceptions;
 {$endif FPC_HAS_FEATURE_EXCEPTIONS}
 {$ifdef FPC_HAS_FEATURE_CONSOLEIO}
-{$ifndef EMBEDDED}
+
+{$if not(defined(EMBEDDED)) and not(defined(FREERTOS))}
 procedure SysInitStdIO;
 procedure SysFlushStdIO;
-{$endif EMBEDDED}
+{$endif not(defined(EMBEDDED)) and not(defined(FREERTOS))}
+
 {$endif FPC_HAS_FEATURE_CONSOLEIO}
 {$ifndef FPUNONE}
 Procedure SysResetFPU;
@@ -1631,17 +1721,13 @@ const
                            RTTI support
 *****************************************************************************}
 
-{$ifdef FPC_HAS_FEATURE_RTTI}
 {$i rttih.inc}
-{$endif FPC_HAS_FEATURE_RTTI}
 
 {*****************************************************************************
                        Object Pascal support
 *****************************************************************************}
 
-{$ifdef FPC_HAS_FEATURE_CLASSES}
 {$i objpash.inc}
-{$endif FPC_HAS_FEATURE_CLASSES}
 
 {*****************************************************************************
                            Variant support

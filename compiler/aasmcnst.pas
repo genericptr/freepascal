@@ -155,7 +155,7 @@ type
     private
      fnextfieldname: TIDString;
      function getcuroffset: asizeint;
-     procedure setnextfieldname(AValue: TIDString);
+     procedure setnextfieldname(const AValue: TIDString);
     protected
      { type of the aggregate }
      fdef: tdef;
@@ -217,7 +217,7 @@ type
     private
      function getcurragginfo: taggregateinformation;
      procedure set_next_field(AValue: tfieldvarsym);
-     procedure set_next_field_name(AValue: TIDString);
+     procedure set_next_field_name(const AValue: TIDString);
     protected
      { temporary list in which all data is collected }
      fasmlist: tasmlist;
@@ -295,6 +295,8 @@ type
      { get a label in the middle of an internal data section (no dead
        stripping) }
      function get_internal_data_section_internal_label: tasmlabel; virtual;
+     { adds a new entry to current_module.linkorderedsymbols }
+     procedure add_link_ordered_symbol(sym: tasmsymbol; const secname: TSymStr); virtual;
 
      { easy access to the top level aggregate information instance }
      property curagginfo: taggregateinformation read getcurragginfo;
@@ -336,11 +338,13 @@ type
      procedure insert_marked_aggregate_alignment(def: tdef); virtual; abstract;
      class function get_vectorized_dead_strip_section_symbol(const basename: string; st: tsymtable; options: ttcdeadstripsectionsymboloptions; start: boolean): tasmsymbol; virtual;
     public
-     class function get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; out secname: TSymStr): boolean; virtual;
+     class function get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; options: ttcasmlistoptions; out secname: TSymStr): boolean; virtual;
      { get the start/end symbol for a dead stripable vectorized section, such
        as the resourcestring data of a unit }
      class function get_vectorized_dead_strip_section_symbol_start(const basename: string; st: tsymtable; options: ttcdeadstripsectionsymboloptions): tasmsymbol; virtual;
      class function get_vectorized_dead_strip_section_symbol_end(const basename: string; st: tsymtable; options: ttcdeadstripsectionsymboloptions): tasmsymbol; virtual;
+     { returns true if smartlinking of the dead stripable vectorized lists is supported }
+     class function is_smartlink_vectorized_dead_strip: boolean; virtual;
 
      class function get_dynstring_rec_name(typ: tstringtype; winlike: boolean; len: asizeint): TSymStr;
      class function get_dynstring_rec(typ: tstringtype; winlike: boolean; len: asizeint): trecorddef;
@@ -384,7 +388,7 @@ type
         b) the def of the record should be automatically constructed based on
            the types of the emitted fields
 
-        packrecords: same as "pacrecords x"
+        packrecords: same as "packrecords x"
         recordalign: specify the (minimum) alignment of the start of the record
           (no equivalent in source code), used as an alternative for explicit
           align statements. Use "1" if it should be calculated based on the
@@ -423,6 +427,10 @@ type
      function queue_subscriptn_multiple_by_name(def: tabstractrecorddef; const fields: array of TIDString): tdef;
      { queue a type conversion operation }
      procedure queue_typeconvn(fromdef, todef: tdef); virtual;
+     { queue a add operation }
+     procedure queue_addn(def: tdef; const index: tconstexprint); virtual;
+     { queue a sub operation }
+     procedure queue_subn(def: tdef; const index: tconstexprint); virtual;
      { finalise the queue (so a new one can be created) and flush the
         previously queued operations, applying them in reverse order on a...}
      { ... procdef }
@@ -534,7 +542,7 @@ implementation
       end;
 
 
-    procedure taggregateinformation.setnextfieldname(AValue: TIDString);
+    procedure taggregateinformation.setnextfieldname(const AValue: TIDString);
       begin
         if (fnextfieldname<>'') or
            not anonrecord then
@@ -827,8 +835,6 @@ implementation
 
 
    destructor tai_aggregatetypedconst.destroy;
-     var
-       ai: tai_abstracttypedconst;
      begin
        fvalues.free;
        inherited destroy;
@@ -860,7 +866,7 @@ implementation
      end;
 
 
-    procedure ttai_typedconstbuilder.set_next_field_name(AValue: TIDString);
+    procedure ttai_typedconstbuilder.set_next_field_name(const AValue: TIDString);
       var
         info: taggregateinformation;
       begin
@@ -917,6 +923,12 @@ implementation
        else
          { no special requirement for the label -> just get a local one }
          current_asmdata.getlocaldatalabel(result);
+     end;
+
+
+   procedure ttai_typedconstbuilder.add_link_ordered_symbol(sym: tasmsymbol; const secname: TSymStr);
+     begin
+       current_module.linkorderedsymbols.concat(sym.Name);
      end;
 
 
@@ -979,14 +991,7 @@ implementation
            new_section(prelist,section,secname,alignment);
          end
        else if tcalo_new_section in options then
-         begin
-           { insert ait_cutobject for smart-linking on targets
-             that do not support smarlinking based on sections,
-             like msdos }
-           if not (tf_smartlink_sections in target_info.flags) then
-             maybe_new_object_file(prelist);
-           new_section(prelist,section,secname,alignment);
-         end
+         new_section(prelist,section,secname,alignment)
        else
          prelist.concat(cai_align.Create(alignment));
 
@@ -1045,7 +1050,7 @@ implementation
              indsecname:=secname
            else
              indsecname:=lower(symind.name);
-           indtcb:=ctai_typedconstbuilder.create([tcalo_new_section]);
+           indtcb:=ctai_typedconstbuilder.create([tcalo_new_section,tcalo_make_dead_strippable]);
            indtcb.emit_tai(tai_const.create_sym_offset(sym,0),ptrdef);
            current_asmdata.asmlists[al_indirectglobals].concatlist(indtcb.get_final_asmlist(
              symind,
@@ -1071,7 +1076,7 @@ implementation
      begin
        fvectorized_finalize_called:=true;
        sym:=nil;
-       customsecname:=get_vectorized_dead_strip_custom_section_name(basename,st,secname);
+       customsecname:=get_vectorized_dead_strip_custom_section_name(basename,st,options,secname);
        if customsecname then
          sectype:=sec_user
        else
@@ -1112,7 +1117,17 @@ implementation
              secname:=make_mangledname(basename,st,'2_'+itemname);
            exclude(options,tcalo_vectorized_dead_strip_item);
          end;
-       current_module.linkorderedsymbols.concat(sym.Name);
+       add_link_ordered_symbol(sym,secname);
+       if is_smartlink_vectorized_dead_strip then
+         options:=options+[tcalo_new_section,tcalo_make_dead_strippable]
+       else
+         begin
+           { if smartlinking of vectorized lists is not supported,
+             put the whole list into a single section. }
+           options:=options-[tcalo_new_section,tcalo_make_dead_strippable];
+           if tcalo_vectorized_dead_strip_start in options then
+             include(options,tcalo_new_section);
+         end;
        finalize_asmlist(sym,def,sectype,secname,alignment,options);
      end;
 
@@ -1150,7 +1165,9 @@ implementation
    class function ttai_typedconstbuilder.get_string_symofs(typ: tstringtype; winlikewidestring: boolean): pint;
      begin
        { darwin's linker does not support negative offsets }
-       if not(target_info.system in systems_darwin) then
+       if not(target_info.system in systems_darwin+systems_wasm) and
+          { it seems that clang's assembler has a bug with the ADRP instruction... }
+          (target_info.system<>system_aarch64_win64) then
          result:=0
        else
          result:=get_string_header_size(typ,winlikewidestring);
@@ -1160,7 +1177,9 @@ implementation
    class function ttai_typedconstbuilder.get_dynarray_symofs:pint;
      begin
        { darwin's linker does not support negative offsets }
-       if not (target_info.system in systems_darwin) then
+       if not (target_info.system in systems_darwin) and
+          { it seems that clang's assembler has a bug with the ADRP instruction... }
+          (target_info.system<>system_aarch64_win64) then
          result:=0
        else
          result:=get_dynarray_header_size;
@@ -1297,7 +1316,7 @@ implementation
        else if (assigned(finternal_data_asmlist) and
            (list<>finternal_data_asmlist)) or
            not assigned(list) then
-         internalerror(2015032101);
+         internalerror(2015032102);
        finternal_data_asmlist:=list;
        if not assigned(l) then
          l:=get_internal_data_section_internal_label;
@@ -1545,7 +1564,7 @@ implementation
      end;
 
 
-   class function ttai_typedconstbuilder.get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; out secname: TSymStr): boolean;
+   class function ttai_typedconstbuilder.get_vectorized_dead_strip_custom_section_name(const basename: TSymStr; st: tsymtable; options: ttcasmlistoptions; out secname: TSymStr): boolean;
      begin
        result:=false;
      end;
@@ -1560,6 +1579,14 @@ implementation
    class function ttai_typedconstbuilder.get_vectorized_dead_strip_section_symbol_end(const basename: string; st: tsymtable; options: ttcdeadstripsectionsymboloptions): tasmsymbol;
      begin
        result:=get_vectorized_dead_strip_section_symbol(basename,st,options,false);
+     end;
+
+
+   class function ttai_typedconstbuilder.is_smartlink_vectorized_dead_strip: boolean;
+     begin
+       result:=(tf_smartlink_sections in target_info.flags) and
+               (not(target_info.system in systems_darwin) or
+                (tf_supports_symbolorderfile in target_info.flags));
      end;
 
 
@@ -1842,7 +1869,7 @@ implementation
 
    procedure ttai_typedconstbuilder.emit_procdef_const(pd: tprocdef);
      begin
-       emit_tai(Tai_const.Createname(pd.mangledname,AT_FUNCTION,0),cprocvardef.getreusableprocaddr(pd));
+       emit_tai(Tai_const.Createname(pd.mangledname,AT_FUNCTION,0),cprocvardef.getreusableprocaddr(pd,pc_address_only));
      end;
 
 
@@ -2056,6 +2083,18 @@ implementation
          inc(fqueue_offset,elelen*v.svalue)
        else
          message3(type_e_range_check_error_bounds,tostr(index),tostr(vecbase),tostr(high(fqueue_offset)-fqueue_offset div elelen+vecbase))
+     end;
+
+
+   procedure ttai_typedconstbuilder.queue_addn(def: tdef; const index: tconstexprint);
+     begin
+       inc(fqueue_offset,def.size*int64(index));
+     end;
+
+
+   procedure ttai_typedconstbuilder.queue_subn(def: tdef; const index: tconstexprint);
+     begin
+       dec(fqueue_offset,def.size*int64(index));
      end;
 
 

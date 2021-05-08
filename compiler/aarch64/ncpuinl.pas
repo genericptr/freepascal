@@ -1,7 +1,7 @@
 {
     Copyright (c) 1998-2002 by Florian Klaempfl
 
-    Generates ARM inline nodes
+    Generates AAarch64 inline nodes
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -35,6 +35,8 @@ interface
         function first_sqrt_real: tnode; override;
         function first_round_real: tnode; override;
         function first_trunc_real: tnode; override;
+        function first_int_real: tnode; override;
+        function first_frac_real: tnode; override;
         function first_fma : tnode; override;
         procedure second_abs_real; override;
         procedure second_sqr_real; override;
@@ -42,8 +44,11 @@ interface
         procedure second_abs_long; override;
         procedure second_round_real; override;
         procedure second_trunc_real; override;
+        procedure second_int_real; override;
+        procedure second_frac_real; override;
         procedure second_get_frame; override;
         procedure second_fma; override;
+        procedure second_prefetch; override;
       private
         procedure load_fpu_location;
       end;
@@ -55,7 +60,7 @@ implementation
       globtype,verbose,globals,
       cpuinfo, defutil,symdef,aasmdata,aasmcpu,
       cgbase,cgutils,pass_1,pass_2,
-      ncal,
+      ncal,nutils,
       cpubase,ncgutil,cgobj,cgcpu, hlcgobj;
 
 {*****************************************************************************
@@ -107,16 +112,31 @@ implementation
       end;
 
 
-     function taarch64inlinenode.first_fma : tnode;
-       begin
-         if ((is_double(resultdef)) or (is_single(resultdef))) then
-           begin
-             expectloc:=LOC_MMREGISTER;
-             Result:=nil;
-           end
-         else
-           Result:=inherited first_fma;
-       end;
+    function taarch64inlinenode.first_int_real : tnode;
+      begin
+        expectloc:=LOC_MMREGISTER;
+        result:=nil;
+      end;
+
+
+    function taarch64inlinenode.first_frac_real : tnode;
+      begin
+        expectloc:=LOC_MMREGISTER;
+        result:=nil;
+      end;
+
+
+    function taarch64inlinenode.first_fma : tnode;
+      begin
+        if ((is_double(resultdef)) or (is_single(resultdef))) then
+          begin
+            expectloc:=LOC_MMREGISTER;
+            Result:=nil;
+          end
+        else
+          Result:=inherited first_fma;
+     end;
+
 
     procedure taarch64inlinenode.second_abs_real;
       begin
@@ -183,6 +203,33 @@ implementation
         location.register:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
         { convert to signed integer rounding towards zero }
         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FCVTZS,location.register,left.location.register));
+      end;
+
+
+    procedure taarch64inlinenode.second_int_real;
+      var
+        hreg: tregister;
+      begin
+        secondpass(left);
+        hlcg.location_force_mmregscalar(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
+        location.register:=cg.getmmregister(current_asmdata.CurrAsmList,location.size);
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FRINTZ,location.register,left.location.register));
+        cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
+      end;
+
+
+    procedure taarch64inlinenode.second_frac_real;
+      var
+        hreg: tregister;
+      begin
+        secondpass(left);
+        hlcg.location_force_mmregscalar(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
+        location.register:=cg.getmmregister(current_asmdata.CurrAsmList,location.size);
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FRINTZ,location.register,left.location.register));
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_FSUB,location.register,left.location.register,location.register));
+        cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
       end;
 
 
@@ -269,6 +316,34 @@ implementation
         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg_reg(op[negproduct,negop3],
           location.register,paraarray[1].location.register,paraarray[2].location.register,paraarray[3].location.register));
         cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
+      end;
+
+
+    procedure taarch64inlinenode.second_prefetch;
+      var
+        ref : treference;
+        r : tregister;
+        checkpointer_used : boolean;
+      begin
+        { do not call Checkpointer for left node }
+        checkpointer_used:=(cs_checkpointer in current_settings.localswitches);
+        if checkpointer_used then
+          node_change_local_switch(left,cs_checkpointer,false);
+        secondpass(left);
+        if checkpointer_used then
+          node_change_local_switch(left,cs_checkpointer,false);
+       case left.location.loc of
+         LOC_CREFERENCE,
+         LOC_REFERENCE:
+           begin
+             r:=cg.getintregister(current_asmdata.CurrAsmList,OS_ADDR);
+             cg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,left.location.reference,r);
+             reference_reset_base(ref,r,0,location.reference.temppos,left.location.reference.alignment,location.reference.volatility);
+             current_asmdata.CurrAsmList.concat(taicpu.op_const_ref(A_PRFM,0,ref));
+           end;
+         else
+           { nothing to prefetch };
+       end;
       end;
 
 

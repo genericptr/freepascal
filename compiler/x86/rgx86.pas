@@ -109,6 +109,14 @@ implementation
        function avx_opcode_only_op0_may_be_memref(opcode : TAsmOp) : boolean;
          begin
            case opcode of
+             A_VMAXPD,
+             A_VMAXPS,
+             A_VMAXSD,
+             A_VMAXSS,
+             A_VMINPD,
+             A_VMINPS,
+             A_VMINSD,
+             A_VMINSS,
              A_VMULSS,
              A_VMULSD,
              A_VSUBSS,
@@ -143,7 +151,13 @@ implementation
              A_VANDPS,
              A_VUNPCKLPS,
              A_VUNPCKHPS,
-             A_VSHUFPD:
+             A_VSHUFPD,
+             A_VREDUCEPD,
+             A_VREDUCEPS,
+             A_VREDUCESD,
+             A_VREDUCESS,
+             A_VROUNDSS,
+             A_VROUNDSD:
                result:=true;
              else
                result:=false;
@@ -274,6 +288,11 @@ implementation
                               A_UNPCKLPD,
                               A_UNPCKLPS :
                                 replaceoper:=-1;
+
+                              { movlhps/movhlps requires the second parameter to be XMM registers }
+                              A_MOVHLPS,
+                              A_MOVLHPS:
+                                replaceoper:=-1;
                               else
                                 ;
                             end;
@@ -327,6 +346,9 @@ implementation
                               A_CVTTSS2SI,
                               A_XORPD,
                               A_XORPS,
+                              A_PXOR,
+                              A_PAND,
+                              A_POR,
                               A_ORPD,
                               A_ORPS,
                               A_ANDPD,
@@ -336,7 +358,15 @@ implementation
                               A_SHUFPD,
                               A_SHUFPS,
                               A_VCOMISD,
-                              A_VCOMISS:
+                              A_VCOMISS,
+                              A_MINSS,
+                              A_MINSD,
+                              A_MINPS,
+                              A_MINPD,
+                              A_MAXSS,
+                              A_MAXSD,
+                              A_MAXPS,
+                              A_MAXPD:
                                 replaceoper:=-1;
 
                               A_IMUL:
@@ -377,8 +407,10 @@ implementation
             { 32 bit operations on 32 bit registers on x86_64 can result in
               zeroing the upper 32 bits of the register. This does not happen
               with memory operations, so we have to perform these calculations
-              in registers.  }
-            if (opsize=S_L) then
+              in registers.
+
+              However, for instructions not modifying registers, this is not a problem }
+            if (opsize=S_L) and (opcode<>A_CMP) and (opcode<>A_TEST) and (opcode<>A_BT) then
               replaceoper:=-1;
 {$endif x86_64}
 

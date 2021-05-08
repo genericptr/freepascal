@@ -107,8 +107,7 @@ uses
   llvminfo,
 {$endif llvm}
   dirparse,
-  pkgutil,
-  i_bsd;
+  pkgutil;
 
 const
   page_size = 24;
@@ -136,9 +135,12 @@ const
                         + [system_i386_freebsd]
                         + [system_i386_netbsd]
                         + [system_i386_wdosx]
-                        + [system_riscv32_linux,system_riscv64_linux];
+                        + [system_riscv32_linux,system_riscv64_linux]
+                        + [system_aarch64_linux];
+
 
   suppported_targets_x_smallr = systems_linux + systems_solaris + systems_android
+                             + systems_openbsd
                              + [system_i386_haiku,system_x86_64_haiku]
                              + [system_i386_beos]
                              + [system_m68k_amiga];
@@ -211,6 +213,7 @@ var
   p : pchar;
   hs,hs1,hs3,s : TCmdStr;
   J: longint;
+  xmloutput: Text;
 const
   NewLineStr = '$\n';
   OSTargetsPlaceholder = '$OSTARGETS';
@@ -222,9 +225,11 @@ const
   AsmModeListPlaceholder = '$ASMMODES';
   ControllerListPlaceholder = '$CONTROLLERTYPES';
   FeatureListPlaceholder = '$FEATURELIST';
+  ModeSwitchListPlaceholder = '$MODESWITCHES';
+  CodeGenerationBackendPlaceholder = '$CODEGENERATIONBACKEND';
 
   procedure SplitLine (var OrigString: TCmdStr; const Placeholder: TCmdStr;
-                                                 var RemainderString: TCmdStr);
+                                                 out RemainderString: TCmdStr);
   var
     I: longint;
     HS2: TCmdStr;
@@ -266,7 +271,7 @@ const
      begin
       hs1:=targetinfos[target]^.shortname;
       if OrigString = '' then
-       WriteLn (hs1)
+       Comment (V_Normal, hs1)
       else
        begin
         hs := OrigString;
@@ -277,8 +282,22 @@ const
         Comment(V_Normal,hs);
        end;
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, OSTargetsPlaceholder, HS3);
+  end;
+
+  procedure ListOSTargetsXML;
+  var
+    target : tsystem;
+  begin
+    WriteLn(xmloutput,'    <ostargets>');
+    for target:=low(tsystem) to high(tsystem) do
+    if assigned(targetinfos[target]) then
+      begin
+        Write(xmloutput,'      <ostarget shortname="',targetinfos[target]^.shortname,'" name="',targetinfos[target]^.name,'"');
+        if tf_under_development in targetinfos[target]^.flags then
+          Write(' experimental="1"');
+        WriteLn('/>');
+      end;
+    WriteLn(xmloutput,'    </ostargets>');
   end;
 
   procedure ListCPUInstructionSets (OrigString: TCmdStr);
@@ -292,13 +311,14 @@ const
       if (OrigString = '') then
        begin
         if CPUTypeStr [CPU] <> '' then
-         WriteLn (CPUTypeStr [CPU]);
+         Comment (V_Normal, CPUTypeStr [CPU]);
        end
       else
        begin
         if length(hs1+cputypestr[cpu])>70 then
          begin
           hs:=OrigString;
+          HS1 := HS1 + ',';
           Replace(hs,CPUListPlaceholder,hs1);
           Comment(V_Normal,hs);
           hs1:=''
@@ -316,8 +336,17 @@ const
       Comment(V_Normal,hs);
       hs1:=''
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, CPUListPlaceholder, HS3);
+  end;
+
+  procedure ListCPUInstructionSetsXML;
+  var
+    cpu : tcputype;
+  begin
+    WriteLn(xmloutput,'    <cpuinstructionsets>');
+    for cpu:=low(tcputype) to high(tcputype) do
+      if CPUTypeStr [CPU] <> '' then
+        WriteLn(xmloutput,'      <cpuinstructionset name="',CPUTypeStr [CPU], '"/>');
+    WriteLn(xmloutput,'    </cpuinstructionsets>');
   end;
 
   procedure ListFPUInstructionSets (OrigString: TCmdStr);
@@ -331,13 +360,14 @@ const
       if (OrigString = '') then
        begin
         if FPUTypeStr [FPU] <> '' then
-         WriteLn (FPUTypeStr [FPU]);
+         Comment (V_Normal, FPUTypeStr [FPU]);
        end
       else
        begin
         if length(hs1+fputypestr[fpu])>70 then
          begin
           hs:=OrigString;
+          HS1 := HS1 + ',';
           Replace(hs,FPUListPlaceholder,hs1);
           Comment(V_Normal,hs);
           hs1:=''
@@ -355,8 +385,17 @@ const
       Comment(V_Normal,hs);
       hs1:=''
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, FPUListPlaceholder, HS3);
+  end;
+
+  procedure ListFPUInstructionSetsXML;
+  var
+    fpu : tfputype;
+  begin
+    WriteLn(xmloutput,'    <fpuinstructionsets>');
+    for fpu:=low(tfputype) to high(tfputype) do
+      if FPUTypeStr [fpu] <> '' then
+        WriteLn(xmloutput,'      <cpuinstructionset name="',FPUTypeStr [fpu], '"/>');
+    WriteLn(xmloutput,'    </fpuinstructionsets>');
   end;
 
   procedure ListABITargets (OrigString: TCmdStr);
@@ -372,7 +411,7 @@ const
       if hs1<>'' then
        begin
         if OrigString = '' then
-         WriteLn (HS1)
+         Comment (V_Normal, HS1)
         else
          begin
           hs:=OrigString;
@@ -381,8 +420,21 @@ const
          end;
        end;
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, ABIListPlaceholder, HS3);
+  end;
+
+  procedure ListABITargetsXML;
+  var
+    abi : tabi;
+  begin
+    WriteLn(xmloutput,'    <abis>');
+    for abi:=low(abi) to high(abi) do
+     begin
+      if not abiinfo[abi].supported then
+        continue;
+      if abiinfo[abi].name<>'' then;
+        WriteLn(xmloutput,'      <abi name="',abiinfo[abi].name, '"/>');
+     end;
+    WriteLn(xmloutput,'    </abis>');
   end;
 
   procedure ListOptimizations (OrigString: TCmdStr);
@@ -398,7 +450,7 @@ const
         if hs1<>'' then
          begin
           if OrigString = '' then
-           WriteLn (hs1)
+           Comment (V_Normal, hs1)
           else
            begin
             hs:=OrigString;
@@ -408,8 +460,17 @@ const
          end;
        end;
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, OptListPlaceholder, HS3);
+  end;
+
+  procedure ListOptimizationsXML;
+  var
+    opt: toptimizerswitch;
+  begin
+    WriteLn(xmloutput,'    <optimizations>');
+    for opt:=low(toptimizerswitch) to high(toptimizerswitch) do
+      if OptimizerSwitchStr[opt]<>'' then
+        WriteLn(xmloutput,'      <optimization name="',OptimizerSwitchStr[opt],'"/>');
+    WriteLn(xmloutput,'    </optimizations>');
   end;
 
   procedure ListWPOptimizations (OrigString: TCmdStr);
@@ -427,7 +488,7 @@ const
         if hs1<>'' then
          begin
           if OrigString = '' then
-           WriteLn (hs1)
+           Comment (V_Normal, hs1)
           else
            begin
             hs:=OrigString;
@@ -437,8 +498,17 @@ const
          end;
        end;
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, WPOListPlaceholder, HS3);
+  end;
+
+  procedure ListWPOptimizationsXML;
+  var
+    wpopt: twpoptimizerswitch;
+  begin
+    WriteLn(xmloutput,'    <wpoptimizations>');
+    for wpopt:=low(twpoptimizerswitch) to high(twpoptimizerswitch) do
+      if WPOptimizerSwitchStr[wpopt]<>'' then
+        WriteLn(xmloutput,'      <wpoptimization name="',WPOptimizerSwitchStr[wpopt],'"/>');
+    WriteLn(xmloutput,'    </wpoptimizations>');
   end;
 
   procedure ListAsmModes (OrigString: TCmdStr);
@@ -453,7 +523,7 @@ const
       if hs1<>'' then
        begin
         if OrigString = '' then
-         WriteLn (hs1)
+         Comment (V_Normal, hs1)
         else
          begin
           hs:=OrigString;
@@ -462,8 +532,17 @@ const
          end;
        end;
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, AsmModeListPlaceholder, HS3);
+  end;
+
+  procedure ListAsmModesXML;
+  var
+    asmmode : tasmmode;
+  begin
+    WriteLn(xmloutput,'    <asmmodes>');
+    for asmmode:=low(tasmmode) to high(tasmmode) do
+      if assigned(asmmodeinfos[asmmode]) then
+        WriteLn(xmloutput,'        <asmmode name="',asmmodeinfos[asmmode]^.idtxt,'"/>');
+    WriteLn(xmloutput,'    </asmmodes>');
   end;
 
   procedure ListControllerTypes (OrigString: TCmdStr);
@@ -481,7 +560,7 @@ const
         if (OrigString = '') then
          begin
           if Embedded_Controllers [ControllerType].ControllerTypeStr <> '' then
-           WriteLn (Embedded_Controllers [ControllerType].ControllerTypeStr);
+           Comment (V_Normal, Embedded_Controllers [ControllerType].ControllerTypeStr);
          end
         else
          begin
@@ -489,6 +568,7 @@ const
                                                                        >70 then
            begin
             hs:=OrigString;
+            HS1 := HS1 + ',';
             Replace(hs,ControllerListPlaceholder,hs1);
             Comment(V_Normal,hs);
             hs1:=''
@@ -506,8 +586,24 @@ const
         Comment(V_Normal,hs);
         hs1:=''
        end;
-      OrigString := HS3;
-      SplitLine (OrigString, ControllerListPlaceholder, HS3);
+     end;
+{$POP}
+  end;
+
+  procedure ListControllerTypesXML;
+  var
+    controllertype : tcontrollertype;
+  begin
+{$PUSH}
+ {$WARN 6018 OFF} (* Unreachable code due to compile time evaluation *)
+    if (ControllerSupport) then
+     begin
+      WriteLn(xmloutput,'    <controllertypes>');
+      for controllertype:=low(tcontrollertype) to high(tcontrollertype) do
+        if embedded_controllers[controllertype].ControllerTypeStr<>'' then
+          WriteLn(xmloutput,'      <controllertype name="',embedded_controllers[controllertype].ControllerTypeStr,
+            '" controllerunit="',embedded_controllers[controllertype].controllerunitstr, '"/>');
+      WriteLn(xmloutput,'    </controllertypes>');
      end;
 {$POP}
   end;
@@ -523,13 +619,14 @@ const
       if (OrigString = '') then
        begin
         if FeatureStr [Feature] <> '' then
-         WriteLn (FeatureStr [Feature]);
+         Comment (V_Normal, FeatureStr [Feature]);
        end
       else
        begin
         if Length (HS1 + FeatureStr [Feature]) > 70 then
          begin
           HS := OrigString;
+          HS1 := HS1 + ',';
           Replace (HS, FeatureListPlaceholder, HS1);
           Comment (V_Normal, HS);
           HS1 := ''
@@ -547,9 +644,86 @@ const
       Comment (V_Normal, HS);
       HS1 := ''
      end;
-    OrigString := HS3;
-    SplitLine (OrigString, FeatureListPlaceholder, HS3);
   end;
+
+  procedure ListFeaturesXML;
+  var
+    Feature: TFeature;
+  begin
+    WriteLn(xmloutput,'    <features>');
+    for Feature := Low (TFeature) to High (TFeature) do
+      if FeatureStr [Feature] <> '' then
+         WriteLn(xmloutput,'      <feature name="',FeatureStr [Feature],'"/>');
+    WriteLn(xmloutput,'    </features>');
+  end;
+
+  procedure ListModeswitches (OrigString: TCmdStr);
+  var
+    Modeswitch: TModeswitch;
+  begin
+    SplitLine (OrigString, ModeswitchListPlaceholder, HS3);
+    HS1 := '';
+    for Modeswitch := Low (TModeswitch) to High (TModeswitch) do
+     begin
+      if (OrigString = '') then
+       begin
+        if ModeswitchStr [Modeswitch] <> '' then
+         Comment (V_Normal, ModeswitchStr [Modeswitch]);
+       end
+      else
+       begin
+        if Length (HS1 + ModeswitchStr [Modeswitch]) > 60 then
+         begin
+          HS := OrigString;
+          HS1 := HS1 + ',';
+          Replace (HS, ModeswitchListPlaceholder, HS1);
+          Comment (V_Normal, HS);
+          HS1 := ''
+         end
+        else if HS1 <> '' then
+         HS1 := HS1 + ',';
+        if ModeswitchStr [Modeswitch] <> '' then
+         HS1 := HS1 + ModeswitchStr [Modeswitch];
+       end;
+     end;
+    if (OrigString <> '') and (HS1 <> '') then
+     begin
+      HS := OrigString;
+      Replace (HS, ModeswitchListPlaceholder, HS1);
+      Comment (V_Normal, HS);
+      HS1 := ''
+     end;
+  end;
+
+  procedure ListModeswitchesXML;
+  var
+    Modeswitch: TModeswitch;
+  begin
+    WriteLn(xmloutput,'    <modeswitches>');
+    for Modeswitch:=Low(TModeswitch) to High(TModeswitch) do
+      if ModeswitchStr [Modeswitch]<>'' then
+        WriteLn(xmloutput,'      <modeswitch name="',ModeswitchStr [Modeswitch],'"/>');
+    WriteLn(xmloutput,'    </modeswitches>');
+  end;
+
+  procedure ListCodeGenerationBackend (OrigString: TCmdStr);
+    begin
+      SplitLine (OrigString, CodeGenerationBackendPlaceholder, HS3);
+      hs1:=cgbackend2str[cgbackend];
+      if OrigString = '' then
+        Comment (V_Normal, hs1)
+      else
+        begin
+          hs:=OrigString;
+          Replace(hs,CodeGenerationBackendPlaceholder,hs1);
+          Comment(V_Normal,hs);
+        end;
+    end;
+
+  procedure ListCodeGenerationBackendXML;
+    begin
+      WriteLn(xmloutput,'    <codegeneratorbackend>',cgbackend2str[cgbackend],'</codegeneratorbackend>');
+    end;
 
 begin
   if More = '' then
@@ -572,39 +746,67 @@ begin
        ListOptimizations (S)
       else if pos(WPOListPlaceholder,s)>0 then
        ListWPOptimizations (S)
+      else if Pos (ModeswitchListPlaceholder, S) > 0 then
+       ListModeswitches (S)
       else if pos(AsmModeListPlaceholder,s)>0 then
        ListAsmModes (S)
       else if pos(ControllerListPlaceholder,s)>0 then
        ListControllerTypes (S)
       else if pos(FeatureListPlaceholder,s)>0 then
        ListFeatures (S)
+      else if pos(CodeGenerationBackendPlaceholder,s)>0 then
+       ListCodeGenerationBackend (S)
       else
        Comment(V_Normal,s);
      end;
    end
+  else if Copy(More,1,1) = 'x' then
+    begin
+      Assign(xmloutput,Copy(More,2,length(More)-1));
+      Rewrite(xmloutput);
+      WriteLn(xmloutput,'<?xml version="1.0" encoding="utf-8"?>');
+      WriteLn(xmloutput,'<fpcoutput>');
+      WriteLn(xmloutput,'  <info>');
+      ListOSTargetsXML;
+      ListCPUInstructionSetsXML;
+      ListFPUInstructionSetsXML;
+      ListABITargetsXML;
+      ListOptimizationsXML;
+      ListWPOptimizationsXML;
+      ListModeswitchesXML;
+      ListAsmModesXML;
+      ListControllerTypesXML;
+      ListFeaturesXML;
+      ListCodeGenerationBackendXML;
+      WriteLn(xmloutput,'  </info>');
+      WriteLn(xmloutput,'</fpcoutput>');
+      Close(xmloutput);
+   end
   else
    begin
-    J := 1;
-    while J <= Length (More) do
-     begin
-      if J > 1 then
-       WriteLn;  (* Put empty line between multiple sections *)
-      case More [J] of
-       'a': ListABITargets ('');
-       'c': ListCPUInstructionSets ('');
-       'f': ListFPUInstructionSets ('');
-       'i': ListAsmModes ('');
-       'o': ListOptimizations ('');
-       'r': ListFeatures ('');
-       't': ListOSTargets ('');
-       'u': ListControllerTypes ('');
-       'w': ListWPOptimizations ('');
-      else
-       IllegalPara ('-i' + More);
+     J := 1;
+     while J <= Length (More) do
+      begin
+       if J > 1 then
+        Comment(V_Normal,'');  (* Put empty line between multiple sections *)
+       case More [J] of
+        'a': ListABITargets ('');
+        'b': Comment(V_Normal, cgbackend2str[cgbackend]);
+        'c': ListCPUInstructionSets ('');
+        'f': ListFPUInstructionSets ('');
+        'i': ListAsmModes ('');
+        'm': ListModeswitches ('');
+        'o': ListOptimizations ('');
+        'r': ListFeatures ('');
+        't': ListOSTargets ('');
+        'u': ListControllerTypes ('');
+        'w': ListWPOptimizations ('');
+       else
+        IllegalPara ('-i' + More);
+       end;
+       Inc (J);
       end;
-      Inc (J);
-     end;
-   end;
+    end;
   StopOptions(0);
 end;
 
@@ -710,6 +912,15 @@ begin
 {$endif}
 {$ifdef llvm}
       'L',
+{$endif}
+{$ifdef xtensa}
+      'x',
+{$endif}
+{$ifdef z80}
+      'Z',
+{$endif}
+{$ifdef wasm32}
+      'W',
 {$endif}
       '*' : show:=true;
      end;
@@ -945,7 +1156,7 @@ begin
   if MacVersionSet then
     exit;
   { check for deployment target set via environment variable }
-  if not(target_info.system in [system_i386_iphonesim,system_arm_darwin,system_aarch64_darwin,system_x86_64_iphonesim]) then
+  if not(target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim]) then
     begin
       envstr:=GetEnvironmentVariable('MACOSX_DEPLOYMENT_TARGET');
       if envstr<>'' then
@@ -975,30 +1186,35 @@ begin
     system_powerpc_darwin:
       begin
         set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1030');
-        MacOSXVersionMin:='10.3';
+        MacOSXVersionMin:='10.3.0';
       end;
     system_powerpc64_darwin:
       begin
         set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1040');
-        MacOSXVersionMin:='10.4';
+        MacOSXVersionMin:='10.4.0';
       end;
     system_i386_darwin,
     system_x86_64_darwin:
       begin
         set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1080');
-        MacOSXVersionMin:='10.8';
+        MacOSXVersionMin:='10.8.0';
       end;
-    system_arm_darwin,
+    system_arm_ios,
     system_i386_iphonesim:
       begin
-        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','30000');
-        iPhoneOSVersionMin:='3.0';
+        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','90000');
+        iPhoneOSVersionMin:='9.0.0';
       end;
-    system_aarch64_darwin,
+    system_aarch64_ios,
     system_x86_64_iphonesim:
       begin
-        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','70000');
-        iPhoneOSVersionMin:='7.0';
+        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','90000');
+        iPhoneOSVersionMin:='9.0.0';
+      end;
+    system_aarch64_darwin:
+      begin
+        set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','110000');
+        MacOSXVersionMin:='11.0.0';
       end
     else
       internalerror(2012031001);
@@ -1059,7 +1275,7 @@ begin
          (
           ((length(opt)>1) and (opt[2] in ['i','d','v','T','u','n','X','l','U'])) or
           ((length(opt)>3) and (opt[2]='F') and (opt[3]='e')) or
-          ((length(opt)>3) and (opt[2]='C') and (opt[3]='p')) or
+          ((length(opt)>3) and (opt[2]='C') and (opt[3] in ['a','f','p'])) or
           ((length(opt)>3) and (opt[2]='W') and (opt[3] in ['m','p']))
          )
         ) then
@@ -1291,7 +1507,7 @@ begin
                       end;
 {$endif arm}
 {$ifdef llvm}
-                    'L':
+                    'l':
                       begin
                         l:=j+1;
                         while l<=length(More) do
@@ -1313,14 +1529,14 @@ begin
                                            exclude(init_settings.moduleswitches,cs_lto);
                                        end;
                                      'ltonosystem':
-                                         begin
-                                           if not disable then
-                                             begin
-                                               include(init_settings.globalswitches,cs_lto_nosystem);
-                                             end
-                                           else
-                                             exclude(init_settings.globalswitches,cs_lto_nosystem);
-                                         end;
+                                       begin
+                                         if not disable then
+                                           begin
+                                             include(init_settings.globalswitches,cs_lto_nosystem);
+                                           end
+                                         else
+                                           exclude(init_settings.globalswitches,cs_lto_nosystem);
+                                       end;
                                     else
                                       begin
                                         IllegalPara(opt);
@@ -1531,6 +1747,16 @@ begin
                         description:=Copy(more,j+1,255);
                         break;
                       end;
+                    'D' :
+                      begin
+                        datestr:=Copy(more,j+1,255);
+                        break;
+                      end;
+                    'T' :
+                      begin
+                        timestr:=Copy(more,j+1,255);
+                        break;
+                      end;
                     'v' :
                       begin
                         dllversion:=Copy(more,j+1,255);
@@ -1643,8 +1869,14 @@ begin
                          ParaFrameworkPath.AddPath(More,false)
                        else
                          frameworksearchpath.AddPath(More,true)
+{$ifdef XTENSA}
+                     else if (target_info.system=system_xtensa_freertos) then
+                       idfpath:=FixPath(More,true)
+{$endif XTENSA}
                      else
                        IllegalPara(opt);
+                 'F' :
+                   RCForceFPCRes:=true;
                  'i' :
                    begin
                      if ispara then
@@ -1756,6 +1988,7 @@ begin
                   exclude(init_settings.globalswitches,cs_use_heaptrc);
                   exclude(init_settings.globalswitches,cs_use_lineinfo);
                   exclude(init_settings.localswitches,cs_checkpointer);
+                  paratargetdbg:=dbg_none;
                   localvartrashing := -1;
                 end
                else
@@ -1789,7 +2022,11 @@ begin
                          if UnsetBool(More, j, opt, false) then
                            exclude(init_settings.globalswitches,cs_use_heaptrc)
                          else
-                           include(init_settings.globalswitches,cs_use_heaptrc);
+                           begin
+                             if cs_gdb_valgrind in init_settings.globalswitches then
+                               Message2(option_valgrind_heaptrc_mismatch,'-gh', '-gv');
+                             include(init_settings.globalswitches,cs_use_heaptrc);
+                           end;
                        end;
                      'l' :
                        begin
@@ -1831,7 +2068,11 @@ begin
                          if UnsetBool(More, j, opt, false) then
                            exclude(init_settings.globalswitches,cs_gdb_valgrind)
                          else
-                           include(init_settings.globalswitches,cs_gdb_valgrind);
+                           begin
+                             if cs_use_heaptrc in init_settings.globalswitches then
+                               Message2(option_valgrind_heaptrc_mismatch,'-gh', '-gv');
+                             include(init_settings.globalswitches,cs_gdb_valgrind);
+                           end;
                        end;
                      'w' :
                        begin
@@ -1869,7 +2110,7 @@ begin
            'i' :
              begin
                if (More='') or
-                    (More [1] in ['a', 'c', 'f', 'i', 'o', 'r', 't', 'u', 'w']) then
+                    (More [1] in ['a', 'b', 'c', 'f', 'i', 'm', 'o', 'r', 't', 'u', 'w', 'x']) then
                  WriteInfo (More)
                else
                  QuickInfo:=QuickInfo+More;
@@ -2060,9 +2301,11 @@ begin
                  begin
                    init_settings.globalswitches:=init_settings.globalswitches+[cs_asm_extern,cs_link_extern,cs_link_nolink];
                    if more='h' then
-                     init_settings.globalswitches:=init_settings.globalswitches-[cs_link_on_target]
+                     init_settings.globalswitches:=init_settings.globalswitches-[cs_link_on_target,cs_assemble_on_target]
                    else if more='t' then
-                     init_settings.globalswitches:=init_settings.globalswitches+[cs_link_on_target]
+                     init_settings.globalswitches:=init_settings.globalswitches+[cs_link_on_target,cs_assemble_on_target]
+                   else if more='T' then
+                     init_settings.globalswitches:=init_settings.globalswitches+[cs_link_on_target]-[cs_asm_extern]
                    else if more='r' then
                      init_settings.globalswitches:=init_settings.globalswitches+[cs_asm_leave,cs_no_regalloc]
                    else if more<>'' then
@@ -2333,7 +2576,7 @@ begin
                       end;
                     'B':
                       begin
-                        if target_info.system in systems_all_windows+systems_symbian then
+                        if target_info.system in systems_all_windows+systems_symbian+[system_z80_zxspectrum] then
                           begin
                             {  -WB200000 means set trefered base address
                               to $200000, but does not change relocsection boolean
@@ -2382,7 +2625,6 @@ begin
                       begin
                         if (target_info.system in systems_darwin) then
                           begin
-                            RegisterRes(res_macosx_ext_info,TWinLikeResourceFile);
                             set_target_res(res_ext);
                             target_info.resobjext:='.fpcres';
                           end
@@ -2466,7 +2708,7 @@ begin
                       end;
                     'M':
                       begin
-                        if (target_info.system in (systems_darwin-[system_i386_iphonesim,system_arm_darwin,system_aarch64_darwin,system_x86_64_iphonesim])) and
+                        if (target_info.system in (systems_darwin-[system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim])) and
                            ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED',copy(More,2,255),false) then
                           begin
                             break;
@@ -2488,7 +2730,7 @@ begin
                       begin
 {$push}
 {$warn 6018 off} { Unreachable code due to compile time evaluation }
-                        if (target_info.system in systems_embedded) and
+                        if ((target_info.system in systems_embedded) or (target_info.system in systems_freertos)) and
                           ControllerSupport then
                           begin
                             s:=upper(copy(more,j+1,length(more)-j));
@@ -2510,7 +2752,7 @@ begin
                       end;
                     'P':
                       begin
-                        if (target_info.system in [system_i386_iphonesim,system_arm_darwin,system_aarch64_darwin,system_x86_64_iphonesim]) and
+                        if (target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim]) and
                            ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED',copy(More,2,255),true) then
                           begin
                             break;
@@ -2518,6 +2760,30 @@ begin
                         else
                           IllegalPara(opt);
                       end;
+{$if defined(m68k)}
+                    'L':
+                      begin
+                        if (target_info.system in [system_m68k_sinclairql]) then
+                          sinclairql_vlink_experimental:=false
+                        else
+                          IllegalPara(opt);
+                      end;
+                    'Q':
+                      begin
+                        if (target_info.system in [system_m68k_sinclairql]) then
+                          begin
+                            sinclairql_metadata_format:=Upper(Copy(More,j+1,255));
+                            case sinclairql_metadata_format of
+                              'QHDR', 'XTCC': ; { allowed formats }
+                              else
+                                IllegalPara(opt);
+                            end;
+                            break;
+                          end
+                        else
+                          IllegalPara(opt);
+                      end;
+{$endif defined(m68k)}
                     'R':
                       begin
                         if target_info.system in systems_all_windows then
@@ -2595,6 +2861,13 @@ begin
                         else
                           IllegalPara(opt);
                       end;
+                    'a' :
+                      begin
+                        If UnsetBool(More, j, opt, false) then
+                          exclude(init_settings.globalswitches,cs_large)
+                        else
+                          include(init_settings.globalswitches,cs_large);
+                      end;
                     'c' : Cshared:=TRUE;
                     'd' : Dontlinkstdlibpath:=TRUE;
                     'e' :
@@ -2627,7 +2900,25 @@ begin
                         else
                           include(init_settings.globalswitches,cs_link_native);
                       end;
-
+{$ifdef llvm}
+                    'l' :
+                      begin
+                        if j=length(more) then
+                          IllegalPara(opt)
+                        else
+                          begin
+                             case more[j+1] of
+                               'S':
+                                 begin
+                                   llvmutilssuffix:=copy(more,j+2,length(more));
+                                   j:=length(more);
+                                 end
+                               else
+                                 IllegalPara(opt);
+                             end;
+                          end;
+                      end;
+{$endif}
                     'm' :
                       begin
                         If UnsetBool(More, j, opt, false) then
@@ -2662,6 +2953,18 @@ begin
                       end;
                     't' :
                       include(init_settings.globalswitches,cs_link_staticflag);
+                    'u' :
+                      begin
+                        if target_info.system in systems_support_uf2 then
+                          begin
+                            if UnsetBool(More, j, opt, false) then
+                              exclude(init_settings.globalswitches,cs_generate_uf2)
+                            else
+                              include(init_settings.globalswitches,cs_generate_uf2);
+                          end
+                        else
+                          IgnoredPara('-Xu');
+                      end;
                     'v' :
                       begin
                         If UnsetBool(More, j, opt, false) then
@@ -3296,6 +3599,12 @@ begin
       lets disable the feature. }
     system_m68k_amiga:
       target_unsup_features:=[f_dynlibs];
+    system_m68k_sinclairql:
+      target_unsup_features:=[f_threading,f_dynlibs];
+    system_z80_zxspectrum:
+      target_unsup_features:=[f_threading,f_dynlibs{,f_fileio,f_textio},f_commandargs,f_exitcode];
+    system_z80_msxdos:
+      target_unsup_features:=[f_threading,f_dynlibs];
     else
       target_unsup_features:=[];
   end;
@@ -3305,12 +3614,16 @@ begin
     features:=features+target_unsup_features;
 
 {$if defined(atari) or defined(hasamiga)}
-   { enable vlink as default linker on Atari, Amiga, and MorphOS, but not for cross compilers (for now) }
-   if (target_info.system in [system_m68k_amiga,system_m68k_atari,
-                              system_powerpc_amiga]) and
+   { enable vlink as default linker on Atari and Amiga but not for cross compilers (for now) }
+   if (target_info.system in [system_m68k_amiga,system_m68k_atari,system_powerpc_amiga]) and
       not LinkerSetExplicitly then
      include(init_settings.globalswitches,cs_link_vlink);
 {$endif}
+{$ifdef m68k}
+   if (target_info.system in [system_m68k_sinclairql]) and
+      not LinkerSetExplicitly then
+     include(init_settings.globalswitches,cs_link_vlink);
+{$endif m68k}
 end;
 
 procedure TOption.checkoptionscompatibility;
@@ -3701,6 +4014,7 @@ procedure read_arguments(cmd:TCmdStr);
         def_system_macro('FPC_COMP_IS_INT64');
         def_system_macro('FPC_REQUIRES_PROPER_ALIGNMENT');
       {$endif riscv32}
+
       {$ifdef riscv64}
         def_system_macro('CPURISCV');
         def_system_macro('CPURISCV64');
@@ -3709,6 +4023,29 @@ procedure read_arguments(cmd:TCmdStr);
         def_system_macro('FPC_COMP_IS_INT64');
         def_system_macro('FPC_REQUIRES_PROPER_ALIGNMENT');
       {$endif riscv64}
+
+      {$ifdef xtensa}
+        def_system_macro('CPUXTENSA');
+        def_system_macro('CPU32');
+        def_system_macro('FPC_CURRENCY_IS_INT64');
+        def_system_macro('FPC_COMP_IS_INT64');
+        def_system_macro('FPC_REQUIRES_PROPER_ALIGNMENT');
+      {$endif xtensa}
+
+      {$ifdef z80}
+        def_system_macro('CPUZ80');
+        def_system_macro('CPU16');
+        def_system_macro('FPC_CURRENCY_IS_INT64');
+        def_system_macro('FPC_COMP_IS_INT64');
+      {$endif z80}
+
+      {$ifdef wasm32}
+        def_system_macro('CPUWASM');
+        def_system_macro('CPUWASM32');
+        def_system_macro('CPU32');
+        def_system_macro('FPC_CURRENCY_IS_INT64');
+        def_system_macro('FPC_COMP_IS_INT64');
+      {$endif wasm32}
 
       {$if defined(cpu8bitalu)}
         def_system_macro('CPUINT8');
@@ -3841,6 +4178,7 @@ begin
   def_system_macro('FPC_DYNARRAYCOPY_FIXED');
   def_system_macro('FPC_HAS_MEMBAR');
   def_system_macro('FPC_SETBASE_USED');
+  def_system_macro('FPC_ALIGNED_THREADVARTABLES');
 
   { don't remove this, it's also for fpdoc necessary (FK) }
   def_system_macro('FPC_HAS_FEATURE_SUPPORT');
@@ -3853,7 +4191,7 @@ begin
       InternalError(2013092801);
   if tf_x86_far_procs_push_odd_bp in target_info.flags then
     if not UpdateTargetSwitchStr('FARPROCSPUSHODDBP', init_settings.targetswitches, true) then
-      InternalError(2013092801);
+      InternalError(2013092802);
 
   { Use standard Android NDK prefixes when cross-compiling }
   if (source_info.system<>target_info.system) and (target_info.system in systems_android) then
@@ -3867,7 +4205,7 @@ begin
     end;
 
   { Set up default value for the heap }
-  if target_info.system in systems_embedded then
+  if target_info.system in (systems_embedded+systems_freertos+[system_z80_zxspectrum,system_z80_msxdos]) then
     begin
       case target_info.system of
 {$ifdef AVR}
@@ -3877,6 +4215,11 @@ begin
           else
             heapsize:=128;
 {$endif AVR}
+        system_arm_freertos:
+          heapsize:=8192;
+        system_xtensa_freertos:
+          { keep default value }
+          ;
         system_arm_embedded:
           heapsize:=256;
         system_mipsel_embedded:
@@ -4074,7 +4417,7 @@ begin
   { default to clang }
   if (option.paratargetasm=as_none) then
     begin
-      option.paratargetasm:=as_llvm_clang;
+      option.paratargetasm:=as_clang_llvm;
     end;
 {$endif llvm}
   { maybe override assembler }
@@ -4082,7 +4425,10 @@ begin
     begin
       if not set_target_asm(option.paratargetasm) then
         begin
-          Message2(option_incompatible_asm,asminfos[option.paratargetasm]^.idtxt,target_info.name);
+          if assigned(asminfos[option.paratargetasm]) then
+            Message2(option_incompatible_asm,asminfos[option.paratargetasm]^.idtxt,target_info.name)
+          else
+            Message2(option_incompatible_asm,'<invalid assembler>',target_info.name);
           set_target_asm(target_info.assemextern);
           Message1(option_asm_forced,target_asm.idtxt);
         end;
@@ -4112,14 +4458,14 @@ begin
       Message(option_w_unsupported_debug_format);
 
   { switch assembler if it's binary and we got -a on the cmdline }
-  if ((cs_asm_leave in init_settings.globalswitches) and
-     (af_outputbinary in target_asm.flags)) or
-     { if -s is passed, we shouldn't call the internal assembler }
-     (cs_asm_extern in init_settings.globalswitches) then
+  if (af_outputbinary in target_asm.flags) and
+     ((cs_asm_leave in init_settings.globalswitches) or
+      { if -s is passed, we shouldn't call the internal assembler }
+      (cs_asm_extern in init_settings.globalswitches)) then
    begin
      Message(option_switch_bin_to_src_assembler);
 {$ifdef llvm}
-     set_target_asm(as_llvm_clang);
+     set_target_asm(as_clang_llvm);
 {$else}
      set_target_asm(target_info.assemextern);
 {$endif}
@@ -4157,30 +4503,37 @@ begin
   { set Mac OS X version default macros if not specified explicitly }
   option.MaybeSetDefaultMacVersionMacro;
 
+{$ifdef cpufpemu}
   { force fpu emulation on arm/wince, arm/gba, arm/embedded and arm/nds
     if fpu type not explicitly set }
   if not(option.FPUSetExplicitly) and
      ((target_info.system in [system_arm_wince,system_arm_gba,
          system_m68k_amiga,system_m68k_atari,
-         system_arm_nds,system_arm_embedded,
-         system_riscv32_embedded,system_riscv64_embedded])
+         system_arm_nds,system_arm_embedded,system_arm_freertos,
+         system_riscv32_embedded,system_riscv64_embedded,system_xtensa_linux,
+         system_z80_embedded,system_z80_zxspectrum])
 {$ifdef arm}
       or (target_info.abi=abi_eabi)
 {$endif arm}
      )
-{$if defined(arm) or defined(riscv32) or defined(riscv64) or defined (m68k)}
      or (init_settings.fputype=fpu_soft)
-{$endif arm or m68k}
   then
     begin
-{$ifdef cpufpemu}
       include(init_settings.moduleswitches,cs_fp_emulation);
       { cs_fp_emulation and fpu_soft are equal on arm and m68k }
       init_settings.fputype:=fpu_soft;
-{$endif cpufpemu}
     end;
+{$endif cpufpemu}
 
 {$ifdef i386}
+  if target_info.system in systems_i386_default_486 then
+    begin
+      { Avoid use of MMX/CMOVcc instructions on older systems.
+        Some systems might not handle these instructions correctly,
+        Used emulators might also be problematic. PM }
+      if not option.CPUSetExplicitly then
+        init_settings.cputype:=cpu_486;
+    end;
   case target_info.system of
     system_i386_android:
       begin
@@ -4198,9 +4551,29 @@ begin
   end;
 {$endif i386}
 
+{$ifdef xtensa}
+  { xtensa-linux target does not support controller setting option -Wp }
+  if not(option.FPUSetExplicitly) and not(target_info.system = system_xtensa_linux) then
+    begin
+      init_settings.fputype:=embedded_controllers[init_settings.controllertype].fputype;
+      if (init_settings.fputype=fpu_soft) then
+        include(init_settings.moduleswitches,cs_fp_emulation);
+    end;
+  if not(option.CPUSetExplicitly) and (target_info.system=system_xtensa_linux) then
+    init_settings.cputype:=cpu_lx6;
+
+  if (target_info.system in [system_xtensa_embedded,system_xtensa_freertos]) and not(option.ABISetExplicitly) then
+    begin
+      if CPUXTENSA_REGWINDOW in cpu_capabilities[init_settings.cputype] then
+        target_info.abi:=abi_xtensa_windowed
+      else
+        target_info.abi:=abi_xtensa_call0;
+    end;
+{$endif xtensa}
+
 {$ifdef arm}
   case target_info.system of
-    system_arm_darwin:
+    system_arm_ios:
       begin
         { set default cpu type to ARMv7 for Darwin unless specified otherwise, and fpu
           to VFPv3 (that's what all 32 bit ARM iOS devices use nowadays)
@@ -4224,50 +4597,69 @@ begin
       ;
   end;
 
-  { ARMHF defaults }
-  if (target_info.abi = abi_eabihf) then
-    { set default cpu type to ARMv7a for ARMHF unless specified otherwise }
-    begin
-    {$ifdef CPUARMV6}
-      { if the compiler is built for armv6, then
-        inherit this setting, e.g. Raspian is armhf but
-        only armv6, this makes rebuilds of the compiler
-        easier }
-      if not option.CPUSetExplicitly then
-        init_settings.cputype:=cpu_armv6;
-      if not option.OptCPUSetExplicitly then
-        init_settings.optimizecputype:=cpu_armv6;
-    {$else CPUARMV6}
-      if not option.CPUSetExplicitly then
-        init_settings.cputype:=cpu_armv7a;
-      if not option.OptCPUSetExplicitly then
-        init_settings.optimizecputype:=cpu_armv7a;
-    {$endif CPUARMV6}
+  { set ABI defaults }
+  case target_info.abi of
+    abi_eabihf:
+      { set default cpu type to ARMv7a for ARMHF unless specified otherwise }
+      begin
+{$ifdef CPUARMV6}
+        { if the compiler is built for armv6, then
+          inherit this setting, e.g. Raspian is armhf but
+          only armv6, this makes rebuilds of the compiler
+          easier }
+        if not option.CPUSetExplicitly then
+          init_settings.cputype:=cpu_armv6;
+        if not option.OptCPUSetExplicitly then
+          init_settings.optimizecputype:=cpu_armv6;
+{$else CPUARMV6}
+        if not option.CPUSetExplicitly then
+          init_settings.cputype:=cpu_armv7a;
+        if not option.OptCPUSetExplicitly then
+          init_settings.optimizecputype:=cpu_armv7a;
+{$endif CPUARMV6}
 
-      { Set FPU type }
-      if not(option.FPUSetExplicitly) then
-        begin
-          if init_settings.cputype < cpu_armv7 then
-            init_settings.fputype:=fpu_vfpv2
-          else
-            init_settings.fputype:=fpu_vfpv3_d16;
-        end
-      else
-        begin
-          if (not(FPUARM_HAS_VFP_EXTENSION in fpu_capabilities[init_settings.fputype]))
-	     or (target_info.system = system_arm_darwin) then
-            begin
-              Message(option_illegal_fpu_eabihf);
-              StopOptions(1);
-            end;
-        end;
-    end;
+        { Set FPU type }
+        if not(option.FPUSetExplicitly) then
+          begin
+            if init_settings.cputype < cpu_armv7 then
+              init_settings.fputype:=fpu_vfpv2
+            else
+              init_settings.fputype:=fpu_vfpv3_d16;
+          end
+        else
+          begin
+            if (not(FPUARM_HAS_VFP_EXTENSION in fpu_capabilities[init_settings.fputype]))
+	       or (target_info.system = system_arm_ios) then
+              begin
+                Message(option_illegal_fpu_eabihf);
+                StopOptions(1);
+              end;
+          end;
+      end;
+    abi_eabi:
+      begin
+        if target_info.system=system_arm_linux then
+          begin
+            { this is what Debian uses }
+            if not option.CPUSetExplicitly then
+              init_settings.cputype:=cpu_armv4t;
+            if not option.OptCPUSetExplicitly then
+              init_settings.optimizecputype:=cpu_armv4t;
+            if not(option.FPUSetExplicitly) then
+              init_settings.fputype:=fpu_soft;
+          end;
+      end;
+    else
+      ;
+  end;
 
   if (init_settings.instructionset=is_thumb) and not(CPUARM_HAS_THUMB2 in cpu_capabilities[init_settings.cputype]) then
     begin
       def_system_macro('CPUTHUMB');
       if not option.FPUSetExplicitly then
         init_settings.fputype:=fpu_soft;
+      if not(init_settings.fputype in [fpu_none,fpu_soft,fpu_libgcc]) then
+        Message2(option_unsupported_fpu,fputypestr[init_settings.fputype],'Thumb');
 {$if defined(FPC_ARMEL) or defined(FPC_ARMHF)}
       target_info.llvmdatalayout:='e-p:32:32:32-i1:8:32-i8:8:32-i16:16:32-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:64:128-a0:0:32-n32-S64';
 {$else FPC_ARMAL or FPC_ARMHF}
@@ -4279,6 +4671,20 @@ begin
   if (init_settings.instructionset=is_thumb) and (CPUARM_HAS_THUMB2 in cpu_capabilities[init_settings.cputype]) then
     def_system_macro('CPUTHUMB2');
 {$endif arm}
+
+{$ifdef aarch64}
+  case target_info.system of
+    system_aarch64_darwin:
+      begin
+        if not option.CPUSetExplicitly then
+          init_settings.cputype:=cpu_armv84a;
+        if not option.OptCPUSetExplicitly then
+          init_settings.optimizecputype:=cpu_armv84a;
+      end;
+    else
+      ;
+  end;
+{$endif aarch64}
 
 {$if defined(riscv32) or defined(riscv64)}
   { RISC-V defaults }
@@ -4368,6 +4774,11 @@ begin
             init_settings.fputype:=fpu_68881;
           end;
       end;
+    system_m68k_sinclairql:
+      begin
+        if not option.CPUSetExplicitly then
+          init_settings.cputype:=cpu_mc68000;
+      end;
     system_m68k_palmos:
       begin
         if not option.CPUSetExplicitly then
@@ -4453,10 +4864,10 @@ begin
       def_system_macro('FPC_USE_WIN64_SEH');
 {$endif DISABLE_WIN64_SEH}
 
-{$ifdef TEST_WIN32_SEH}
+{$ifndef DISABLE_WIN32_SEH}
     if target_info.system=system_i386_win32 then
       def_system_macro('FPC_USE_WIN32_SEH');
-{$endif TEST_WIN32_SEH}
+{$endif not DISABLE_WIN32_SEH}
 
 {$ifdef ARM}
   { define FPC_DOUBLE_HILO_SWAPPED if needed to properly handle doubles in RTL }
@@ -4494,6 +4905,16 @@ begin
     end;
 {$endif}
 
+{$if defined(xtensa)}
+  { it is determined during system unit compilation if nsau is used for bsr or not,
+    this is not perfect but the current implementation bsf/bsr does not allow another
+    solution }
+  if CPUXTENSA_HAS_NSAx in cpu_capabilities[init_settings.cputype] then
+    begin
+      def_system_macro('FPC_HAS_INTERNAL_BSR');
+    end;
+{$endif}
+
 {$if defined(powerpc64)}
   { on sysv targets, default to elfv2 for little endian and to elfv1 for
     big endian (unless specified otherwise). As the gcc man page says:
@@ -4525,7 +4946,7 @@ begin
 
   { Section smartlinking conflicts with import sections on Windows }
   if GenerateImportSection and
-     (target_info.system in [system_i386_win32,system_x86_64_win64]) then
+     (target_info.system in [system_i386_win32,system_x86_64_win64,system_aarch64_win64]) then
     exclude(target_info.flags,tf_smartlink_sections);
 
   if not option.LinkTypeSetExplicitly then
@@ -4575,7 +4996,7 @@ begin
 
 {$push}
 {$warn 6018 off} { Unreachable code due to compile time evaluation }
-  if ControllerSupport and (target_info.system in systems_embedded) and
+  if ControllerSupport and (target_info.system in (systems_embedded+systems_freertos)) and
     (init_settings.controllertype<>ct_none) then
     begin
       with embedded_controllers[init_settings.controllertype] do
@@ -4597,7 +5018,7 @@ begin
   option.free;
   Option:=nil;
 
-  clearstack_pocalls := [pocall_cdecl,pocall_cppdecl,pocall_syscall,pocall_mwpascal,pocall_sysv_abi_cdecl,pocall_ms_abi_cdecl];
+  clearstack_pocalls := [pocall_cdecl,pocall_cppdecl,pocall_syscall,pocall_mwpascal,pocall_sysv_abi_cdecl,pocall_ms_abi_cdecl{$ifdef z80},pocall_stdcall{$endif}];
   cdecl_pocalls := [pocall_cdecl, pocall_cppdecl, pocall_mwpascal, pocall_sysv_abi_cdecl, pocall_ms_abi_cdecl];
   if (tf_safecall_clearstack in target_info.flags) then
     begin

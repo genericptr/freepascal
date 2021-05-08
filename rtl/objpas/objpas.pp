@@ -144,8 +144,13 @@ Var
 {$endif FPC_HAS_FEATURE_FILEIO}
 
 {$ifdef FPC_HAS_FEATURE_COMMANDARGS}
+{$ifdef MSWINDOWS}
+  {$define HAS_PARAMSTRA}
+  {$undef FPC_HAS_FEATURE_COMMANDARGS} // Skip the implementation of ParamStr()
+{$endif MSWINDOWS}
      { ParamStr should return also an ansistring }
      Function ParamStr(Param : Integer) : Ansistring;
+       {$ifdef HAS_PARAMSTRA} external name '_FPC_ParamStrA'; {$endif}
 {$endif FPC_HAS_FEATURE_COMMANDARGS}
 
 {****************************************************************************
@@ -365,7 +370,7 @@ Type
    end;
 
    TResStrInitTable = packed record
-     Count: {$ifdef VER2_6}longint{$else}sizeint{$endif};
+     Count: sizeint;
      Tables: packed array[1..{$ifdef cpu16}8191{$else cpu16}32767{$endif cpu16}] of PResStrInitEntry;
    end;
    PResStrInitTable = ^TResStrInitTable;

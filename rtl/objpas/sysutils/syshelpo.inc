@@ -1,8 +1,12 @@
 
 Class Function TORDINALHELPER.Parse(const AString: string): TORDINALTYPE; inline; static;
 
+var
+  Error: Integer;
 begin
-  Result:=StrToInt(AString);
+  Val(AString,Result,Error);
+  if Error<>0 then
+    raise EConvertError.CreateFmt(SInvalidInteger,[AString]);
 end;
 
 Class Function TORDINALHELPER.Size: Integer; inline; static;
@@ -14,7 +18,7 @@ end;
 Class Function TORDINALHELPER.ToString(const AValue: TORDINALTYPE): string; overload; inline; static;
 
 begin
-  Result:=IntToStr(AValue);
+  Str(AValue,Result);
 end;
 
 Class Function TORDINALHELPER.TryParse(const AString: string; out AValue: TORDINALTYPE): Boolean; inline; static;
@@ -61,7 +65,7 @@ end;
 Function TORDINALHELPER.ToHexString: string; overload; inline;
 
 begin
-  Result:=IntToHex(Self,SizeOf(TORDINALTYPE)*2);
+  Result:=IntToHex(Self);
 end;
 
 Function TORDINALHELPER.ToSingle: Single; inline;
@@ -73,7 +77,7 @@ end;
 Function TORDINALHELPER.ToString: string; overload; inline;
 
 begin
-  Result:=IntToStr(Self);
+  Str(Self,Result);
 end;
 
 Function TORDINALHELPER.SetBit(const index: TORDINALBITINDEX) : TORDINALTYPE; inline;

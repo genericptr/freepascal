@@ -90,8 +90,6 @@ unit cpugas;
       end;
 
     procedure TMIPSGNUAssembler.WriteExtraHeader;
-      var
-        i : longint;
       begin
         if not (cs_asm_pre_binutils_2_25 in current_settings.globalswitches) then
           writer.AsmWriteln(#9'.module nomips16');
@@ -179,7 +177,7 @@ unit cpugas;
             top_ref:
               getopstr := getreferencestring(ref^);
             else
-              internalerror(10001);
+              internalerror(2020100809);
           end;
       end;
 
@@ -265,6 +263,7 @@ unit cpugas;
         supported_targets: [system_mipsel_linux,system_mipsel_android,system_mipsel_embedded];
         flags: [ af_needar, af_smartlink_sections];
         labelprefix: '.L';
+        labelmaxlen : -1;
         comment: '# ';
         dollarsign: '$';
         );
@@ -278,6 +277,7 @@ unit cpugas;
         supported_targets: [system_mipseb_linux];
         flags: [ af_needar, af_smartlink_sections];
         labelprefix: '.L';
+        labelmaxlen : -1;
         comment: '# ';
         dollarsign: '$';
         );

@@ -306,6 +306,7 @@ implementation
         p1  : tnode;
         len : longint;
         pc  : pchar;
+        value_set : pconstset;
       begin
         p1:=nil;
         case p.consttyp of
@@ -331,18 +332,50 @@ implementation
           constwstring :
             p1:=cstringconstnode.createunistr(pcompilerwidestring(p.value.valueptr));
           constreal :
-            p1:=crealconstnode.create(pbestreal(p.value.valueptr)^,p.constdef);
+            begin
+              if (sp_generic_para in p.symoptions) and not (sp_generic_const in p.symoptions) then
+                p1:=crealconstnode.create(default(bestreal),p.constdef)
+              else
+                p1:=crealconstnode.create(pbestreal(p.value.valueptr)^,p.constdef);
+            end;
           constset :
-            p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
+            begin
+              if sp_generic_const in p.symoptions then
+                begin
+                  new(value_set);
+                  value_set^:=pconstset(p.value.valueptr)^;
+                  p1:=csetconstnode.create(value_set,p.constdef);
+                end
+              else if sp_generic_para in p.symoptions then
+                begin
+                  new(value_set);
+                  p1:=csetconstnode.create(value_set,p.constdef);
+                end
+              else
+                p1:=csetconstnode.create(pconstset(p.value.valueptr),p.constdef);
+            end;
           constpointer :
-            p1:=cpointerconstnode.create(p.value.valueordptr,p.constdef);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=cpointerconstnode.create(default(tconstptruint),p.constdef)
+              else
+                p1:=cpointerconstnode.create(p.value.valueordptr,p.constdef);
+            end;
           constnil :
             p1:=cnilnode.create;
           constguid :
-            p1:=cguidconstnode.create(pguid(p.value.valueptr)^);
+            begin
+              if sp_generic_para in p.symoptions then
+                p1:=cguidconstnode.create(default(tguid))
+              else
+                p1:=cguidconstnode.create(pguid(p.value.valueptr)^);
+            end;
           else
             internalerror(200205103);
         end;
+        { transfer generic param flag from symbol to node }
+        if sp_generic_para in p.symoptions then
+          include(p1.flags,nf_generic_para);
         genconstsymtree:=p1;
       end;
 
@@ -622,7 +655,7 @@ implementation
         resultdef:=typedef;
         { only do range checking when explicitly asked for it
           and if the type can be range checked, see tests/tbs/tb0539.pp }
-        if (resultdef.typ in [orddef,enumdef]) then
+        if (resultdef.typ in [orddef,enumdef]) and not(nf_generic_para in flags) then
           adaptrange(resultdef,value,nf_internal in flags,not rangecheck,rangecheck)
       end;
 
@@ -641,9 +674,10 @@ implementation
       end;
 
 
-        procedure tordconstnode.printnodedata(var t: text);
+    procedure tordconstnode.printnodedata(var t: text);
       begin
         inherited printnodedata(t);
+        writeln(t,printnodeindention,'typedef = "',typedef.GetTypeName,'"');
         writeln(t,printnodeindention,'value = ',tostr(value));
       end;
 
@@ -914,20 +948,15 @@ implementation
          dogetcopy:=n;
       end;
 
+
     function tstringconstnode.pass_typecheck:tnode;
-      var
-        l : aint;
       begin
         result:=nil;
         case cst_type of
           cst_conststring :
             begin
               { handle and store as array[0..len-1] of char }
-              if len>0 then
-                l:=len-1
-              else
-                l:=0;
-              resultdef:=carraydef.create(0,l,s32inttype);
+              resultdef:=carraydef.create(0,len-1,s32inttype);
               tarraydef(resultdef).elementdef:=cansichartype;
               include(tarraydef(resultdef).arrayoptions,ado_IsConstString);
             end;
@@ -946,6 +975,7 @@ implementation
             resultdef:=clongstringtype;
         end;
       end;
+
 
     function tstringconstnode.pass_1 : tnode;
       begin

@@ -923,7 +923,7 @@ implementation
           else
             begin
               writeln(objreloc.ftype);
-              internalerror(200604014);
+              internalerror(2006040107);
             end;
           end
         else           { not relocsec.Used }
@@ -971,12 +971,13 @@ implementation
          idtxt  : 'ELF';
          asmbin : '';
          asmcmd : '';
-         supported_targets : [system_arm_embedded,system_arm_darwin,
+         supported_targets : [system_arm_embedded,system_arm_ios,
                               system_arm_linux,system_arm_netbsd,
                               system_arm_gba,system_arm_nds,
-                              system_arm_aros];
+                              system_arm_aros,system_arm_freertos];
          flags : [af_outputbinary,af_smartlink_sections,af_supports_dwarf];
          labelprefix : '.L';
+         labelmaxlen : -1;
          comment : '';
          dollarsign: '$';
        );

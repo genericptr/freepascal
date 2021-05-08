@@ -39,7 +39,7 @@ uses
     type
       TAsmOp=(A_None,
         { Pseudo instructions }
-        A_NOP,
+        A_NOP,A_CALL,
         { normal opcodes }
         A_LUI,A_AUIPC,A_JAL,A_JALR,
         A_Bxx,A_LB,A_LH,A_LW,A_LBU,A_LHU,
@@ -90,6 +90,8 @@ uses
         { Supervisor }
         A_SFENCE_VM
         );
+
+      TAsmOps = set of TAsmOp;
 
       {# This should define the array of instructions as string }
       op2strtable=array[tasmop] of string[8];
@@ -152,6 +154,8 @@ uses
     type
       TAsmCond = (C_None { unconditional jumps },
         C_LT,C_LTU,C_GE,C_GEU,C_NE,C_EQ);
+
+      TAsmConds = set of TAsmCond;
 
     const
       cond2str: Array[TAsmCond] of string[4] = ({cf_none}'',

@@ -32,7 +32,10 @@ interface
 
     uses
       globtype,globals,
-      aasmbase,aasmtai,aasmdata,aasmcfi,
+      cpubase,aasmbase,aasmtai,aasmdata,aasmcfi,
+{$ifdef wasm}
+      aasmcpu,
+{$endif wasm}
       assemble;
 
     type
@@ -49,6 +52,7 @@ interface
         function sectionattrs(atype:TAsmSectiontype):string;virtual;
         function sectionattrs_coff(atype:TAsmSectiontype):string;virtual;
         function sectionalignment_aix(atype:TAsmSectiontype;secalign: longint):string;
+        function sectionflags(secflags:TSectionFlags):string;virtual;
         procedure WriteSection(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder;secalign:longint;
           secflags:TSectionFlags=[];secprogbits:TSectionProgbits=SPB_None);virtual;
         procedure WriteExtraHeader;virtual;
@@ -65,6 +69,9 @@ interface
         procedure WriteTree(p:TAsmList);override;
         procedure WriteAsmList;override;
         destructor destroy; override;
+{$ifdef WASM}
+        procedure WriteFuncType(functype: TWasmFuncType);
+{$endif WASM}
        private
         setcount: longint;
         procedure WriteDecodedSleb128(a: int64);
@@ -117,7 +124,7 @@ implementation
 {$ifdef m68k}
       cpuinfo,aasmcpu,
 {$endif m68k}
-      cpubase,objcasm;
+      objcasm;
 
     const
       line_length = 70;
@@ -155,10 +162,12 @@ implementation
 
       { Generic unaligned pseudo-instructions, seems ELF specific }
       use_ua_elf_systems = [system_mipsel_linux,system_mipseb_linux,system_mipsel_android,system_mipsel_embedded,system_mipseb_embedded];
-      ait_ua_elf_const2str : array[aitconst_16bit_unaligned..aitconst_64bit_unaligned]
-        of string[20]=(
-          #9'.2byte'#9,#9'.4byte'#9,#9'.8byte'#9
-        );
+      ait_ua_elf_const2str : array[aitconst_128bit..aitconst_64bit_unaligned] of string[20]=(
+        #9'.fixme128'#9,#9'.8byte'#9,#9'.4byte'#9,#9'.2byte'#9,#9'.byte'#9,
+        #9'.sleb128'#9,#9'.uleb128'#9,
+        #9'.rva'#9,#9'.secrel32'#9,#9'.8byte'#9,#9'.4byte'#9,#9'.2byte'#9,#9'.2byte'#9,
+        #9'.2byte'#9,#9'.4byte'#9,#9'.8byte'#9
+      );
 
 
 
@@ -199,7 +208,7 @@ implementation
            (atype<>sec_toc) and
            (atype<>sec_user) and
            { on embedded systems every byte counts, so smartlink bss too }
-           ((atype<>sec_bss) or (target_info.system in systems_embedded));
+           ((atype<>sec_bss) or (target_info.system in (systems_embedded+systems_freertos)));
       end;
 
     function TGNUAssembler.sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;
@@ -409,7 +418,7 @@ implementation
     function TGNUAssembler.sectionattrs(atype:TAsmSectiontype):string;
       begin
         result:='';
-        if (target_info.system in [system_i386_win32,system_x86_64_win64]) then
+        if (target_info.system in [system_i386_win32,system_x86_64_win64,system_aarch64_win64]) then
           begin
             result:=sectionattrs_coff(atype);
           end;
@@ -431,7 +440,10 @@ implementation
 
           { TODO: these need a fix to become read-only }
           sec_rodata, sec_rodata_norel:
-            result:='d';
+            if target_info.system=system_aarch64_win64 then
+              result:='r'
+            else
+              result:='d';
 
           sec_bss:
             result:='b';
@@ -450,6 +462,24 @@ implementation
             result:='n';
         else
           result:='';  { defaults to data+load }
+        end;
+      end;
+
+
+    function TGNUAssembler.sectionflags(secflags:TSectionFlags):string;
+      var
+        secflag : TSectionFlag;
+      begin
+        result:='';
+        for secflag in secflags do begin
+          case secflag of
+            SF_A:
+              result:=result+'a';
+            SF_W:
+              result:=result+'w';
+            SF_X:
+              result:=result+'x';
+          end;
         end;
       end;
 
@@ -473,43 +503,52 @@ implementation
     procedure TGNUAssembler.WriteSection(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder;secalign:longint;secflags:TSectionFlags=[];secprogbits:TSectionProgbits=SPB_None);
       var
         s : string;
-        secflag: TSectionFlag;
-        sectionprogbits,
-        sectionflags: boolean;
+        usesectionprogbits,
+        usesectionflags: boolean;
       begin
         writer.AsmLn;
-        sectionflags:=false;
-        sectionprogbits:=false;
+        usesectionflags:=false;
+        usesectionprogbits:=false;
         case target_info.system of
          system_i386_OS2,
          system_i386_EMX: ;
          system_m68k_atari, { atari tos/mint GNU AS also doesn't seem to like .section (KB) }
-         system_m68k_amiga: { amiga has old GNU AS (2.14), which blews up from .section (KB) }
+         system_m68k_amiga, { amiga has old GNU AS (2.14), which blews up from .section (KB) }
+         system_m68k_sinclairql: { same story, only ancient GNU tools available (KB) }
            begin
              { ... but vasm is GAS compatible on amiga/atari, and supports named sections }
              if create_smartlink_sections then
                begin
                  writer.AsmWrite('.section ');
-                 sectionflags:=true;
-                 sectionprogbits:=true;
+                 usesectionflags:=true;
+                 usesectionprogbits:=true;
+                 { hack, to avoid linker warnings on Amiga/Atari, when vlink merges
+                   rodata sections into data sections. Also avoid the warning when
+                   the linker realizes the code section cannot be write protected and
+                   adds the writable bit. }
+                 if atype in [sec_code,sec_rodata,sec_rodata_norel] then
+                   include(secflags,SF_W);
                end;
            end;
+         system_i386_go32v2,
          system_i386_win32,
          system_x86_64_win64,
          system_i386_wince,
-         system_arm_wince:
+         system_arm_wince,
+         system_aarch64_win64:
            begin
              { according to the GNU AS guide AS for COFF does not support the
                progbits }
              writer.AsmWrite('.section ');
-             sectionflags:=true;
+             usesectionflags:=true;
            end;
          system_powerpc_darwin,
          system_i386_darwin,
          system_i386_iphonesim,
          system_powerpc64_darwin,
          system_x86_64_darwin,
-         system_arm_darwin,
+         system_arm_ios,
+         system_aarch64_ios,
          system_aarch64_darwin,
          system_x86_64_iphonesim,
          system_powerpc_aix,
@@ -517,6 +556,11 @@ implementation
            begin
              if (atype in [sec_stub]) then
                writer.AsmWrite('.section ');
+           end;
+         system_wasm32_wasi,
+         system_wasm32_embedded:
+           begin
+             writer.AsmWrite('.section ');
            end
          else
            begin
@@ -525,33 +569,24 @@ implementation
                the assembler will ignore them/spite out a warning anyways }
              if not(atype in [sec_data,sec_rodata,sec_rodata_norel]) then
                begin
-                 sectionflags:=true;
-                 sectionprogbits:=true;
+                 usesectionflags:=true;
+                 usesectionprogbits:=true;
                end;
            end
         end;
         s:=sectionname(atype,aname,aorder);
         writer.AsmWrite(s);
         { flags explicitly defined? }
-        if (sectionflags or sectionprogbits) and
+        if (usesectionflags or usesectionprogbits) and
            ((secflags<>[]) or
             (secprogbits<>SPB_None)) then
           begin
-            if sectionflags then
+            if usesectionflags then
               begin
-                s:=',"';
-                for secflag in secflags do
-                  case secflag of
-                    SF_A:
-                      s:=s+'a';
-                    SF_W:
-                      s:=s+'w';
-                    SF_X:
-                      s:=s+'x';
-                  end;
+                s:=',"'+sectionflags(secflags);
                 writer.AsmWrite(s+'"');
               end;
-            if sectionprogbits then
+            if usesectionprogbits then
               begin
                 case secprogbits of
                   SPB_PROGBITS:
@@ -587,7 +622,7 @@ implementation
                   system_i386_darwin,
                   system_i386_iphonesim:
                     writer.AsmWriteln('__IMPORT,__jump_table,symbol_stubs,self_modifying_code+pure_instructions,5');
-                  system_arm_darwin:
+                  system_arm_ios:
                     if (cs_create_pic in current_settings.moduleswitches) then
                       writer.AsmWriteln('__TEXT,__picsymbolstub4,symbol_stubs,none,16')
                     else
@@ -688,6 +723,37 @@ implementation
       end;
 
 
+{$ifdef WASM}
+    procedure TGNUAssembler.WriteFuncType(functype: TWasmFuncType);
+      var
+        wasm_basic_typ: TWasmBasicType;
+        first: boolean;
+      begin
+        writer.AsmWrite('(');
+        first:=true;
+        for wasm_basic_typ in functype.params do
+          begin
+            if first then
+              first:=false
+            else
+              writer.AsmWrite(',');
+            writer.AsmWrite(gas_wasm_basic_type_str[wasm_basic_typ]);
+          end;
+        writer.AsmWrite(') -> (');
+        first:=true;
+        for wasm_basic_typ in functype.results do
+          begin
+            if first then
+              first:=false
+            else
+              writer.AsmWrite(',');
+            writer.AsmWrite(gas_wasm_basic_type_str[wasm_basic_typ]);
+          end;
+        writer.AsmWrite(')');
+      end;
+{$endif WASM}
+
+
     procedure TGNUAssembler.WriteTree(p:TAsmList);
 
       function needsObject(hp : tai_symbol) : boolean;
@@ -775,6 +841,28 @@ implementation
             end;
         end;
 
+{$ifdef WASM}
+      procedure WriteFuncTypeDirective(hp:tai_functype);
+        begin
+          writer.AsmWrite(#9'.functype'#9);
+          writer.AsmWrite(hp.funcname);
+          writer.AsmWrite(' ');
+          WriteFuncType(hp.functype);
+          writer.AsmLn;
+        end;
+
+
+      procedure WriteImportExport(hp:tai_impexp);
+        var
+          symstypestr: string;
+        begin
+          Str(hp.symstype,symstypestr);
+          writer.AsmWriteLn(asminfo^.comment+'ait_importexport(extname='''+hp.extname+''', intname='''+hp.intname+''', extmodule='''+hp.extmodule+''', symstype='+symstypestr+')');
+          if hp.extmodule='' then
+            writer.AsmWriteLn(#9'.export_name '+hp.intname+', '+hp.extname);
+        end;
+{$endif WASM}
+
     var
       ch       : char;
       lasthp,
@@ -814,38 +902,6 @@ implementation
 
          case hp.typ of
 
-           ait_comment :
-             Begin
-               writer.AsmWrite(asminfo^.comment);
-               writer.AsmWritePChar(tai_comment(hp).str);
-               writer.AsmLn;
-             End;
-
-           ait_regalloc :
-             begin
-               if (cs_asm_regalloc in current_settings.globalswitches) then
-                 begin
-                   writer.AsmWrite(#9+asminfo^.comment+'Register ');
-                   repeat
-                     writer.AsmWrite(std_regname(Tai_regalloc(hp).reg));
-                     if (hp.next=nil) or
-                        (tai(hp.next).typ<>ait_regalloc) or
-                        (tai_regalloc(hp.next).ratype<>tai_regalloc(hp).ratype) then
-                       break;
-                     hp:=tai(hp.next);
-                     writer.AsmWrite(',');
-                   until false;
-                   writer.AsmWrite(' ');
-                   writer.AsmWriteLn(regallocstr[tai_regalloc(hp).ratype]);
-                 end;
-             end;
-
-           ait_tempalloc :
-             begin
-               if (cs_asm_tempalloc in current_settings.globalswitches) then
-                 WriteTempalloc(tai_tempalloc(hp));
-             end;
-
            ait_align :
              begin
                doalign(tai_align_abstract(hp).aligntype,tai_align_abstract(hp).use_op,tai_align_abstract(hp).fillop,tai_align_abstract(hp).maxbytes,last_align,lasthp);
@@ -855,7 +911,7 @@ implementation
              begin
                if tai_section(hp).sectype<>sec_none then
                  if replaceforbidden then
-                   WriteSection(tai_section(hp).sectype,ReplaceForbiddenAsmSymbolChars(tai_section(hp).name^),tai_section(hp).secorder,
+                   WriteSection(tai_section(hp).sectype,ApplyAsmSymbolRestrictions(tai_section(hp).name^),tai_section(hp).secorder,
                      tai_section(hp).secalign,tai_section(hp).secflags,tai_section(hp).secprogbits)
                  else
                    WriteSection(tai_section(hp).sectype,tai_section(hp).name^,tai_section(hp).secorder,
@@ -907,8 +963,8 @@ implementation
                    if tai_datablock(hp).is_global then
                      begin
                        writer.AsmWrite(#9'.globl ');
-                       writer.AsmWriteln(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
-                       writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                       writer.AsmWriteln(ApplyAsmSymbolRestrictions(tai_datablock(hp).sym.name));
+                       writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_datablock(hp).sym.name));
                        writer.AsmWriteln(':');
                        writer.AsmWrite(#9'.space ');
                        writer.AsmWriteln(tostr(tai_datablock(hp).size));
@@ -918,7 +974,7 @@ implementation
                    else
                      begin
                        writer.AsmWrite(#9'.lcomm ');
-                       writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                       writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_datablock(hp).sym.name));
                        writer.AsmWrite(',');
                        writer.AsmWrite(tostr(tai_datablock(hp).size)+',');
                        writer.AsmWrite('_data.bss_,');
@@ -938,7 +994,7 @@ implementation
                          begin
                            writer.AsmWrite(#9'.comm'#9);
                            if replaceforbidden then
-                             writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name))
+                             writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_datablock(hp).sym.name))
                            else
                              writer.AsmWrite(tai_datablock(hp).sym.name);
                            writer.AsmWrite(','+tostr(tai_datablock(hp).size));
@@ -949,7 +1005,7 @@ implementation
                          begin
                            writer.AsmWrite(#9'.lcomm'#9);
                            if replaceforbidden then
-                             writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                             writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_datablock(hp).sym.name));
                            else
                              writer.AsmWrite(tai_datablock(hp).sym.name);
                            writer.AsmWrite(','+tostr(tai_datablock(hp).size));
@@ -966,7 +1022,7 @@ implementation
                              WriteHiddenSymbol(tai_datablock(hp).sym);
                            writer.AsmWrite(#9'.globl ');
                            if replaceforbidden then
-                             writer.AsmWriteln(ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name))
+                             writer.AsmWriteln(ApplyAsmSymbolRestrictions(Tai_datablock(hp).sym.name))
                            else
                              writer.AsmWriteln(Tai_datablock(hp).sym.name);
                          end;
@@ -977,10 +1033,10 @@ implementation
                        if replaceforbidden then
                          begin
                            if (tf_needs_symbol_type in target_info.flags) then
-                             writer.AsmWriteln(#9'.type '+ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name)+','+sepChar+'object');
+                             writer.AsmWriteln(#9'.type '+ApplyAsmSymbolRestrictions(Tai_datablock(hp).sym.name)+','+sepChar+'object');
                            if (tf_needs_symbol_size in target_info.flags) and (tai_datablock(hp).size > 0) then
-                              writer.AsmWriteln(#9'.size '+ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name)+','+tostr(Tai_datablock(hp).size));
-                           writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name))
+                              writer.AsmWriteln(#9'.size '+ApplyAsmSymbolRestrictions(Tai_datablock(hp).sym.name)+','+tostr(Tai_datablock(hp).size));
+                           writer.AsmWrite(ApplyAsmSymbolRestrictions(Tai_datablock(hp).sym.name))
                          end
                        else
                          begin
@@ -1150,8 +1206,7 @@ implementation
                          if (constdef in ait_unaligned_consts) and
                             (target_info.system in use_ua_sparc_systems) then
                            writer.AsmWrite(ait_ua_sparc_const2str[constdef])
-                         else if (constdef in ait_unaligned_consts) and
-                                 (target_info.system in use_ua_elf_systems) then
+                         else if (target_info.system in use_ua_elf_systems) then
                            writer.AsmWrite(ait_ua_elf_const2str[constdef])
                          { we can also have unaligned pointers in packed record
                            constants, which don't get translated into
@@ -1180,7 +1235,7 @@ implementation
                                else
                                  s:=tai_const(hp).sym.name;
                                if replaceforbidden then
-                                 s:=ReplaceForbiddenAsmSymbolChars(s);
+                                 s:=ApplyAsmSymbolRestrictions(s);
                                if tai_const(hp).value<>0 then
                                  s:=s+tostr_with_plus(tai_const(hp).value);
                              end
@@ -1282,12 +1337,12 @@ implementation
 {$endif arm}
                      writer.AsmWrite('.globl'#9);
                      if replaceforbidden then
-                       writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_label(hp).labsym.name))
+                       writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_label(hp).labsym.name))
                      else
                        writer.AsmWriteLn(tai_label(hp).labsym.name);
                    end;
                   if replaceforbidden then
-                    writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_label(hp).labsym.name))
+                    writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_label(hp).labsym.name))
                   else
                     writer.AsmWrite(tai_label(hp).labsym.name);
                   writer.AsmWriteLn(':');
@@ -1305,7 +1360,7 @@ implementation
                 begin
                   writer.AsmWrite('.globl'#9);
                   if replaceforbidden then
-                    writer.AsmWriteln(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                    writer.AsmWriteln(ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name))
                   else
                     writer.AsmWriteln(tai_symbol(hp).sym.name);
                   if (tai_symbol(hp).sym.bind=AB_PRIVATE_EXTERN) then
@@ -1340,14 +1395,14 @@ implementation
                        s:=#9'.llong .';
                        ch:='3';
                      end;
-                   writer.AsmWriteLn(#9'.csect '+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+'[DS],'+ch);
-                   writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+':');
-                   writer.AsmWriteln(s+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+', TOC[tc0], 0');
+                   writer.AsmWriteLn(#9'.csect '+ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name)+'[DS],'+ch);
+                   writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name)+':');
+                   writer.AsmWriteln(s+ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name)+', TOC[tc0], 0');
                    writer.AsmWriteln(#9'.csect .text[PR]');
                    if (tai_symbol(hp).is_global) then
-                     writer.AsmWriteLn('.globl .'+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                     writer.AsmWriteLn('.globl .'+ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name))
                    else
-                     writer.AsmWriteLn('.lglobl .'+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name));
+                     writer.AsmWriteLn('.lglobl .'+ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name));
                    { the dotted name is the name of the actual function entry }
                    writer.AsmWrite('.');
                  end
@@ -1368,9 +1423,9 @@ implementation
                  end;
                if replaceforbidden then
                  if not(tai_symbol(hp).has_value) then
-                   writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name + ':'))
+                   writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name + ':'))
                  else
-                   writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name + '=' + tostr(tai_symbol(hp).value)))
+                   writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbol(hp).sym.name + '=' + tostr(tai_symbol(hp).value)))
                else if not(tai_symbol(hp).has_value) then
                  writer.AsmWriteLn(tai_symbol(hp).sym.name + ':')
                else
@@ -1387,16 +1442,25 @@ implementation
                  { the .localentry directive has to specify the size from the
                    start till here of the non-local entry code as second argument }
                  s:=', .-';
+               if ((target_info.system <> system_arm_linux) and (target_info.system <> system_arm_android)) then
+                 sepChar := '@'
+               else
+                 sepChar := '#';
                if replaceforbidden then
                  begin
                    { avoid string truncation }
-                   writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_symbolpair(hp).sym^));
+                   writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_symbolpair(hp).sym^));
                    writer.AsmWrite(s);
-                   writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbolpair(hp).value^));
+                   writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbolpair(hp).value^));
                    if tai_symbolpair(hp).kind=spk_set_global then
                      begin
                        writer.AsmWrite(#9'.globl ');
-                       writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbolpair(hp).sym^));
+                       writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbolpair(hp).sym^));
+                     end;
+                   if (tf_needs_symbol_type in target_info.flags) then
+                     begin
+                       writer.AsmWrite(#9'.type'#9 + ApplyAsmSymbolRestrictions(tai_symbolpair(hp).sym^));
+                       writer.AsmWriteLn(',' + sepChar + 'function');
                      end;
                  end
                else
@@ -1409,6 +1473,11 @@ implementation
                      begin
                        writer.AsmWrite(#9'.globl ');
                        writer.AsmWriteLn(tai_symbolpair(hp).sym^);
+                     end;
+                   if (tf_needs_symbol_type in target_info.flags) then
+                     begin
+                       writer.AsmWrite(#9'.type'#9 + tai_symbolpair(hp).sym^);
+                       writer.AsmWriteLn(',' + sepChar + 'function');
                      end;
                  end;
              end;
@@ -1425,7 +1494,7 @@ implementation
                      (tai_symbol_end(hp).sym.typ=AT_FUNCTION) then
                     writer.AsmWrite('.');
                   if replaceforbidden then
-                    writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_symbol_end(hp).sym.name))
+                    writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_symbol_end(hp).sym.name))
                   else
                     writer.AsmWrite(tai_symbol_end(hp).sym.name);
                   writer.AsmWrite(', '+s+' - ');
@@ -1434,7 +1503,7 @@ implementation
                      (tai_symbol_end(hp).sym.typ=AT_FUNCTION) then
                     writer.AsmWrite('.');
                   if replaceforbidden then
-                    writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol_end(hp).sym.name))
+                    writer.AsmWriteLn(ApplyAsmSymbolRestrictions(tai_symbol_end(hp).sym.name))
                   else
                     writer.AsmWriteLn(tai_symbol_end(hp).sym.name);
                 end;
@@ -1509,7 +1578,7 @@ implementation
                if tai_directive(hp).name <>'' then
                  begin
                    if replaceforbidden then
-                     writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_directive(hp).name))
+                     writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_directive(hp).name))
                    else
                      writer.AsmWrite(tai_directive(hp).name);
                  end;
@@ -1542,16 +1611,6 @@ implementation
 {$endif DISABLE_WIN64_SEH}
              end;
 
-           ait_varloc:
-             begin
-               if tai_varloc(hp).newlocationhi<>NR_NO then
-                 writer.AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
-                   std_regname(tai_varloc(hp).newlocationhi)+':'+std_regname(tai_varloc(hp).newlocation)))
-               else
-                 writer.AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
-                   std_regname(tai_varloc(hp).newlocation)));
-               writer.AsmLn;
-             end;
            ait_cfi:
              begin
                WriteCFI(tai_cfi_base(hp));
@@ -1568,8 +1627,27 @@ implementation
                end;
                writer.AsmLn;
              end;
+
+{$ifdef WASM}
+           ait_local:
+             begin
+               if tai_local(hp).first then
+                 writer.AsmWrite(#9'.local'#9)
+               else
+                 writer.AsmWrite(', ');
+               writer.AsmWrite(gas_wasm_basic_type_str[tai_local(hp).bastyp]);
+               if tai_local(hp).last then
+                 writer.AsmLn;
+             end;
+           ait_functype:
+             WriteFuncTypeDirective(tai_functype(hp));
+           ait_importexport:
+             WriteImportExport(tai_impexp(hp));
+{$endif WASM}
+
            else
-             internalerror(2006012201);
+             if not WriteComments(hp) then
+               internalerror(2006012201);
          end;
          lasthp:=hp;
          hp:=tai(hp.next);
@@ -1599,7 +1677,7 @@ implementation
         if asminfo^.dollarsign='$' then
           writer.AsmWriteLn(s.name)
         else
-          writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(s.name))
+          writer.AsmWriteLn(ApplyAsmSymbolRestrictions(s.name))
       end;
 
 
@@ -1608,7 +1686,7 @@ implementation
         { on Windows/(PE)COFF, global symbols are hidden by default: global
           symbols that are not explicitly exported from an executable/library,
           become hidden }
-        if target_info.system in systems_windows then
+        if (target_info.system in (systems_windows+systems_wince)) then
           exit;
         if target_info.system in systems_darwin then
           writer.AsmWrite(#9'.private_extern ')
@@ -1617,7 +1695,7 @@ implementation
         if asminfo^.dollarsign='$' then
           writer.AsmWriteLn(sym.name)
         else
-          writer.AsmWriteLn(ReplaceForbiddenAsmSymbolChars(sym.name))
+          writer.AsmWriteLn(ApplyAsmSymbolRestrictions(sym.name))
       end;
 
 

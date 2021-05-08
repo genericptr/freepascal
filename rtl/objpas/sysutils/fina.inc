@@ -167,6 +167,15 @@ Begin
  Result:=Fexpand(S);
 end;
 
+function ExpandFileName (Const FileName, BasePath : PathStr): PathStr;
+
+Var S : PathStr;
+
+Begin
+ S:=FileName;
+ DoDirSeparators(S);
+ Result:=Fexpand(S,BasePath);
+end;
 
 {$ifndef HASEXPANDUNCFILENAME}
 function ExpandUNCFileName (Const FileName : PathStr): PathStr;
@@ -372,7 +381,7 @@ end;
 
 Procedure DoDirSeparators (Var FileName : PathStr); {$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif}
 
-VAr I : longint;
+Var I : longint;
 
 begin
   For I:=1 to Length(FileName) do

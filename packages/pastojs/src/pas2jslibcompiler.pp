@@ -25,7 +25,7 @@ unit pas2jslibcompiler;
 interface
 
 uses
-  SysUtils, Classes,
+  SysUtils, Classes, Math,
   FPPJsSrcMap, Pas2jsFileCache, Pas2JSCompiler, Pas2jsPCUCompiler,
   Pas2JSCompilerCfg, Pas2JSCompilerPP;
 
@@ -47,6 +47,8 @@ Type
     AFileData : PAnsiChar; Var AFileDataLen: Int32); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
   TReadDirCallBack = Function (Data : Pointer;
     P : PDirectoryCache; ADirPath: PAnsiChar): boolean; {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
+  TUnitAliasCallBack = Function (Data: Pointer;
+    AUnitName: PAnsiChar; AUnitNameMaxLen: Integer): boolean; {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 
   { TLibraryPas2JSCompiler }
 
@@ -60,9 +62,13 @@ Type
     FOnReadDirData: Pointer;
     FOnReadPasData: Pointer;
     FOnReadPasFile: TReadPasCallBack;
+    FOnUnitAlias: TUnitAliasCallBack;
+    FOnUnitAliasData: Pointer;
     FOnWriteJSCallBack: TWriteJSCallBack;
     FOnWriteJSData: Pointer;
     FReadBufferLen: Cardinal;
+    function GetLogEncoding: String;
+    procedure SetLogEncoding(AValue: String);
   Protected
     Function DoWriteJSFile(const DestFilename: String; aWriter: TPas2JSMapper): Boolean; override;
     Procedure GetLastError(AError : PAnsiChar; Var AErrorLength : Longint;
@@ -71,10 +77,12 @@ Type
     Function ReadDirectory(Dir: TPas2jsCachedDirectory): boolean; virtual;
   Public
     Constructor Create; override;
+    procedure CheckUnitAlias(var UseUnitName: string); override;
     Procedure DoLibraryLog(Sender : TObject; Const Msg : String);
     Function LibraryRun(ACompilerExe, AWorkingDir : PAnsiChar; CommandLine : PPAnsiChar; DoReset : Boolean) :Boolean; {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
     Property LastError : String Read FLastError Write FLastError;
     Property LastErrorClass : String Read FLastErrorClass Write FLastErrorClass;
+    property LogEncoding: String  read GetLogEncoding write SetLogEncoding;
     Property OnLibLogCallBack : TLibLogCallBack Read FOnLibLogCallBack Write FOnLibLogCallBack;
     Property OnLibLogData : Pointer Read FOnLibLogData Write FOnLibLogData;
     Property OnWriteJSCallBack : TWriteJSCallBack Read FOnWriteJSCallBack Write FOnWriteJSCallBack;
@@ -84,6 +92,8 @@ Type
     Property ReadBufferLen : Cardinal Read FReadBufferLen Write FReadBufferLen;
     Property OnReadDir: TReadDirCallBack read FOnReadDir write FOnReadDir;
     Property OnReadDirData: Pointer read FOnReadDirData write FOnReadDirData;
+    Property OnUnitAlias: TUnitAliasCallBack read FOnUnitAlias write FOnUnitAlias;
+    Property OnUnitAliasData: Pointer read FOnUnitAliasData write FOnUnitAliasData;
   end;
 
 Type
@@ -95,10 +105,12 @@ Procedure SetPas2JSReadPasCallBack(P : PPas2JSCompiler; ACallBack : TReadPasCall
 Procedure SetPas2JSReadDirCallBack(P : PPas2JSCompiler; ACallBack : TReadDirCallBack; CallBackData : Pointer); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 Procedure AddPas2JSDirectoryEntry(P: PDirectoryCache; AFilename: PAnsiChar;
   AAge: TPas2jsFileAgeTime; AAttr: TPas2jsFileAttr; ASize: TPas2jsFileSize); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
+Procedure SetPas2JSUnitAliasCallBack(P : PPas2JSCompiler; ACallBack : TUnitAliasCallBack; CallBackData : Pointer); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 Function RunPas2JSCompiler(P : PPas2JSCompiler; ACompilerExe, AWorkingDir : PAnsiChar; CommandLine : PPAnsiChar; DoReset : Boolean) : Boolean; {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 Procedure FreePas2JSCompiler(P : PPas2JSCompiler); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 Function GetPas2JSCompiler : PPas2JSCompiler; {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 Procedure GetPas2JSCompilerLastError(P : PPas2JSCompiler; AError : PAnsiChar; Var AErrorLength : Longint; AErrorClass : PAnsiChar; Var AErrorClassLength : Longint); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
+procedure SetPas2JSLogEncoding(P : PPas2JSCompiler; Enconding: PAnsiChar); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
 
 implementation
 
@@ -112,6 +124,16 @@ begin
     Result:=OnReadDir(FOnReadDirData,Dir,PAnsiChar(Dir.Path));
 end;
 
+function TLibraryPas2JSCompiler.GetLogEncoding: String;
+begin
+  Result := Log.Encoding;
+end;
+
+procedure TLibraryPas2JSCompiler.SetLogEncoding(AValue: String);
+begin
+  Log.Encoding := AValue;
+end;
+
 function TLibraryPas2JSCompiler.DoWriteJSFile(const DestFilename: String; aWriter: TPas2JSMapper): Boolean;
 
 Var
@@ -121,7 +143,7 @@ begin
   Result:=Assigned(OnWriteJSCallBack);
   if Result then
     try
-      Src:=aWriter.{$IF FPC_FULLVERSION>30300}AsString{$ELSE}AsAnsistring{$ENDIF};
+      Src:=aWriter.{$IF FPC_FULLVERSION>30101}AsString{$ELSE}AsAnsistring{$ENDIF};
       OnWriteJSCallBack(OnWriteJSData,PAnsiChar(DestFileName),Length(DestFileName),PAnsiChar(Src),Length(Src));
     except
       Result:=False;
@@ -129,8 +151,8 @@ begin
 end;
 
 procedure TLibraryPas2JSCompiler.GetLastError(AError: PAnsiChar;
-  Var AErrorLength: Longint; AErrorClass: PAnsiChar;
-  Var AErrorClassLength: Longint);
+  var AErrorLength: Longint; AErrorClass: PAnsiChar;
+  var AErrorClassLength: Longint);
 
 Var
   L : Integer;
@@ -192,6 +214,22 @@ begin
   PostProcessorSupport:=TPas2JSFSPostProcessorSupport.Create(Self);
 end;
 
+procedure TLibraryPas2JSCompiler.CheckUnitAlias(var UseUnitName: string);
+var
+  UnitNameLen, UnitNameMaxLen: Integer;
+  s: String;
+begin
+  inherited CheckUnitAlias(UseUnitName);
+  UnitNameLen:=length(UseUnitName);
+  if (UnitNameLen>0) and Assigned(OnUnitAlias) then
+    begin
+    UnitNameMaxLen:=Max(UnitNameLen,255);
+    s:=UseUnitName+StringOfChar(#0,UnitNameMaxLen-UnitNameLen);
+    if OnUnitAlias(OnUnitAliasData,Pointer(s),UnitNameMaxLen) then
+      UseUnitName:=PAnsiChar(s);
+    end;
+end;
+
 procedure TLibraryPas2JSCompiler.DoLibraryLog(Sender: TObject; const Msg: String);
 begin
   if Assigned(FOnLibLogCallBack) then
@@ -226,7 +264,7 @@ begin
       if Not Result then
         begin
         LastError:=Format('Compiler exited with exit code %d',[ExitCode]);
-        LastErrorClass:=ECompilerTerminate.ClassName;
+        LastErrorClass:='';
         end;
     except
       On E : Exception do
@@ -286,10 +324,16 @@ begin
   TPas2jsCachedDirectory(P).Add(AFilename,AAge,AAttr,ASize);
 end;
 
+procedure SetPas2JSUnitAliasCallBack(P: PPas2JSCompiler;
+  ACallBack: TUnitAliasCallBack; CallBackData: Pointer); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
+begin
+  TLibraryPas2JSCompiler(P).OnUnitAlias:=ACallBack;
+  TLibraryPas2JSCompiler(P).OnUnitAliasData:=CallBackData;
+end;
+
 function RunPas2JSCompiler(P: PPas2JSCompiler; ACompilerExe,
   AWorkingDir: PAnsiChar; CommandLine: PPAnsiChar; DoReset: Boolean): Boolean;
   {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
-
 begin
   Result:=TLibraryPas2JSCompiler(P).LibraryRun(ACompilerExe,AWorkingDir,CommandLine,DoReset)
 end;
@@ -312,6 +356,11 @@ procedure GetPas2JSCompilerLastError(P: PPas2JSCompiler; AError: PAnsiChar;
 
 begin
   TLibraryPas2JSCompiler(P).GetLastError(AError,AErrorLength,AErrorClass,AErrorClassLength);
+end;
+
+procedure SetPas2JSLogEncoding(P : PPas2JSCompiler; Enconding: PAnsiChar); {$IFDEF UseCDecl}cdecl{$ELSE}stdcall{$ENDIF};
+begin
+  TLibraryPas2JSCompiler(P).LogEncoding := Enconding;
 end;
 
 end.

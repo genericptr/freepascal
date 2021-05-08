@@ -75,11 +75,12 @@ interface
          patternw : pcompilerwidestring;
          settings : tsettings;
          tokenbuf : tdynamicarray;
+         tokenbuf_needs_swapping : boolean;
          next     : treplaystack;
          constructor Create(atoken: ttoken;aidtoken:ttoken;
            const aorgpattern,apattern:string;const acstringpattern:ansistring;
            apatternw:pcompilerwidestring;asettings:tsettings;
-           atokenbuf:tdynamicarray;anext:treplaystack);
+           atokenbuf:tdynamicarray;change_endian:boolean;anext:treplaystack);
          destructor destroy;override;
        end;
 
@@ -134,6 +135,8 @@ interface
           { if nexttoken<>NOTOKEN, then nexttokenpos holds its filepos }
           next_filepos   : tfileposinfo;
 
+          { current macro nesting depth }
+          macro_nesting_depth,
           comment_level,
           yylexcount     : longint;
           ignoredirectives : TFPHashList; { ignore directives, used to give warnings only once }
@@ -145,8 +148,8 @@ interface
 
           { true, if we are parsing preprocessor expressions }
           in_preproc_comp_expr : boolean;
-          { true if cross-compiling for a CPU in opposite endianess}
-          change_endian_for_tokens : boolean;
+          { true if tokens must be converted to opposite endianess}
+          change_endian_for_replay : boolean;
 
           constructor Create(const fn:string; is_macro: boolean = false);
           destructor Destroy;override;
@@ -184,7 +187,7 @@ interface
           procedure stoprecordtokens;
           function is_recording_tokens:boolean;
           procedure replaytoken;
-          procedure startreplaytokens(buf:tdynamicarray);
+          procedure startreplaytokens(buf:tdynamicarray; change_endian:boolean);
           { bit length asizeint is target depend }
           procedure tokenwritesizeint(val : asizeint);
           procedure tokenwritelongint(val : longint);
@@ -226,6 +229,7 @@ interface
           procedure skipoldtpcomment(read_first_char:boolean);
           procedure readtoken(allowrecordtoken:boolean);
           function  readpreproc:ttoken;
+          function  readpreprocint(var value:int64;const place:string):boolean;
           function  asmgetchar:char;
        end;
 
@@ -274,7 +278,6 @@ interface
     Function SetCompileMode(const s:string; changeInit: boolean):boolean;
     Function SetCompileModeSwitch(s:string; changeInit: boolean):boolean;
     procedure SetAppType(NewAppType:tapptype);
-
 
 implementation
 
@@ -459,6 +462,16 @@ implementation
                   end;
               end;
           end;
+
+{$ifdef i8086}
+        { enable cs_force_far_calls when m_nested_procvars is enabled }
+        if switch=m_nested_procvars then
+          begin
+            include(current_settings.localswitches,cs_force_far_calls);
+            if changeinit then
+              include(init_settings.localswitches,cs_force_far_calls);
+          end;
+{$endif i8086}
       end;
 
 
@@ -602,6 +615,30 @@ implementation
                if changeinit then
                  include(init_settings.localswitches,cs_strict_var_strings);
              end;
+
+           { in delphi mode, excess precision is by default on }
+           if ([m_delphi] * current_settings.modeswitches <> []) then
+             begin
+               include(current_settings.localswitches,cs_excessprecision);
+               if changeinit then
+                 include(init_settings.localswitches,cs_excessprecision);
+             end;
+
+{$ifdef i8086}
+           { Do not force far calls in the TP mode by default, force it in other modes }
+           if (m_tp7 in current_settings.modeswitches) then
+             begin
+               exclude(current_settings.localswitches,cs_force_far_calls);
+               if changeinit then
+                 exclude(init_settings.localswitches,cs_force_far_calls);
+             end
+           else
+             begin
+               include(current_settings.localswitches,cs_force_far_calls);
+               if changeinit then
+                 include(init_settings.localswitches,cs_force_far_calls);
+             end;
+{$endif i8086}
 
             { Undefine old symbol }
             if (m_delphi in oldmodeswitches) then
@@ -928,8 +965,10 @@ type
     function evaluate(v:texprvalue;op:ttoken):texprvalue;
     procedure error(expecteddef, place: string);
     function isBoolean: Boolean;
+    function isInt: Boolean;
     function asBool: Boolean;
     function asInt: Integer;
+    function asInt64: Int64;
     function asStr: String;
     destructor destroy; override;
   end;
@@ -1105,7 +1144,7 @@ type
 
   function texprvalue.evaluate(v:texprvalue;op:ttoken):texprvalue;
 
-    function check_compatbile: boolean;
+    function check_compatible: boolean;
       begin
         result:=(
                   (is_ordinal(v.def) or is_fpu(v.def)) and
@@ -1144,6 +1183,12 @@ type
         begin
           if isBoolean then
             result:=texprvalue.create_bool(not asBool)
+          else if is_ordinal(def) then
+            begin
+              result:=texprvalue.create_ord(value.valueord);
+              result.def:=def;
+              calc_not_ordvalue(result.value.valueord,result.def);
+            end
           else
             begin
               error('Boolean', 'NOT');
@@ -1158,6 +1203,14 @@ type
             else
               begin
                 v.error('Boolean','OR');
+                result:=texprvalue.create_error;
+              end
+          else if is_ordinal(def) then
+            if is_ordinal(v.def) then
+              result:=texprvalue.create_ord(value.valueord or v.value.valueord)
+            else
+              begin
+                v.error('Ordinal','OR');
                 result:=texprvalue.create_error;
               end
           else
@@ -1176,6 +1229,14 @@ type
                 v.error('Boolean','XOR');
                 result:=texprvalue.create_error;
               end
+          else if is_ordinal(def) then
+            if is_ordinal(v.def) then
+              result:=texprvalue.create_ord(value.valueord xor v.value.valueord)
+            else
+              begin
+                v.error('Ordinal','XOR');
+                result:=texprvalue.create_error;
+              end
           else
             begin
               error('Boolean','XOR');
@@ -1192,6 +1253,14 @@ type
                 v.error('Boolean','AND');
                 result:=texprvalue.create_error;
               end
+          else if is_ordinal(def) then
+            if is_ordinal(v.def) then
+              result:=texprvalue.create_ord(value.valueord and v.value.valueord)
+            else
+              begin
+                v.error('Ordinal','AND');
+                result:=texprvalue.create_error;
+              end
           else
             begin
               error('Boolean','AND');
@@ -1199,7 +1268,7 @@ type
             end;
         end;
         _EQ,_NE,_LT,_GT,_GTE,_LTE,_PLUS,_MINUS,_STAR,_SLASH,_OP_DIV,_OP_MOD,_OP_SHL,_OP_SHR:
-        if check_compatbile then
+        if check_compatible then
           begin
             if (is_ordinal(def) and is_ordinal(v.def)) then
               begin
@@ -1327,14 +1396,19 @@ type
 
   function texprvalue.isBoolean: Boolean;
     var
-      i: integer;
+      i: int64;
     begin
       result:=is_boolean(def);
       if not result and is_integer(def) then
         begin
-          i:=asInt;
+          i:=asInt64;
           result:=(i=0)or(i=1);
         end;
+    end;
+
+  function texprvalue.isInt: Boolean;
+    begin
+      result:=is_integer(def);
     end;
 
   function texprvalue.asBool: Boolean;
@@ -1343,6 +1417,11 @@ type
     end;
 
   function texprvalue.asInt: Integer;
+    begin
+      result:=value.valueord.svalue;
+    end;
+
+  function texprvalue.asInt64: Int64;
     begin
       result:=value.valueord.svalue;
     end;
@@ -1570,6 +1649,7 @@ type
           mac: tmacro;
           macrocount,
           len: integer;
+          foundmacro: boolean;
         begin
           if not eval then
             begin
@@ -1578,6 +1658,7 @@ type
             end;
 
           mac:=nil;
+          foundmacro:=false;
           { Substitue macros and compiler variables with their content/value.
             For real macros also do recursive substitution. }
           macrocount:=0;
@@ -1605,6 +1686,7 @@ type
                   move(mac.buftext^,hs[1],len);
                   searchstr:=upcase(hs);
                   mac.is_used:=true;
+                  foundmacro:=true;
                 end
               else
                 begin
@@ -1623,9 +1705,9 @@ type
           result:=texprvalue.try_parse_number(searchstr);
           if not assigned(result) then
             begin
-              if assigned(mac) and (searchstr='FALSE') then
+              if foundmacro and (searchstr='FALSE') then
                 result:=texprvalue.create_bool(false)
-              else if assigned(mac) and (searchstr='TRUE') then
+              else if foundmacro and (searchstr='TRUE') then
                 result:=texprvalue.create_bool(true)
               else if (m_mac in current_settings.modeswitches) and
                       (not assigned(mac) or not mac.defined) and
@@ -2185,6 +2267,11 @@ type
       begin
         current_scanner.skipspace;
         hs:=current_scanner.readid;
+        if hs='' then
+          begin
+            Message(scan_e_emptymacroname);
+            exit;
+          end;
         mac:=tmacro(search_macro(hs));
         if not assigned(mac) or (mac.owner <> current_module.localmacrosymtable) then
           begin
@@ -2457,9 +2544,15 @@ type
            macroIsString:=true;
            case hs of
              'TIME':
-               hs:=gettimestr;
+               if timestr<>'' then
+                 hs:=timestr
+               else
+                 hs:=gettimestr;
              'DATE':
-               hs:=getdatestr;
+               if datestr<>'' then
+                 hs:=datestr
+               else
+                 hs:=getdatestr;
              'DATEYEAR':
                begin
                  hs:=tostr(startsystime.Year);
@@ -2645,7 +2738,7 @@ type
     constructor treplaystack.Create(atoken:ttoken;aidtoken:ttoken;
       const aorgpattern,apattern:string;const acstringpattern:ansistring;
       apatternw:pcompilerwidestring;asettings:tsettings;
-      atokenbuf:tdynamicarray;anext:treplaystack);
+      atokenbuf:tdynamicarray;change_endian:boolean;anext:treplaystack);
       begin
         token:=atoken;
         idtoken:=aidtoken;
@@ -2660,6 +2753,7 @@ type
           end;
         settings:=asettings;
         tokenbuf:=atokenbuf;
+        tokenbuf_needs_swapping:=change_endian;
         next:=anext;
       end;
 
@@ -2717,11 +2811,8 @@ type
         lasttoken:=NOTOKEN;
         nexttoken:=NOTOKEN;
         ignoredirectives:=TFPHashList.Create;
-        if (current_module is tppumodule) and assigned(tppumodule(current_module).ppufile) then
-          change_endian_for_tokens:=tppumodule(current_module).ppufile.change_endian
-        else
-          change_endian_for_tokens:=false;
-       end;
+        change_endian_for_replay:=false;
+      end;
 
 
     procedure tscannerfile.firstfile;
@@ -2836,7 +2927,10 @@ type
         if assigned(inputfile.next) then
          begin
            if inputfile.is_macro then
-             to_dispose:=inputfile
+             begin
+               to_dispose:=inputfile;
+               dec(macro_nesting_depth);
+             end
            else
              begin
                to_dispose:=nil;
@@ -2921,7 +3015,7 @@ type
         val : asizeint;
       begin
         replaytokenbuf.read(val,sizeof(asizeint));
-        if change_endian_for_tokens then
+        if change_endian_for_replay then
           val:=swapendian(val);
         result:=val;
       end;
@@ -2931,7 +3025,7 @@ type
         val : longword;
       begin
         replaytokenbuf.read(val,sizeof(longword));
-        if change_endian_for_tokens then
+        if change_endian_for_replay then
           val:=swapendian(val);
         result:=val;
       end;
@@ -2941,7 +3035,7 @@ type
         val : longint;
       begin
         replaytokenbuf.read(val,sizeof(longint));
-        if change_endian_for_tokens then
+        if change_endian_for_replay then
           val:=swapendian(val);
         result:=val;
       end;
@@ -2967,7 +3061,7 @@ type
         val : smallint;
       begin
         replaytokenbuf.read(val,sizeof(smallint));
-        if change_endian_for_tokens then
+        if change_endian_for_replay then
           val:=swapendian(val);
         result:=val;
       end;
@@ -2977,7 +3071,7 @@ type
         val : word;
       begin
         replaytokenbuf.read(val,sizeof(word));
-        if change_endian_for_tokens then
+        if change_endian_for_replay then
           val:=swapendian(val);
         result:=val;
       end;
@@ -2999,7 +3093,7 @@ type
      i : longint;
    begin
      replaytokenbuf.read(b,size);
-     if change_endian_for_tokens then
+     if change_endian_for_replay then
        for i:=0 to size-1 do
          Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
    end;
@@ -3315,17 +3409,21 @@ type
       end;
 
 
-    procedure tscannerfile.startreplaytokens(buf:tdynamicarray);
+    procedure tscannerfile.startreplaytokens(buf:tdynamicarray; change_endian:boolean);
       begin
         if not assigned(buf) then
           internalerror(200511175);
+
         { save current scanner state }
         replaystack:=treplaystack.create(token,idtoken,orgpattern,pattern,
-          cstringpattern,patternw,current_settings,replaytokenbuf,replaystack);
+          cstringpattern,patternw,current_settings,replaytokenbuf,change_endian_for_replay,replaystack);
         if assigned(inputpointer) then
           dec(inputpointer);
         { install buffer }
         replaytokenbuf:=buf;
+
+        { Initialize value of change_endian_for_replay variable }
+        change_endian_for_replay:=change_endian;
 
         { reload next token }
         replaytokenbuf.seek(0);
@@ -3368,6 +3466,7 @@ type
             move(replaystack.patternw^.data^,patternw^.data^,replaystack.patternw^.len*sizeof(tcompilerwidechar));
             cstringpattern:=replaystack.cstringpattern;
             replaytokenbuf:=replaystack.tokenbuf;
+            change_endian_for_replay:=replaystack.tokenbuf_needs_swapping;
             { restore compiler settings }
             current_settings:=replaystack.settings;
             popreplaystack;
@@ -3595,6 +3694,7 @@ type
         addfile(hp);
         with inputfile do
          begin
+           inc(macro_nesting_depth);
            setmacro(p,len);
          { local buffer }
            inputbuffer:=buf;
@@ -4535,6 +4635,16 @@ type
               inc_comment_level;
             '}' :
               dec_comment_level;
+            '*' :
+              { in iso mode, comments opened by a curly bracket can be closed by asterisk, round bracket }
+              if m_iso in current_settings.modeswitches then
+                begin
+                  readchar;
+                  if c=')' then
+                    dec_comment_level
+                  else
+                    continue;
+                end;
             #10,#13 :
               linebreak;
             #26 :
@@ -4624,6 +4734,16 @@ type
                    else
                     found:=0;
                  end;
+              '}' :
+                { in iso mode, comments opened by asterisk, round bracket can be closed by a curly bracket }
+                if m_iso in current_settings.modeswitches then
+                  begin
+                    dec_comment_level;
+                    if comment_level=0 then
+                      found:=2
+                    else
+                      found:=0;
+                  end;
                '(' :
                  begin
                    if found=4 then
@@ -4757,18 +4877,27 @@ type
                  mac:=tmacro(search_macro(pattern));
                  if assigned(mac) and (not mac.is_compiler_var) and (assigned(mac.buftext)) then
                   begin
-                    if yylexcount<max_macro_nesting then
+                    if (yylexcount<max_macro_nesting) and (macro_nesting_depth<max_macro_nesting) then
                      begin
                        mac.is_used:=true;
                        inc(yylexcount);
                        substitutemacro(pattern,mac.buftext,mac.buflen,
                          mac.fileinfo.line,mac.fileinfo.fileindex);
-                     { handle empty macros }
+                       { handle empty macros }
                        if c=#0 then
-                         reload;
-                       readtoken(false);
-                       { that's all folks }
-                       dec(yylexcount);
+                         begin
+                           reload;
+                           { avoid macro nesting error in case of
+                             a sequence of empty macros, see #38802 }
+                           dec(yylexcount);
+                           readtoken(false);
+                         end
+                       else
+                         begin
+                           readtoken(false);
+                           { that's all folks }
+                           dec(yylexcount);
+                         end;
                        exit;
                      end
                     else
@@ -5645,6 +5774,25 @@ exit_label:
                readpreproc:=NOTOKEN;
              end;
          end;
+      end;
+
+
+    function tscannerfile.readpreprocint(var value:int64;const place:string):boolean;
+      var
+        hs : texprvalue;
+      begin
+        hs:=preproc_comp_expr;
+        if hs.isInt then
+          begin
+            value:=hs.asInt64;
+            result:=true;
+          end
+        else
+          begin
+            hs.error('Integer',place);
+            result:=false;
+          end;
+        hs.free;
       end;
 
 

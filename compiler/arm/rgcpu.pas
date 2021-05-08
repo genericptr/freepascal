@@ -400,10 +400,11 @@ unit rgcpu;
         level := 0;
         while assigned(hp) do
           begin
-            if IsIT(taicpu(hp).opcode) then
-              break
-            else if hp.typ=ait_instruction then
-              inc(level);
+            if hp.typ=ait_instruction then
+              if IsIT(taicpu(hp).opcode) then
+                break
+              else
+                inc(level);
 
             hp:=tai(hp.Previous);
           end;
@@ -491,7 +492,7 @@ unit rgcpu;
             tmpref.index:=hreg;
 
             if spilltemp.index<>NR_NO then
-              internalerror(200401263);
+              internalerror(2004012601);
 
             helplist.concat(spilling_create_load(tmpref,tempreg));
             if getregtype(tempreg)=R_INTREGISTER then
@@ -545,7 +546,7 @@ unit rgcpu;
             helplist.concat(taicpu.op_reg_ref(A_LDR,hreg,tmpref));
 
             if spilltemp.index<>NR_NO then
-              internalerror(200401263);
+              internalerror(2004012602);
 
             reference_reset_base(tmpref,current_procinfo.framepointer,0,ctempposinvalid,sizeof(pint),[]);
             tmpref.index:=hreg;

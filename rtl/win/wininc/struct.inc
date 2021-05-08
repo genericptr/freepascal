@@ -6304,41 +6304,92 @@ Const
      lpemptyrecord = ^emptyrecord;
      HPROPSHEETPAGE = ^emptyrecord;
 
-     PROPSHEETHEADER = record
+     PROPSHEETHEADERA = record
           dwSize : DWORD;
           dwFlags : DWORD;
           hwndParent : HWND;
           hInstance : HINST;
           case longint of
               0 : (hIcon : HICON);
-              1 : (pszIcon : LPCTSTR;
-                   pszCaption : LPCTSTR;
+              1 : (pszIcon : LPCSTR;
+                   pszCaption : LPCSTR;
                    nPages : UINT;
                    case longint of
                       0 : (nStartPage : UINT);
-                      1 : (pStartPage : LPCTSTR;
+                      1 : (pStartPage : LPCSTR;
                            case longint of
                               0 : (ppsp : LPCPROPSHEETPAGE);
                               1 : (phpage : ^HPROPSHEETPAGE;
                                    pfnCallback : PFNPROPSHEETCALLBACK;
                                    case longint of
                                      0 : (hbmWatermark : HBITMAP);
-                                     1 : (pszbmWatermark : LPCTSTR;
+                                     1 : (pszbmWatermark : LPCSTR;
                                           hplWatermark : HPALETTE;
                                           case longint of
                                              0 : (hbmHeader : HBITMAP);
-                                             1 : (pszbmHeader: PAnsiChar);
+                                             1 : (pszbmHeader: LPCStr);
                                          );
                                   );
                           );
                   );
        end;
-     LPPROPSHEETHEADER = ^PROPSHEETHEADER;
-     LPCPROPSHEETHEADER = ^PROPSHEETHEADER;
-     _PROPSHEETHEADER = PROPSHEETHEADER;
-     TPROPSHEETHEADER = PROPSHEETHEADER;
-     PPROPSHEETHEADER = ^PROPSHEETHEADER;
+     LPPROPSHEETHEADERA = ^PROPSHEETHEADERA;
+     LPCPROPSHEETHEADERA = ^PROPSHEETHEADERA;
+     _PROPSHEETHEADERA = PROPSHEETHEADERA;
+     TPROPSHEETHEADERA = PROPSHEETHEADERA;
+     PPROPSHEETHEADERA = ^PROPSHEETHEADERA;
 
+     PROPSHEETHEADERW = record
+          dwSize : DWORD;
+          dwFlags : DWORD;
+          hwndParent : HWND;
+          hInstance : HINST;
+          case longint of
+              0 : (hIcon : HICON);
+              1 : (pszIcon : LPCWSTR;
+                   pszCaption : LPCWSTR;
+                   nPages : UINT;
+                   case longint of
+                      0 : (nStartPage : UINT);
+                      1 : (pStartPage : LPCWSTR;
+                           case longint of
+                              0 : (ppsp : LPCPROPSHEETPAGE);
+                              1 : (phpage : ^HPROPSHEETPAGE;
+                                   pfnCallback : PFNPROPSHEETCALLBACK;
+                                   case longint of
+                                     0 : (hbmWatermark : HBITMAP);
+                                     1 : (pszbmWatermark : LPCWSTR;
+                                          hplWatermark : HPALETTE;
+                                          case longint of
+                                             0 : (hbmHeader : HBITMAP);
+                                             1 : (pszbmHeader: LPCWStr);
+                                         );
+                                  );
+                          );
+                  );
+       end;
+     LPPROPSHEETHEADERW = ^PROPSHEETHEADERW;
+     LPCPROPSHEETHEADERW = ^PROPSHEETHEADERW;
+     _PROPSHEETHEADERW = PROPSHEETHEADERW;
+     TPROPSHEETHEADERW = PROPSHEETHEADERW;
+     PPROPSHEETHEADERW = ^PROPSHEETHEADERW;
+
+     {$ifdef Unicode}
+     PROPSHEETHEADER    = PROPSHEETHEADERW;
+     LPPROPSHEETHEADER  = LPPROPSHEETHEADERW;
+     LPCPROPSHEETHEADER = LPCPROPSHEETHEADERW;
+     _PROPSHEETHEADER   = _PROPSHEETHEADERW;
+     TPROPSHEETHEADER   = TPROPSHEETHEADERW;
+     PPROPSHEETHEADER   = PPROPSHEETHEADERW;
+     {$else}
+     PROPSHEETHEADER    = PROPSHEETHEADERA;
+     LPPROPSHEETHEADER  = LPPROPSHEETHEADERA;
+     LPCPROPSHEETHEADER = LPCPROPSHEETHEADERA;
+     _PROPSHEETHEADER   = _PROPSHEETHEADERA;
+     TPROPSHEETHEADER   = TPROPSHEETHEADERA;
+     PPROPSHEETHEADER   = PPROPSHEETHEADERA;
+     {$endif}
+    
      { PropertySheet callbacks  }
      LPFNADDPROPSHEETPAGE = function (_para1:HPROPSHEETPAGE; _para2:LPARAM):WINBOOL;stdcall;
      TFNADDPROPSHEETPAGE = LPFNADDPROPSHEETPAGE;
@@ -7363,7 +7414,7 @@ Const
           idCommand : longint;
           fsState : BYTE;
           fsStyle : BYTE;
-{$ifdef _WIN64}
+{$ifdef WIN64}
           bReserved : array[0..5] of BYTE;
 {$else}
           bReserved : array[0..1] of BYTE;
@@ -7459,6 +7510,22 @@ Const
      _TIME_ZONE_INFORMATION = TIME_ZONE_INFORMATION;
      TTIMEZONEINFORMATION = TIME_ZONE_INFORMATION;
      PTIMEZONEINFORMATION = ^TIME_ZONE_INFORMATION;
+
+     TIME_DYNAMIC_ZONE_INFORMATION = record
+       Bias: Longint;
+       StandardName: array[0..31] of WCHAR;
+       StandardDate: TSystemTime;
+       StandardBias: Longint;
+       DaylightName: array[0..31] of WCHAR;
+       DaylightDate: TSystemTime;
+       DaylightBias: Longint;
+       TimeZoneKeyName: array[0..127] of WCHAR;
+       DynamicDaylightTimeDisabled: ByteBool;
+     end;
+     LPTIME_DYNAMIC_ZONE_INFORMATION = ^TIME_DYNAMIC_ZONE_INFORMATION;
+     _TIME_DYNAMIC_ZONE_INFORMATION = TIME_DYNAMIC_ZONE_INFORMATION;
+     TDYNAMICTIMEZONEINFORMATION = TIME_DYNAMIC_ZONE_INFORMATION;
+     PDYNAMICTIMEZONEINFORMATION = ^TDYNAMICTIMEZONEINFORMATION;
 
      TOGGLEKEYS = record
           cbSize : DWORD;
@@ -8592,7 +8659,7 @@ const
   IMAGE_ROM_OPTIONAL_HDR_MAGIC  = $107;
 
 type
-{$ifdef _WIN64}
+{$ifdef WIN64}
   IMAGE_OPTIONAL_HEADER = IMAGE_OPTIONAL_HEADER64;
   PIMAGE_OPTIONAL_HEADER = PIMAGE_OPTIONAL_HEADER64;
 {$else}
@@ -8636,7 +8703,7 @@ type
   TImageRomHeaders = IMAGE_ROM_HEADERS;
   PImageRomHeaders = PIMAGE_ROM_HEADERS;
 
-{$ifdef _WIN64}
+{$ifdef WIN64}
   IMAGE_NT_HEADERS = IMAGE_NT_HEADERS64;
   PIMAGE_NT_HEADERS = PIMAGE_NT_HEADERS64;
 {$else}
@@ -8804,7 +8871,7 @@ type
        end;
      PIMAGE_LOAD_CONFIG_DIRECTORY64 = ^IMAGE_LOAD_CONFIG_DIRECTORY64;
      TIMAGE_LOAD_CONFIG_DIRECTORY64 = IMAGE_LOAD_CONFIG_DIRECTORY64;
-{$ifdef _WIN64}
+{$ifdef WIN64}
      IMAGE_LOAD_CONFIG_DIRECTORY = IMAGE_LOAD_CONFIG_DIRECTORY64;
      TIMAGE_LOAD_CONFIG_DIRECTORY = TIMAGE_LOAD_CONFIG_DIRECTORY64;
      PIMAGE_LOAD_CONFIG_DIRECTORY = PIMAGE_LOAD_CONFIG_DIRECTORY64;

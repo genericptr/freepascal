@@ -44,6 +44,19 @@ const
   DaySaturday  = 6;
   DaySunday    = 7;
 
+  MonthJanuary   = 1;
+  MonthFebruary  = 2;
+  MonthMarch     = 3;
+  MonthApril     = 4;
+  MonthMay       = 5;
+  MonthJune      = 6;
+  MonthJuly      = 7;
+  MonthAugust    = 8;
+  MonthSeptember = 9;
+  MonthOctober   = 10;
+  MonthNovember  = 11;
+  MonthDecember  = 12;
+
   // Fraction of a day
   OneHour        = TDateTime(1)/HoursPerDay;
   OneMinute      = TDateTime(1)/MinsPerDay;
@@ -1390,9 +1403,11 @@ end;
 
 Function DaysBetween(const ANow, AThen: TDateTime): Integer;
 begin
-  Result:=Trunc(Abs(DateTimeDiff(ANow,AThen))+HalfMilliSecond);
-end;
-
+  if anow>athen then
+    Result:=Trunc(Abs(DateTimeDiff(ANow,AThen))+HalfMilliSecond)
+  else
+    Result:=Trunc(Abs(DateTimeDiff(AThen,ANow))+HalfMilliSecond); // bug 37361
+end;            
 
 Function HoursBetween(const ANow, AThen: TDateTime): Int64;
 begin
@@ -1883,7 +1898,7 @@ end;
 
 function TryEncodeTimeInterval(Hour, Min, Sec, MSec: word; out Time: TDateTime): boolean;
 begin
- Result:= (Min<60) and (Sec<60) and (MSec<1000);
+ Result:= (Min<60) and (Sec<60) and (MSec<=1000);
  If Result then
    Time:=TDateTime(cardinal(Hour)*3600000+cardinal(Min)*60000+cardinal(Sec)*1000+MSec)/MSecsPerDay;
 end;
@@ -2255,7 +2270,7 @@ Var
 begin
   T:=aValue;
   if Not aInputisUTC then
-    T:=IncMinute(T,GetLocalTimeOffset);
+    T:=IncMinute(T,GetLocalTimeOffset(AValue, AInputisUTC));
   Result:=Round(DateTimeDiff(RecodeMillisecond(T,0),UnixEpoch)*SecsPerDay);
 end;
 
@@ -2265,7 +2280,7 @@ Function UnixToDateTime(const AValue: Int64; aReturnUTC : Boolean = true): TDate
 begin
   Result:=IncSecond(UnixEpoch, AValue);
   if Not aReturnUTC then
-    Result:=IncMinute(Result,-GetLocalTimeOffset);
+    Result:=IncMinute(Result,-GetLocalTimeOffset(Result, True));
 end;
 
 
@@ -2377,6 +2392,8 @@ begin
 end;
 
 function scandatetime(const pattern:string;const s:string;const fmt:TFormatSettings;startpos:integer=1) : tdatetime;
+const
+  EPS = 1E-15;
 
 var len ,ind  : integer;
     yy,mm,dd  : integer;
@@ -2556,44 +2573,59 @@ begin
                        end;
                      end;
                'A' : begin
-                            i:=findimatch(AMPMformatting,@ptrn[pind]);
-                            case i of
-                              0: begin
-                                   i:=findimatch(['AM','PM'],@s[ind]);
-                                   case i of
-                                     0: ;
-                                     1: timeval:=timeval+12*hrfactor;
-                                   else
-                                     arraymatcherror
-                                     end;
-                                   inc(pind,length(AMPMformatting[0]));
-                                   inc(ind,2);
-                                 end;
-                              1: begin
-                                    case upcase(s[ind]) of
-                                     'A' : ;
-                                     'P' : timeval:=timeval+12*hrfactor;
-                                   else
-                                     arraymatcherror
-                                     end;
-                                   inc(pind,length(AMPMformatting[1]));
-                                   inc(ind);
-                                 end;
-                               2: begin
-                                    i:=findimatch([fmt.timeamstring,fmt.timepmstring],@s[ind]);
-                                    case i of
-                                     0: inc(ind,length(fmt.timeamstring));
-                                     1: begin
-                                          timeval:=timeval+12*hrfactor;
-                                          inc(ind,length(fmt.timepmstring));
-                                        end;
-                                   else
-                                     arraymatcherror
-                                     end;
-                                   inc(pind,length(AMPMformatting[2]));
-                                 end;
-                            else  // no AM/PM match. Assume 'a' is simply a char
-                                matchchar(ptrn[pind]);
+                        i:=findimatch(AMPMformatting,@ptrn[pind]);
+                        case i of
+                            0: begin
+                                 if timeval >= 13*hrfactor - EPS then
+                                   raiseexception(SAMPMError);
+                                 i:=findimatch(['AM','PM'],@s[ind]);
+                                 case i of
+                                   0: if timeval >= 12*hrfactor then
+                                        timeval := timeval - 12*hrfactor;
+                                   1: if (timeval + EPS >= hrfactor) and (timeval + EPS <= 12*hrfactor) then
+                                        timeval:=timeval+12*hrfactor;
+                                 else
+                                   arraymatcherror
+                                   end;
+                                 inc(pind,length(AMPMformatting[0]));
+                                 inc(ind,2);
+                               end;
+                            1: begin
+                                 if timeval >= 13*hrfactor - EPS then
+                                   raiseexception(SAMPMError);
+                                  case upcase(s[ind]) of
+                                   'A' : if timeval >= 12*hrfactor then
+                                           timeval := timeval - 12*hrfactor;
+                                   'P' : if (timeval + EPS >= hrfactor) and (timeval + EPS <= 12*hrfactor) then
+                                           timeval := timeval + 12*hrfactor;
+                                 else
+                                   arraymatcherror
+                                   end;
+                                 inc(pind,length(AMPMformatting[1]));
+                                 inc(ind);
+                               end;
+                             2: begin
+                                  if timeval >= 13*hrfactor - EPS then
+                                    raiseexception(SAMPMError);
+                                  i:=findimatch([fmt.timeamstring,fmt.timepmstring],@s[ind]);
+                                  case i of
+                                   0: begin
+                                        if timeval >= 12*hrfactor then
+                                          timeval := timeval - 12*hrfactor;
+                                        inc(ind,length(fmt.timeamstring));
+                                      end;
+                                   1: begin
+                                        if (timeval + EPS >= hrfactor) and (timeval + EPS <= 12*hrfactor) then
+                                          timeval:=timeval + 12*hrfactor;
+                                        inc(ind,length(fmt.timepmstring));
+                                      end;
+                                 else
+                                   arraymatcherror
+                                  end;
+                                 inc(pind,length(AMPMformatting[2]));
+                               end;
+                           else  // no AM/PM match. Assume 'a' is simply a char
+                               matchchar(ptrn[pind]);
                              end;
                          end;
                '/' : matchchar(fmt.dateSeparator);
@@ -2666,35 +2698,25 @@ end;
 function UniversalTimeToLocal(UT: TDateTime): TDateTime;
 
 begin
-  Result:=UniversalTimeToLocal(UT,-GetLocalTimeOffset);
+  Result:=SysUtils.UniversalTimeToLocal(UT,-GetLocalTimeOffset(UT, True));
 end;
 
 function UniversalTimeToLocal(UT: TDateTime; TZOffset : Integer): TDateTime;
 
 begin
-  if (TZOffset > 0) then
-    Result := UT + EncodeTime(TZOffset div 60, TZOffset mod 60, 0, 0)
-  else if (TZOffset < 0) then
-    Result := UT - EncodeTime(Abs(TZOffset) div 60, Abs(TZOffset) mod 60, 0, 0)
-  else
-    Result := UT;
+  Result:=SysUtils.UniversalTimeToLocal(UT,TZOffset);
 end;
  
 Function LocalTimeToUniversal(LT: TDateTime): TDateTime;
 
 begin
-  Result:=LocalTimeToUniversal(LT,-GetLocalTimeOffset);
+  Result:=SysUtils.LocalTimeToUniversal(LT,-GetLocalTimeOffset(LT, False));
 end;
 
 Function LocalTimeToUniversal(LT: TDateTime;TZOffset: Integer): TDateTime;
 
 begin
-  if (TZOffset > 0) then
-    Result := LT - EncodeTime(TZOffset div 60, TZOffset mod 60, 0, 0)
-  else if (TZOffset < 0) then
-    Result := LT + EncodeTime(Abs(TZOffset) div 60, Abs(TZOffset) mod 60, 0, 0)
-  else
-    Result := LT;
+  Result:=SysUtils.LocalTimeToUniversal(LT,TZOffset);
 end;
 
 Const
@@ -2711,7 +2733,7 @@ var
   Offset: Integer;
 begin
   Result := FormatDateTime(FmtUTC, ADate);
-  Offset := GetLocalTimeOffset;
+  Offset := GetLocalTimeOffset(ADate, AInputIsUTC);
   if AInputIsUTC or (Offset=0) then
     Result:=Result+'Z'
   else
@@ -2937,7 +2959,7 @@ begin
   if ReturnUTC then
     Offset:=0
   else
-    OffSet:=-GetLocalTimeOffset;
+    OffSet:=-GetLocalTimeOffset(ADateTime, True);
   aDateTime:=IncMinute(aDateTime,Offset);
   Result:=True;
 end;

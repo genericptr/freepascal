@@ -239,7 +239,7 @@ begin
           ;
       end;
     end
-  else if gas_needsuffix[opcode]=AttSufMM then
+  else if gas_needsuffix[opcode] in [AttSufMM, AttSufMMX] then
   begin
     if (opr.typ=OPR_Reference) then
     begin
@@ -441,7 +441,6 @@ procedure Tx86Instruction.AddReferenceSizes;
   operand is a register }
 var
   operand2,i,j,k : longint;
-  t: topsize;
   s : tasmsymbol;
   so : aint;
   ExistsMemRefNoSize: boolean;
@@ -519,7 +518,7 @@ begin
               msbBCST32: memrefsize := 32;
               msbBCST64: memrefsize := 64;
               else
-                Internalerror(2019081005);
+                Internalerror(2019081015);
             end;
           end
           else
@@ -545,6 +544,21 @@ begin
                   end;
                 end;
               end;
+            msiMemRegx16y32z64:
+              begin
+                for j := 1 to ops do
+                begin
+                  if operands[j].Opr.Typ = OPR_REGISTER then
+                  begin
+                    case getsubreg(operands[j].opr.reg) of
+                      R_SUBMMX: memrefsize := 16;
+                      R_SUBMMY: memrefsize := 32;
+                      R_SUBMMZ: memrefsize := 64;
+                      else Message(asmr_e_unable_to_determine_reference_size);
+                    end;
+                  end;
+                end;
+              end;
             msiMemRegx32y64:
               begin
                 for j := 1 to ops do
@@ -554,6 +568,21 @@ begin
                     case getsubreg(operands[j].opr.reg) of
                       R_SUBMMX: memrefsize := 32;
                       R_SUBMMY: memrefsize := 64;
+                      else Message(asmr_e_unable_to_determine_reference_size);
+                    end;
+                  end;
+                end;
+              end;
+            msiMemRegx32y64z128:
+              begin
+                for j := 1 to ops do
+                begin
+                  if operands[j].Opr.Typ = OPR_REGISTER then
+                  begin
+                    case getsubreg(operands[j].opr.reg) of
+                      R_SUBMMX: memrefsize := 32;
+                      R_SUBMMY: memrefsize := 64;
+                      R_SUBMMZ: memrefsize := 128;
                       else Message(asmr_e_unable_to_determine_reference_size);
                     end;
                   end;
@@ -638,7 +667,7 @@ begin
                            S_XMM : memrefsize := 128;
                            S_YMM : memrefsize := 256;
                            S_ZMM : memrefsize := 512;
-                           else Internalerror(2019081001);
+                           else Internalerror(2019081010);
                          end;
                          break;
                        end;
@@ -686,7 +715,7 @@ begin
                     msiMemRegConst128: memrefsize := 128;
                     msiMemRegConst256: memrefsize := 256;
                     msiMemRegConst512: memrefsize := 512;
-                    else Internalerror(2019081002);
+                    else Internalerror(2019081012);
                   end;
                 end;
               end;
@@ -713,7 +742,7 @@ begin
             msiMultiple:
               ;
             else
-              Internalerror(2019081005);
+              Internalerror(2020111001);
           end;
 
           if memrefsize > -1 then
@@ -829,7 +858,7 @@ begin
                                    tx86operand(operands[i]).size   := OS_M64;
                                  end;
                       else
-                        Internalerror(2019081006);
+                        Internalerror(2019081017);
                     end;
                   end
                   else
@@ -1188,7 +1217,7 @@ begin
                                                           break;
                                                         end;
                                      else
-                                       Internalerror(2019081007);
+                                       Internalerror(2019081018);
                                    end;
                                  end;
                                end;
@@ -1403,6 +1432,49 @@ end;
 
 
 procedure Tx86Instruction.SetInstructionOpsize;
+
+  function CheckSSEAVX: Boolean;
+  var
+    i: integer;
+    bBroadcastMemRef: boolean;
+  begin
+    Result := False;
+
+    with MemRefInfo(opcode) do
+    begin
+      if (ExistsSSEAVX) then
+      begin
+        bBroadcastMemRef := false;
+        for i := 1 to ops do
+         bBroadcastMemRef := bBroadcastMemRef or ((tx86operand(operands[i]).vopext and OTVE_VECTOR_BCST) = OTVE_VECTOR_BCST);
+
+        if bBroadcastMemRef then
+        begin
+          opsize := S_NO;
+          result := true;
+        end
+        else
+        begin
+          if MemRefSize in MemRefMultiples - [msiVMemMultiple] then
+          begin
+            case ops of
+              2: begin
+                   opsize:=tx86operand(operands[1]).opsize;
+                   result := true;
+                 end;
+              3: begin
+                   if (tx86operand(operands[1]).opr.typ <> OPR_CONSTANT) then
+                    opsize:=tx86operand(operands[1]).opsize
+                     else opsize:=tx86operand(operands[2]).opsize;
+                   result := true;
+                 end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+
 begin
   if opsize<>S_NO then
    exit;
@@ -1423,78 +1495,91 @@ begin
         else
           opsize:=tx86operand(operands[1]).opsize;
       end;
-    2 :
-      begin
-        case opcode of
-          A_MOVZX,A_MOVSX :
-            begin
-              if tx86operand(operands[1]).opsize=S_NO then
-                begin
-                  tx86operand(operands[1]).opsize:=S_B;
-                  if (m_delphi in current_settings.modeswitches) then
-                    Message(asmr_w_unable_to_determine_reference_size_using_byte)
-                  else
-                    Message(asmr_e_unable_to_determine_reference_size);
-                end;
-              case tx86operand(operands[1]).opsize of
-                S_W :
-                  case tx86operand(operands[2]).opsize of
-                    S_L :
-                      opsize:=S_WL;
-{$ifdef x86_64}
-                    S_Q :
-                      opsize:=S_WQ;
-{$endif}
-                    else
-                      ;
-                  end;
-                S_B :
+    2 : begin
+          case opcode of
+            A_MOVZX,A_MOVSX :
+              begin
+                if tx86operand(operands[1]).opsize=S_NO then
                   begin
+                    tx86operand(operands[1]).opsize:=S_B;
+                    if (m_delphi in current_settings.modeswitches) then
+                      Message(asmr_w_unable_to_determine_reference_size_using_byte)
+                    else
+                      Message(asmr_e_unable_to_determine_reference_size);
+                  end;
+                case tx86operand(operands[1]).opsize of
+                  S_W :
                     case tx86operand(operands[2]).opsize of
-                      S_W :
-                        opsize:=S_BW;
                       S_L :
-                        opsize:=S_BL;
-{$ifdef x86_64}
+                        opsize:=S_WL;
+  {$ifdef x86_64}
                       S_Q :
-                        opsize:=S_BQ;
-{$endif}
+                        opsize:=S_WQ;
+  {$endif}
                       else
                         ;
                     end;
-                  end;
-                else
-                  ;
+                  S_B :
+                    begin
+                      case tx86operand(operands[2]).opsize of
+                        S_W :
+                          opsize:=S_BW;
+                        S_L :
+                          opsize:=S_BL;
+  {$ifdef x86_64}
+                        S_Q :
+                          opsize:=S_BQ;
+  {$endif}
+                        else
+                          ;
+                      end;
+                    end;
+                  else
+                    ;
+                end;
               end;
-            end;
-          A_MOVSS,
-          A_VMOVSS,
-          A_MOVD : { movd is a move from a mmx register to a
-                     32 bit register or memory, so no opsize is correct here PM }
-            exit;
-          A_MOVQ :
-            opsize:=S_IQ;
-          A_CVTSI2SS,
-          A_CVTSI2SD,
-          A_OUT :
-            opsize:=tx86operand(operands[1]).opsize;
-          else
-            opsize:=tx86operand(operands[2]).opsize;
+            A_MOVSS,
+            A_VMOVSS,
+            A_MOVD : { movd is a move from a mmx register to a
+                       32 bit register or memory, so no opsize is correct here PM }
+              exit;
+            A_MOVQ :
+              opsize:=S_IQ;
+            //A_VCVTPD2DQ,
+            //A_VCVTPD2PS,
+            //A_VCVTTPD2DQ,
+            //A_VCVTPD2UDQ,
+            //A_VCVTQQ2PS,
+            //A_VCVTTPD2UDQ,
+            //A_VCVTUQQ2PS,
+
+            A_OUT :
+              opsize:=tx86operand(operands[1]).opsize;
+            else
+             if not CheckSSEAVX then
+              opsize:=tx86operand(operands[2]).opsize;
+          end;
         end;
-      end;
     3 :
-      begin
-        case opcode of
-          A_VCVTSI2SS,
-          A_VCVTSI2SD:
-            opsize:=tx86operand(operands[1]).opsize;
-        else
-          opsize:=tx86operand(operands[ops]).opsize;
+        begin
+          //case opcode of
+            //A_VCVTSI2SS,
+            //A_VCVTSI2SD,
+            //A_VCVTUSI2SS,
+            //A_VCVTUSI2SD:
+            //  iops:=tx86operand(operands[1]).opsize;
+            //A_VFPCLASSPD,
+            //A_VFPCLASSPS:
+            //  iops:=tx86operand(operands[2]).opsize;
+            //else
+            begin
+              if not CheckSSEAVX then
+               opsize:=tx86operand(operands[ops]).opsize;
+            end;
+          //end;
         end;
-      end;
     4 :
         opsize:=tx86operand(operands[ops]).opsize;
-
   end;
 end;
 
@@ -1906,11 +1991,11 @@ begin
                      asize:=OT_BITS64;
                    OS_F80 :
                      asize:=OT_BITS80;
-                   OS_128,OS_M128,OS_MS128:
+                   OS_128,OS_M128:
                      asize := OT_BITS128;
-                   OS_M256,OS_MS256:
+                   OS_M256:
                      asize := OT_BITS256;
-                   OS_M512,OS_MS512:
+                   OS_M512:
                      asize := OT_BITS512;
                    else
                      ;
@@ -1989,7 +2074,17 @@ begin
                                begin
                                  s:=s+'reg';
                                  addsize:=true;
+                               end
+                             else
+                               if getregtype(opr.reg)=R_ADDRESSREGISTER then
+                               begin
+                                 // 14102020 TG TODO CHECK
+                                 if (opr.reg >= NR_K0) and (opr.reg >= NR_K7) then
+                                 begin
+                                   s:=s+'k' + regnr;
+                                 end;
                                end;
+
                            end;
                OPR_LOCAL,
             OPR_REFERENCE: begin

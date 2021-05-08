@@ -513,7 +513,8 @@ type
           A_FABS, A_FSABS, A_FDABS,
           A_FSQRT, A_FSSQRT, A_FDSQRT,
           A_FNEG, A_FSNEG, A_FDNEG,
-          A_FSIN, A_FCOS:
+          A_FSIN, A_FCOS,
+          A_FINT, A_FINTRZ:
              if ops = 1 then
                begin
                  if opnr = 0 then
@@ -556,8 +557,7 @@ type
           R_ADDRESSREGISTER :
             result:=taicpu.op_ref_reg(A_MOVE,S_L,ref,r);
           R_FPUREGISTER :
-            // no need to handle sizes here
-            result:=taicpu.op_ref_reg(A_FMOVE,S_FS,ref,r);
+            result:=taicpu.op_ref_reg(A_FMOVE,fpuregopsize,ref,r);
           else
             internalerror(200602011);
         end;
@@ -572,8 +572,7 @@ type
           R_ADDRESSREGISTER :
             result:=taicpu.op_reg_ref(A_MOVE,S_L,r,ref);
           R_FPUREGISTER :
-            // no need to handle sizes here
-            result:=taicpu.op_reg_ref(A_FMOVE,S_FS,r,ref);
+            result:=taicpu.op_reg_ref(A_FMOVE,fpuregopsize,r,ref);
           else
             internalerror(200602012);
         end;

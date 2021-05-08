@@ -64,15 +64,15 @@ type
     _OP_DEC,
     { special chars }
     _CARET,
-    _LECKKLAMMER,
-    _RECKKLAMMER,
+    _LECKKLAMMER, { '[' }
+    _RECKKLAMMER, { ']' }
     _POINT,
     _COMMA,
-    _LKLAMMER,
-    _RKLAMMER,
+    _LKLAMMER, { '(' }
+    _RKLAMMER, { ')' }
     _COLON,
     _SEMICOLON,
-    _KLAMMERAFFE,
+    _KLAMMERAFFE, { '@' }
     _POINTPOINT,
     _POINTPOINTPOINT,
     _PIPE,
@@ -346,10 +346,10 @@ const
 
   { Warning these stay be ordered !! }
   operator_levels:array[Toperator_precedence] of set of NOTOKEN..last_operator=
-      ([_LT,_LTE,_GT,_GTE,_EQ,_NE,_OP_IN],
+      ([_LT,_LTE,_GT,_GTE,_EQ,_NE,_OP_IN,_OP_IS],
        [_PLUS,_MINUS,_OP_OR,_PIPE,_OP_XOR],
        [_CARET,_SYMDIF,_STARSTAR,_STAR,_SLASH,
-        _OP_AS,_OP_IS,_OP_AND,_AMPERSAND,_OP_DIV,_OP_MOD,_OP_SHL,_OP_SHR],
+        _OP_AS,_OP_AND,_AMPERSAND,_OP_DIV,_OP_MOD,_OP_SHL,_OP_SHR],
        [_STARSTAR] );
 
 type
@@ -614,7 +614,7 @@ const
       (str:'LOGICALOR'     ;special:false;keyword:[m_none];op:NOTOKEN), { delphi operator name }
       (str:'NODEFAULT'     ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'OBJCCLASS'     ;special:false;keyword:[m_objectivec1];op:NOTOKEN),
-      (str:'OTHERWISE'     ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:NOTOKEN),
+      (str:'OTHERWISE'     ;special:false;keyword:alllanguagemodes-[m_iso];op:NOTOKEN),
       (str:'PROCEDURE'     ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'PROTECTED'     ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'PUBLISHED'     ;special:false;keyword:[m_none];op:NOTOKEN),

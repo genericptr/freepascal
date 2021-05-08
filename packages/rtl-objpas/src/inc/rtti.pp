@@ -113,9 +113,11 @@ type
   public
     class function Empty: TValue; static;
     class procedure Make(ABuffer: pointer; ATypeInfo: PTypeInfo; out result: TValue); static;
+    class procedure Make(AValue: NativeInt; ATypeInfo: PTypeInfo; out Result: TValue); static; inline;
     { Note: a TValue based on an open array is only valid until the routine having the open array parameter is left! }
     class procedure MakeOpenArray(AArray: Pointer; ALength: SizeInt; ATypeInfo: PTypeInfo; out Result: TValue); static;
 {$ifndef NoGenericMethods}
+    generic class procedure Make<T>(const AValue: T; out Result: TValue); static; inline;
     generic class function From<T>(constref aValue: T): TValue; static; inline;
     { Note: a TValue based on an open array is only valid until the routine having the open array parameter is left! }
     generic class function FromOpenArray<T>(constref aValue: array of T): TValue; static; inline;
@@ -975,6 +977,46 @@ asm
   jmp (a0)
 RawThunkEnd:
 end;
+{$elseif defined(cpuriscv64)}
+const
+  RawThunkPlaceholderProc = $8765876587658765;
+  RawThunkPlaceholderContext = $4321432143214321;
+
+type
+  TRawThunkProc = PtrUInt;
+  TRawThunkContext = PtrUInt;
+
+procedure RawThunk; assembler; nostackframe;
+asm
+  ld x5, .LProc
+  ld x10, .LContext
+  jalr x0, x5, 0
+.LProc:
+  .quad RawThunkPlaceholderProc
+.LContext:
+  .quad RawThunkPlaceholderContext
+RawThunkEnd:
+end;
+{$elseif defined(cpuriscv32)}
+const
+  RawThunkPlaceholderProc = $87658765;
+  RawThunkPlaceholderContext = $43214321;
+
+type
+  TRawThunkProc = PtrUInt;
+  TRawThunkContext = PtrUInt;
+
+procedure RawThunk; assembler; nostackframe;
+asm
+  lw x5, .LProc
+  lw x10, .LContext
+  jalr x0, x5, 0
+.LProc:
+  .long RawThunkPlaceholderProc
+.LContext:
+  .long RawThunkPlaceholderContext
+RawThunkEnd:
+end;
 {$endif}
 
 {$if declared(RawThunk)}
@@ -1682,6 +1724,11 @@ begin
   end;
 end;
 
+class procedure TValue.Make(AValue: NativeInt; ATypeInfo: PTypeInfo; out Result: TValue);
+begin
+  TValue.Make(@AValue, ATypeInfo, Result);
+end;
+
 class procedure TValue.MakeOpenArray(AArray: Pointer; ALength: SizeInt; ATypeInfo: PTypeInfo; out Result: TValue);
 var
   el: TValue;
@@ -1709,6 +1756,11 @@ begin
 end;
 
 {$ifndef NoGenericMethods}
+generic class procedure TValue.Make<T>(const AValue: T; out Result: TValue);
+begin
+  TValue.Make(@AValue, PTypeInfo(System.TypeInfo(T)), Result);
+end;
+
 generic class function TValue.From<T>(constref aValue: T): TValue;
 begin
   TValue.Make(@aValue, PTypeInfo(System.TypeInfo(T)), Result);

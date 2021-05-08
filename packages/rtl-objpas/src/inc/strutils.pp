@@ -129,6 +129,7 @@ function StringsReplace(const S: string; OldPattern, NewPattern: array of string
 Function ReplaceStr(const AText, AFromText, AToText: string): string;inline;
 Function ReplaceText(const AText, AFromText, AToText: string): string;inline;
 
+
 { ---------------------------------------------------------------------
     Soundex Functions.
   ---------------------------------------------------------------------}
@@ -175,10 +176,16 @@ function DelChars(const S: string; Chr: Char): string;
 function DelSpace1(const S: string): string;
 function Tab2Space(const S: string; Numb: Byte): string;
 function NPos(const C: string; S: string; N: Integer): SizeInt;
-Function RPosEX(C:char;const S : AnsiString;offs:cardinal):SizeInt; overload;
-Function RPosex (Const Substr : AnsiString; Const Source : AnsiString;offs:cardinal) : SizeInt; overload;
+
+Function RPosEx(C:char;const S : AnsiString;offs:cardinal):SizeInt; overload;
+Function RPosEx(C:Unicodechar;const S : UnicodeString;offs:cardinal):SizeInt; overload;
+Function RPosEx(Const Substr : AnsiString; Const Source : AnsiString;offs:cardinal) : SizeInt; overload;
+Function RPosEx(Const Substr : UnicodeString; Const Source : UnicodeString;offs:cardinal) : SizeInt; overload;
 Function RPos(c:char;const S : AnsiString):SizeInt; overload;
-Function RPos (Const Substr : AnsiString; Const Source : AnsiString) : SizeInt; overload;
+Function RPos(c:Unicodechar;const S : UnicodeString):SizeInt; overload;
+Function RPos(Const Substr : AnsiString; Const Source : AnsiString) : SizeInt; overload;
+Function RPos(Const Substr : UnicodeString; Const Source : UnicodeString) : SizeInt; overload;
+
 function AddChar(C: Char; const S: string; N: Integer): string;
 function AddCharR(C: Char; const S: string; N: Integer): string;
 function PadLeft(const S: string; N: Integer): string;inline;
@@ -220,7 +227,13 @@ function IntToRoman(Value: Longint): string;
 function TryRomanToInt(S: String; out N: LongInt; Strictness: TRomanConversionStrictness = rcsRelaxed): Boolean;
 function RomanToInt(const S: string; Strictness: TRomanConversionStrictness = rcsRelaxed): Longint;
 function RomanToIntDef(Const S : String; const ADefault: Longint = 0; Strictness: TRomanConversionStrictness = rcsRelaxed): Longint;
-procedure BinToHex(BinValue, HexValue: PChar; BinBufSize: Integer);
+procedure BinToHex(const BinBuffer: TBytes; BinBufOffset: Integer; var HexBuffer: TBytes; HexBufOffset: Integer; Count: Integer); overload;
+procedure BinToHex(BinValue: Pointer; HexValue: PWideChar; BinBufSize: Integer); overload;
+procedure BinToHex(const BinValue; HexValue: PWideChar; BinBufSize: Integer); overload;
+procedure BinToHex(BinValue: PAnsiChar; HexValue: PAnsiChar; BinBufSize: Integer); overload;
+procedure BinToHex(BinValue: PAnsiChar; HexValue: PWideChar; BinBufSize: Integer); overload;
+procedure BinToHex(const BinValue; HexValue: PAnsiChar; BinBufSize: Integer); overload;
+procedure BinToHex(BinValue: Pointer; HexValue: PAnsiChar; BinBufSize: Integer); overload;
 function HexToBin(HexValue, BinValue: PChar; BinBufSize: Integer): Integer;
 
 const
@@ -349,7 +362,7 @@ type
     i: SizeInt;
   begin
     i:=0;
-    while (aPattern[aPos-i] = aPattern[aPatternSize-1-i]) and (i < aPos) do begin
+    while (i<aPos) and (aPattern[aPos-i] = aPattern[aPatternSize-1-i]) do begin
       inc(i);
     end;
     Result:=i;
@@ -423,8 +436,7 @@ begin
       AddMatch(i+1);
       //Only first match ?
       if not aMatchAll then break;
-      inc(i,OldPatternSize);
-      inc(i,OldPatternSize);
+      inc(i,DeltaJumpTable2[0]);
     end else begin
       i:=i + Max(DeltaJumpTable1[ord(s[i])],DeltaJumpTable2[j]);
     end;
@@ -487,7 +499,7 @@ type
     i: SizeInt;
   begin
     i:=0;
-    while (aPattern[aPos-i] = aPattern[aPatternSize-1-i]) and (i < aPos) do begin
+    while (i<aPos) and (aPattern[aPos-i] = aPattern[aPatternSize-1-i]) do begin
       inc(i);
     end;
     Result:=i;
@@ -576,8 +588,7 @@ begin
       AddMatch(i+1);
       //Only first match ?
       if not aMatchAll then break;
-      inc(i,OldPatternSize);
-      inc(i,OldPatternSize);
+      inc(i,DeltaJumpTable2[0]);
     end else begin
       i:=i + Max(DeltaJumpTable1[Ord(lCaseArray[Ord(s[i])])],DeltaJumpTable2[j]);
     end;
@@ -1047,7 +1058,7 @@ begin
   if (Length(AText) >= Length(ASubText)) and (ASubText <> '') then
     Result := StrLComp(PChar(ASubText), PChar(AText), Length(ASubText)) = 0
   else
-    Result := False;
+    Result := (AsubText='');
 end;
 
 
@@ -3091,8 +3102,98 @@ begin
    end;
 end;
 
+function RPosEX(C: unicodechar; const S: UnicodeString; offs: cardinal): SizeInt;
+
+var I   : SizeUInt;
+    p,p2: PUnicodeChar;
+
+Begin
+ I:=Length(S);
+ If (I<>0) and (offs<=i) Then
+   begin
+     p:=@s[offs];
+     p2:=@s[1];
+     while (p2<=p) and (p^<>c) do dec(p);
+     RPosEx:=(p-p2)+1;
+   end
+  else
+    RPosEX:=0;
+End;
+
+function RPos(c: Unicodechar; const S: UnicodeString): SizeInt;
+
+var I   : SizeInt;
+    p,p2: pUnicodeChar;
+
+Begin
+ I:=Length(S);
+ If I<>0 Then
+   begin
+     p:=@s[i];
+     p2:=@s[1];
+     while (p2<=p) and (p^<>c) do dec(p);
+     i:=p-p2+1;
+   end;
+  RPos:=i;
+End;
+
+function RPos(const Substr: UnicodeString; const Source: UnicodeString): SizeInt;
+var
+  MaxLen,llen : SizeInt;
+  c : Unicodechar;
+  pc,pc2 : PUnicodechar;
+begin
+  rPos:=0;
+  llen:=Length(SubStr);
+  maxlen:=length(source);
+  if (llen>0) and (maxlen>0) and ( llen<=maxlen) then
+   begin
+     pc:=@source[maxlen];
+     pc2:=@source[llen-1];
+     c:=substr[llen];
+     while pc>=pc2 do
+      begin
+        if (c=pc^) and
+           (CompareWord(Substr[1],punicodechar(pc-llen+1)^,Length(SubStr))=0) then
+         begin
+           rPos:=punicodechar(pc-llen+1)-punicodechar(@source[1])+1;
+           exit;
+         end;
+        dec(pc);
+      end;
+   end;
+end;
+
+function RPosex(const Substr: UnicodeString; const Source: UnicodeString; offs: cardinal): SizeInt;
+var
+  MaxLen,llen : SizeInt;
+  c : unicodechar;
+  pc,pc2 : punicodechar;
+begin
+  rPosex:=0;
+  llen:=Length(SubStr);
+  maxlen:=length(source);
+  if SizeInt(offs)<maxlen then maxlen:=offs;
+  if (llen>0) and (maxlen>0) and ( llen<=maxlen)  then
+   begin
+     pc:=@source[maxlen];
+     pc2:=@source[llen-1];
+     c:=substr[llen];
+     while pc>=pc2 do
+      begin
+        if (c=pc^) and
+           (Compareword(Substr[1],punicodechar(pc-llen+1)^,Length(SubStr))=0) then
+         begin
+           rPosex:=punicodechar(pc-llen+1)-punicodechar(@source[1])+1;
+           exit;
+         end;
+        dec(pc);
+      end;
+   end;
+end;
 
 // def from delphi.about.com:
+(*
 procedure BinToHex(BinValue, HexValue: PChar; BinBufSize: Integer);
 
 Const
@@ -3107,6 +3208,68 @@ begin
     inc(hexvalue,2);
     inc(binvalue);
     end;
+end;
+*)
+
+procedure BinToHex(BinValue: PAnsiChar; HexValue: PAnsiChar; BinBufSize: Integer);
+const
+  HexDigits : AnsiString='0123456789ABCDEF';
+ var
+   i : longint;
+ begin
+  for i:=0 to BinBufSize-1 do
+  begin
+    HexValue[0]:=HexDigits[1+((Ord(BinValue[i]) shr 4))];
+    HexValue[1]:=HexDigits[1+((Ord(BinValue[i]) and 15))];
+    Inc(HexValue,2);
+  end;
+end;
+
+procedure BinToHex(BinValue: PAnsiChar; HexValue: PWideChar; BinBufSize: Integer);
+const
+  HexDigits : WideString='0123456789ABCDEF';
+var
+  i : longint;
+begin
+  for i:=0 to BinBufSize-1 do
+  begin
+    HexValue[0]:=HexDigits[1+((Ord(BinValue[i]) shr 4))];
+    HexValue[1]:=HexDigits[1+((Ord(BinValue[i]) and 15))];
+    Inc(HexValue,2);
+  end;
+end;
+
+procedure BinToHex(const BinBuffer: TBytes; BinBufOffset: Integer; var HexBuffer: TBytes; HexBufOffset: Integer; Count: Integer);
+const
+  HexDigits : String='0123456789ABCDEF';
+var
+  i : longint;
+begin
+  for i:=0 to Count-1 do
+  begin
+    HexBuffer[HexBufOffset+2*i+0]:=Byte(HexDigits[1+(BinBuffer[BinBufOffset + i] shr 4)]);
+    HexBuffer[HexBufOffset+2*i+1]:=Byte(HexDigits[1+(BinBuffer[BinBufOffset + i] and 15)]);
+  end;
+end;
+
+procedure BinToHex(BinValue: Pointer; HexValue: PAnsiChar; BinBufSize: Integer);
+begin
+  BinToHex(PAnsiChar(BinValue), HexValue, BinBufSize);
+end;
+
+procedure BinToHex(BinValue: Pointer; HexValue: PWideChar; BinBufSize: Integer);
+begin
+  BinToHex(PAnsiChar(BinValue), HexValue, BinBufSize);
+end;
+
+procedure BinToHex(const BinValue; HexValue: PAnsiChar; BinBufSize: Integer);
+begin
+  BinToHex(PAnsiChar(BinValue), HexValue, BinBufSize);
+ end;
+ 
+procedure BinToHex(const BinValue; HexValue: PWideChar; BinBufSize: Integer);
+begin
+  BinToHex(PAnsiChar(BinValue), HexValue, BinBufSize);
 end;
 
 

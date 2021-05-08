@@ -72,11 +72,6 @@ interface
         InstrWriter: TLLVMInstrWriter;
       end;
 
-      TLLVMLLCAssember=class(TLLVMAssember)
-      public
-       function MakeCmdLine: TCmdStr; override;
-      end;
-
       TLLVMClangAssember=class(TLLVMAssember)
       public
        function MakeCmdLine: TCmdStr; override;
@@ -118,7 +113,7 @@ implementation
       objcasm,
       aasmcnst,symconst,symdef,symtable,
       llvmbase,itllvm,llvmdef,
-      cgbase,cgutils,cpubase,cpuinfo,llvminfo;
+      cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo;
 
     const
       line_length = 70;
@@ -272,11 +267,16 @@ implementation
 
     function getregisterstring(reg: tregister): ansistring;
       begin
-        if getregtype(reg)=R_TEMPREGISTER then
-          result:='%tmp.'
+        if getregtype(reg)=R_METADATAREGISTER then
+          result:='!"'+tllvmmetadata.getregstring(reg)+'"'
         else
-          result:='%reg.'+tostr(byte(getregtype(reg)))+'_';
-        result:=result+tostr(getsupreg(reg));
+          begin
+            if getregtype(reg)=R_TEMPREGISTER then
+              result:='%tmp.'
+            else
+              result:='%reg.'+tostr(byte(getregtype(reg)))+'_';
+            result:=result+tostr(getsupreg(reg));
+          end;
       end;
 
 
@@ -307,7 +307,7 @@ implementation
             if ref.offset<>0 then
               result:=result+'offset='+tostr(ref.offset);
             result:=result+')**';
-            internalerror(2013060225);
+            internalerror(2013060203);
           end;
          if ref.base<>NR_NO then
            result:=result+getregisterstring(ref.base)
@@ -407,7 +407,7 @@ implementation
      end;
 
 
-{$if defined(cpuextended) and defined(FPC_HAS_TYPE_EXTENDED)}
+{$if defined(cpuextended) and (defined(FPC_HAS_TYPE_EXTENDED) or defined(FPC_SOFT_FPUX80))}
     function llvmextendedtostr(const e: extended): TSymStr;
       var
         extendedval: record
@@ -454,7 +454,7 @@ implementation
                else
                  getopstr:='null';
                if o.ref^.offset<>0 then
-                 internalerror(2013060223);
+                 internalerror(2013060202);
              end
            else
              getopstr:=getreferencestring(o.ref^,refwithalign);
@@ -502,7 +502,7 @@ implementation
                end;
              result:='';
            end;
-{$if defined(cpuextended) and defined(FPC_HAS_TYPE_EXTENDED)}
+{$if defined(cpuextended) and (defined(FPC_HAS_TYPE_EXTENDED) or defined(FPC_SOFT_FPUX80))}
          top_extended80:
            begin
              result:=llvmextendedtostr(o.eval);
@@ -844,7 +844,7 @@ implementation
         writer.AsmWrite(target_info.llvmdatalayout);
         writer.AsmWriteln('"');
         writer.AsmWrite('target triple = "');
-        writer.AsmWrite(llvm_target_name);
+        writer.AsmWrite(targettriplet(triplet_llvm));
         writer.AsmWriteln('"');
       end;
 
@@ -875,7 +875,7 @@ implementation
                 writer.AsmWriteLn(asminfo^.comment+'value: '+single2str(tai_realconst(hp).value.s32val));
               aitrealconst_s64bit:
                 writer.AsmWriteLn(asminfo^.comment+'value: '+double2str(tai_realconst(hp).value.s64val));
-{$if defined(cpuextended) and defined(FPC_HAS_TYPE_EXTENDED)}
+{$if defined(cpuextended) and (defined(FPC_HAS_TYPE_EXTENDED) or defined(FPC_SOFT_FPUX80))}
               { can't write full 80 bit floating point constants yet on non-x86 }
               aitrealconst_s80bit:
                 writer.AsmWriteLn(asminfo^.comment+'value: '+extended2str(tai_realconst(hp).value.s80val));
@@ -883,7 +883,7 @@ implementation
               aitrealconst_s64comp:
                 writer.AsmWriteLn(asminfo^.comment+'value: '+extended2str(tai_realconst(hp).value.s64compval));
               else
-                internalerror(2014050604);
+                internalerror(2014050603);
             end;
             internalerror(2016120202);
           end;
@@ -892,7 +892,7 @@ implementation
             writer.AsmWrite(llvmdoubletostr(hp.value.s32val));
           aitrealconst_s64bit:
             writer.AsmWriteln(llvmdoubletostr(hp.value.s64val));
-{$if defined(cpuextended) and defined(FPC_HAS_TYPE_EXTENDED)}
+{$if defined(cpuextended) and (defined(FPC_HAS_TYPE_EXTENDED) or defined(FPC_SOFT_FPUX80))}
           aitrealconst_s80bit:
             writer.AsmWrite(llvmextendedtostr(hp.value.s80val));
 {$endif defined(cpuextended)}
@@ -960,7 +960,7 @@ implementation
 }
             end;
           else
-            internalerror(200704251);
+            internalerror(2007042504);
         end;
       end;
 
@@ -1004,8 +1004,9 @@ implementation
              (pd.mangledname=(target_info.cprefix+'setjmp')) then
             writer.AsmWrite(' returns_twice');
           if po_inline in pd.procoptions then
-            writer.AsmWrite(' inlinehint');
-          if po_noinline in pd.procoptions then
+            writer.AsmWrite(' inlinehint')
+          else if (po_noinline in pd.procoptions) or
+             (pio_inline_forbidden in pd.implprocoptions) then
             writer.AsmWrite(' noinline');
           { ensure that functions that happen to have the same name as a
             standard C library function, but which are implemented in Pascal,
@@ -1018,7 +1019,11 @@ implementation
           if pio_thunk in pd.implprocoptions then
             writer.AsmWrite(' "thunk"');
           if llvmflag_null_pointer_valid in llvmversion_properties[current_settings.llvmversion] then
-            writer.AsmWrite(' "null-pointer-is-valid"="true"');
+            writer.AsmWrite(' "null-pointer-is-valid"="true"')
+          else if llvmflag_null_pointer_valid_new in llvmversion_properties[current_settings.llvmversion] then
+            writer.AsmWrite(' null_pointer_is_valid');
+          if not(pio_fastmath in pd.implprocoptions) then
+            writer.AsmWrite(' strictfp');
         end;
 
 
@@ -1163,40 +1168,6 @@ implementation
         ch: ansichar;
       begin
         case hp.typ of
-          ait_comment :
-            begin
-              writer.AsmWrite(asminfo^.comment);
-              writer.AsmWritePChar(tai_comment(hp).str);
-              if fdecllevel<>0 then
-                internalerror(2015090601);
-              writer.AsmLn;
-            end;
-
-          ait_regalloc :
-            begin
-              if (cs_asm_regalloc in current_settings.globalswitches) then
-                begin
-                  writer.AsmWrite(#9+asminfo^.comment+'Register ');
-                  repeat
-                    writer.AsmWrite(std_regname(Tai_regalloc(hp).reg));
-                     if (hp.next=nil) or
-                       (tai(hp.next).typ<>ait_regalloc) or
-                       (tai_regalloc(hp.next).ratype<>tai_regalloc(hp).ratype) then
-                      break;
-                    hp:=tai(hp.next);
-                    writer.AsmWrite(',');
-                  until false;
-                  writer.AsmWrite(' ');
-                  writer.AsmWriteLn(regallocstr[tai_regalloc(hp).ratype]);
-                end;
-            end;
-
-          ait_tempalloc :
-            begin
-              if (cs_asm_tempalloc in current_settings.globalswitches) then
-                WriteTempalloc(tai_tempalloc(hp));
-            end;
-
           ait_align,
           ait_section :
             begin
@@ -1263,7 +1234,7 @@ implementation
                      writer.AsmWriteln(asminfo^.comment+'global/privateextern label: '+tai_label(hp).labsym.name);
                    end;
                  if replaceforbidden then
-                   writer.AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_label(hp).labsym.name))
+                   writer.AsmWrite(ApplyAsmSymbolRestrictions(tai_label(hp).labsym.name))
                  else
                    writer.AsmWrite(tai_label(hp).labsym.name);
                  writer.AsmWriteLn(':');
@@ -1409,7 +1380,7 @@ implementation
             begin
               { must only appear as an operand }
               if fdecllevel=0 then
-                internalerror(2019050110);
+                internalerror(2019050101);
               writer.AsmWrite('!');
               writer.AsmWrite(tai_llvmmetadatareferenceoperand(hp).id);
               writer.AsmWrite(' !');
@@ -1486,24 +1457,13 @@ implementation
             begin
               internalerror(2013010713);
             end;
-          ait_varloc:
+          ait_typedconst:
             begin
-              if tai_varloc(hp).newlocationhi<>NR_NO then
-                writer.AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
-                  std_regname(tai_varloc(hp).newlocationhi)+':'+std_regname(tai_varloc(hp).newlocation)))
-              else
-                writer.AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
-                  std_regname(tai_varloc(hp).newlocation)));
-              if fdecllevel<>0 then
-                internalerror(2015090603);
-              writer.AsmLn;
-            end;
-           ait_typedconst:
-             begin
-               WriteTypedConstData(tai_abstracttypedconst(hp),false);
-             end
+              WriteTypedConstData(tai_abstracttypedconst(hp),false);
+            end
           else
-            internalerror(2019012010);
+            if not WriteComments(hp) then
+              internalerror(2019012010);
         end;
       end;
 
@@ -1586,49 +1546,6 @@ implementation
 
 
 {****************************************************************************}
-{                               llc Assember                                 }
-{****************************************************************************}
-
-     function TLLVMLLCAssember.MakeCmdLine: TCmdStr;
-       var
-         optstr: TCmdStr;
-       begin
-         result:=inherited;
-         { standard optimization flags for llc -- todo: this needs to be split
-           into a call to opt and one to llc }
-         if cs_opt_level3 in current_settings.optimizerswitches then
-           optstr:='-O3'
-         else if cs_opt_level2 in current_settings.optimizerswitches then
-           optstr:='-O2'
-         else if cs_opt_level1 in current_settings.optimizerswitches then
-           optstr:='-O1'
-         else
-           optstr:='-O0';
-         { stack frame elimination }
-         if not(cs_opt_stackframe in current_settings.optimizerswitches) then
-           optstr:=optstr+' -disable-fp-elim';
-         { fast math }
-         if cs_opt_fastmath in current_settings.optimizerswitches then
-           optstr:=optstr+' -enable-unsafe-fp-math -fp-contract=fast';  { -enable-fp-mad support depends on version }
-         { smart linking }
-         if cs_create_smart in current_settings.moduleswitches then
-           optstr:=optstr+' -data-sections -function-sections';
-         { pic }
-         if cs_create_pic in current_settings.moduleswitches then
-           optstr:=optstr+' -relocation-model=pic'
-         else if not(target_info.system in systems_darwin) then
-           optstr:=optstr+' -relocation-model=static'
-         else
-           optstr:=optstr+' -relocation-model=dynamic-no-pic';
-         { force object output instead of textual assembler code }
-         optstr:=optstr+' -filetype=obj';
-         if fputypestrllvm[current_settings.fputype]<>'' then
-           optstr:=optstr+' -mattr=+'+fputypestrllvm[current_settings.fputype];
-         replace(result,'$OPT',optstr);
-       end;
-
-
-{****************************************************************************}
 {                               clang Assember                               }
 {****************************************************************************}
 
@@ -1653,8 +1570,6 @@ implementation
             end;
           end;
         result:=inherited;
-        { standard optimization flags for llc -- todo: this needs to be split
-          into a call to opt and one to llc }
         if cs_opt_level3 in current_settings.optimizerswitches then
           optstr:='-O3'
         else if cs_opt_level2 in current_settings.optimizerswitches then
@@ -1682,10 +1597,6 @@ implementation
           optstr:=optstr+' -static'
         else
           optstr:=optstr+' -mdynamic-no-pic';
-        if not(target_info.system in systems_darwin) then
-          begin
-            optstr:=optstr+' --target='+llvm_target_name;
-          end;
 
         if fputypestrllvm[current_settings.fputype]<>'' then
           optstr:=optstr+' -m'+fputypestrllvm[current_settings.fputype];
@@ -1719,35 +1630,20 @@ implementation
 
 
    const
-     as_llvm_llc_info : tasminfo =
+     as_clang_llvm_info : tasminfo =
         (
-          id     : as_llvm_llc;
-
-          idtxt  : 'LLVM-LLC';
-          asmbin : 'llc';
-          asmcmd: '$OPT -o $OBJ $ASM';
-          supported_targets : [system_x86_64_linux,system_x86_64_darwin,system_aarch64_linux,system_arm_linux];
-          flags : [af_smartlink_sections];
-          labelprefix : 'L';
-          comment : '; ';
-          dollarsign: '$';
-        );
-
-     as_llvm_clang_info : tasminfo =
-        (
-          id     : as_llvm_clang;
-
-          idtxt  : 'LLVM-CLANG';
+          id     : as_clang_llvm;
+          idtxt  : 'CLANG-LLVM';
           asmbin : 'clang';
-          asmcmd: '$OPT $DARWINVERSION -c -o $OBJ $ASM';
-          supported_targets : [system_x86_64_linux,system_x86_64_darwin,system_aarch64_linux,system_arm_linux];
-          flags : [af_smartlink_sections];
+          asmcmd: '-x ir $OPT -target $TRIPLET -c -o $OBJ $ASM $EXTRAOPT';
+          supported_targets : [system_x86_64_linux,system_x86_64_darwin,system_aarch64_darwin,system_aarch64_linux,system_arm_linux];
+          flags : [af_smartlink_sections,af_llvm];
           labelprefix : 'L';
+          labelmaxlen : -1;
           comment : '; ';
           dollarsign: '$';
         );
 
 begin
-  RegisterAssembler(as_llvm_llc_info,TLLVMLLCAssember);
-  RegisterAssembler(as_llvm_clang_info,TLLVMClangAssember);
+  RegisterAssembler(as_clang_llvm_info,TLLVMClangAssember);
 end.

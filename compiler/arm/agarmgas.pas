@@ -64,7 +64,6 @@ unit agarmgas;
         'armv3',
         'armv4',
         'armv4t',
-        'armv5',
         'armv5t',
         'armv5te',
         'armv5tej',
@@ -108,6 +107,12 @@ unit agarmgas;
         case current_settings.fputype of
           fpu_soft:
             result:='-mfpu=softvfp '+result;
+          fpu_fpa:
+            result:='-mfpu=fpa '+result;
+          fpu_fpa10:
+            result:='-mfpu=fpa10 '+result;
+          fpu_fpa11:
+            result:='-mfpu=fpa11 '+result;
           fpu_vfpv2:
             result:='-mfpu=vfpv2 '+result;
           fpu_vfpv3:
@@ -116,6 +121,7 @@ unit agarmgas;
             result:='-mfpu=neon-vfpv3 '+result;
           fpu_vfpv3_d16:
             result:='-mfpu=vfpv3-d16 '+result;
+          fpu_fpv4_sp_d16,
           fpu_fpv4_s16:
             result:='-mfpu=fpv4-sp-d16 '+result;
           fpu_vfpv4:
@@ -164,7 +170,7 @@ unit agarmgas;
     function TArmAppleGNUAssembler.MakeCmdLine: TCmdStr;
       begin
         result:=inherited MakeCmdLine;
-	if (asminfo^.id = as_clang) then
+	if (asminfo^.id in [as_clang_gas,as_clang_asdarwin]) then
           begin
             if fputypestrllvm[current_settings.fputype] <> '' then
               result:='-m'+fputypestrllvm[current_settings.fputype]+' '+result;
@@ -231,7 +237,7 @@ unit agarmgas;
                      else if shiftmode <> SM_None then
                        s:=s+', '+gas_shiftmode2str[shiftmode]+' #'+tostr(shiftimm);
                      if offset<>0 then
-                       Internalerror(2019012601);
+                       Internalerror(2019012602);
                   end
                 else if offset<>0 then
                   s:=s+', #'+tostr(offset);
@@ -365,7 +371,7 @@ unit agarmgas;
 
     Procedure TArmInstrWriter.WriteInstruction(hp : tai);
     var op: TAsmOp;
-        postfix,s: string;
+        postfix,s,oppostfixstr: string;
         i: byte;
         sep: string[3];
     begin
@@ -373,20 +379,27 @@ unit agarmgas;
       postfix:='';
       if GenerateThumb2Code then
         begin
-          if taicpu(hp).wideformat then
+          if cf_wideformat in taicpu(hp).flags then
             postfix:='.w';
         end;
+      { GNU AS does not like an S postfix for several instructions in thumb mode though it is the only
+        valid encoding of mvn in thumb mode according to the arm docs }
+      if GenerateThumbCode and (taicpu(hp).oppostfix=PF_S) and
+        ((op=A_MVN) or (op=A_ORR) or (op=A_AND) or (op=A_LSL) or (op=A_ADC) or (op=A_LSR) or (op=A_SBC) or (op=A_EOR) or (op=A_ROR)) then
+        oppostfixstr:=''
+      else
+        oppostfixstr:=oppostfix2str[taicpu(hp).oppostfix];
       if unified_syntax then
         begin
           if taicpu(hp).ops = 0 then
-            s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfix2str[taicpu(hp).oppostfix]
+            s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfixstr
           else if taicpu(hp).oppostfix in [PF_8..PF_U32F64] then
-            s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfix2str[taicpu(hp).oppostfix]
+            s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfixstr
           else
-            s:=#9+gas_op2str[op]+oppostfix2str[taicpu(hp).oppostfix]+cond2str[taicpu(hp).condition]+postfix; // Conditional infixes are deprecated in unified syntax
+            s:=#9+gas_op2str[op]+oppostfixstr+cond2str[taicpu(hp).condition]+postfix; // Conditional infixes are deprecated in unified syntax
         end
       else
-        s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfix2str[taicpu(hp).oppostfix];
+        s:=#9+gas_op2str[op]+cond2str[taicpu(hp).condition]+oppostfixstr;
       if taicpu(hp).ops<>0 then
         begin
           sep:=#9;
@@ -419,7 +432,7 @@ unit agarmgas;
                      top_const:
                        s:=s+sep+tostr(taicpu(hp).oper[1]^.val);
                      else
-                       internalerror(200311292);
+                       internalerror(2003112903);
                    end;
                  end
                else
@@ -441,9 +454,10 @@ unit agarmgas;
             asmbin : 'as';
             asmcmd : '-o $OBJ $EXTRAOPT $ASM';
             supported_targets : [system_arm_linux,system_arm_netbsd,system_arm_wince,system_arm_gba,system_arm_palmos,system_arm_nds,
-                                 system_arm_embedded,system_arm_symbian,system_arm_android,system_arm_aros];
+                                 system_arm_embedded,system_arm_symbian,system_arm_android,system_arm_aros,system_arm_freertos];
             flags : [af_needar,af_smartlink_sections];
             labelprefix : '.L';
+            labelmaxlen : -1;
             comment : '# ';
             dollarsign: '$';
           );
@@ -454,9 +468,10 @@ unit agarmgas;
             idtxt  : 'AS-DARWIN';
             asmbin : 'as';
             asmcmd : '-o $OBJ $EXTRAOPT $ASM -arch $ARCH';
-            supported_targets : [system_arm_darwin];
+            supported_targets : [system_arm_ios];
             flags : [af_needar,af_smartlink_sections,af_supports_dwarf,af_stabs_use_function_absolute_addresses];
             labelprefix : 'L';
+            labelmaxlen : -1;
             comment : '# ';
             dollarsign: '$';
           );
@@ -464,13 +479,14 @@ unit agarmgas;
 
        as_arm_clang_darwin_info : tasminfo =
           (
-            id     : as_clang;
+            id     : as_clang_asdarwin;
             idtxt  : 'CLANG';
             asmbin : 'clang';
-            asmcmd : '-c -o $OBJ $EXTRAOPT -arch $ARCH $DARWINVERSION -x assembler $ASM';
-            supported_targets : [system_arm_darwin];
-            flags : [af_needar,af_smartlink_sections,af_supports_dwarf];
+            asmcmd : '-x assembler -c -target $TRIPLET -o $OBJ $EXTRAOPT -x assembler $ASM';
+            supported_targets : [system_arm_ios];
+            flags : [af_needar,af_smartlink_sections,af_supports_dwarf,af_llvm,af_supports_hlcfi];
             labelprefix : 'L';
+            labelmaxlen : -1;
             comment : '# ';
             dollarsign: '$';
           );

@@ -166,14 +166,14 @@ uses
       IF_ARMv7M     = $00F00000;
       IF_ARMv7EM    = $01000000;
 
-      IF_FPMASK     = $F0000000;
-      IF_FPA        = $10000000;
-      IF_VFPv2      = $20000000;
-      IF_VFPv3      = $40000000;
-      IF_VFPv4      = $80000000;
+      IF_FPMASK     = $00000F00;
+      IF_FPA        = $00000100;
+      IF_VFPv2      = $00000200;
+      IF_VFPv3      = $00000400;
+      IF_VFPv4      = $00000800;
 
       { if the instruction can change in a second pass }
-      IF_PASS2  = longint($80000000);
+      IF_PASS2  = $80000000;
 
     type
       TInsTabCache=array[TasmOp] of longint;
@@ -189,6 +189,9 @@ uses
 
       pinsentry=^tinsentry;
 
+      taicpuflag = (cf_wideformat,cf_inIT,cf_lastinIT,cf_thumb);
+      taicpuflags = set of taicpuflag;
+
     const
       InsTab : array[0..instabentries-1] of TInsEntry={$i armtab.inc}
 
@@ -198,12 +201,12 @@ uses
     type
       taicpu = class(tai_cpu_abstract_sym)
          oppostfix : TOpPostfix;
-         wideformat : boolean;
          roundingmode : troundingmode;
+         flags : taicpuflags;
          procedure loadshifterop(opidx:longint;const so:tshifterop);
          procedure loadregset(opidx:longint; regsetregtype: tregistertype; regsetsubregtype: tsubregister; const s:tcpuregisterset; ausermode: boolean=false);
          procedure loadconditioncode(opidx:longint;const acond:tasmcond);
-         procedure loadmodeflags(opidx:longint;const flags:tcpumodeflags);
+         procedure loadmodeflags(opidx:longint;const _modeflags:tcpumodeflags);
          procedure loadspecialreg(opidx:longint;const areg:tregister; const aflags:tspecialregflags);
          procedure loadrealconst(opidx:longint;const _value:bestreal);
 
@@ -235,8 +238,8 @@ uses
          constructor op_cond(op: tasmop; cond: tasmcond);
 
          { CPSxx }
-         constructor op_modeflags(op: tasmop; flags: tcpumodeflags);
-         constructor op_modeflags_const(op: tasmop; flags: tcpumodeflags; a: aint);
+         constructor op_modeflags(op: tasmop; _modeflags: tcpumodeflags);
+         constructor op_modeflags_const(op: tasmop; _modeflags: tcpumodeflags; a: aint);
 
          { MSR }
          constructor op_specialreg_reg(op: tasmop; specialreg: tregister; specialregflags: tspecialregflags; _op2: tregister);
@@ -273,12 +276,9 @@ uses
          procedure ppubuildderefimploper(var o:toper);override;
          procedure ppuderefoper(var o:toper);override;
       private
-         { pass1 info }
-         inIT,
-         lastinIT: boolean;
          { arm version info }
          fArmVMask,
-         fArmMask  : longint;
+         fArmMask  : longword;
          { next fields are filled in pass1, so pass2 is faster }
          inssize   : shortint;
          insoffset : longint;
@@ -404,14 +404,14 @@ implementation
          end;
       end;
 
-    procedure taicpu.loadmodeflags(opidx: longint; const flags: tcpumodeflags);
+    procedure taicpu.loadmodeflags(opidx: longint; const _modeflags: tcpumodeflags);
       begin
         allocate_oper(opidx+1);
         with oper[opidx]^ do
          begin
            if typ<>top_modeflags then
              clearop(opidx);
-           modeflags:=flags;
+           modeflags:=_modeflags;
            typ:=top_modeflags;
          end;
       end;
@@ -585,18 +585,18 @@ implementation
         loadconditioncode(0, cond);
       end;
 
-    constructor taicpu.op_modeflags(op: tasmop; flags: tcpumodeflags);
+    constructor taicpu.op_modeflags(op: tasmop; _modeflags: tcpumodeflags);
       begin
         inherited create(op);
         ops := 1;
-        loadmodeflags(0,flags);
+        loadmodeflags(0,_modeflags);
       end;
 
-    constructor taicpu.op_modeflags_const(op: tasmop; flags: tcpumodeflags; a: aint);
+    constructor taicpu.op_modeflags_const(op: tasmop; _modeflags: tcpumodeflags; a: aint);
       begin
         inherited create(op);
         ops := 2;
-        loadmodeflags(0,flags);
+        loadmodeflags(0,_modeflags);
         loadconst(1,a);
       end;
 
@@ -723,7 +723,7 @@ implementation
           R_MMREGISTER :
             result:=taicpu.op_reg_ref(A_VLDR,r,ref);
           else
-            internalerror(200401041);
+            internalerror(2004010415);
         end;
       end;
 
@@ -741,7 +741,7 @@ implementation
           R_MMREGISTER :
             result:=taicpu.op_reg_ref(A_VSTR,r,ref);
           else
-            internalerror(200401041);
+            internalerror(2004010416);
         end;
       end;
 
@@ -866,6 +866,7 @@ implementation
             A_NEG,
             A_VABS,A_VADD,A_VCVT,A_VDIV,A_VLDR,A_VMOV,A_VMUL,A_VNEG,A_VSQRT,A_VSUB,
             A_VEOR,
+            A_VMRS,A_VMSR,
             A_MRS,A_MSR:
               if opnr=0 then
                 result:=operand_write
@@ -901,7 +902,9 @@ implementation
                 result := operand_read;
             //Thumb2
             A_LSL, A_LSR, A_ROR, A_ASR, A_SDIV, A_UDIV, A_MOVW, A_MOVT, A_MLS, A_BFI,
-            A_SMMLA,A_SMMLS:
+            A_QADD,
+            A_PKHTB,A_PKHBT,
+            A_SMMLA,A_SMMLS,A_SMUAD,A_SMUSD:
               if opnr in [0] then
                 result:=operand_write
               else
@@ -920,7 +923,10 @@ implementation
             A_STREX:
               result:=operand_write;
             else
-              internalerror(200403151);
+              begin
+                writeln(opcode);
+                internalerror(2004031502);
+              end;
           end;
       end;
 
@@ -1421,7 +1427,7 @@ implementation
                                        (taicpu(curtai).oper[1]^.reg >= NR_R8) or
                                        (op2reg >= NR_R8) then
                                       begin
-                                        taicpu(curtai).wideformat:=true;
+                                        include(taicpu(curtai).flags,cf_wideformat);
 
                                         { Handle special cases where register rules are violated by optimizer/user }
                                         { if d == 13 || (d == 15 && S == ‚Äò0‚Äô) || n == 15 || m IN [13,15] then UNPREDICTABLE; }
@@ -1615,6 +1621,9 @@ implementation
           end;
       end;
 
+{$push}
+{ Disable range and overflow checking here }
+{$R-}{$Q-}        
     procedure fix_invalid_imms(list: TAsmList);
       var
         curtai: tai;
@@ -1663,6 +1672,7 @@ implementation
           end;
       end;
 
+{$pop}
 
     procedure gather_it_info(list: TAsmList);
       var
@@ -1692,8 +1702,14 @@ implementation
                       end;
                     else
                       begin
-                        taicpu(curtai).inIT:=in_it;
-                        taicpu(curtai).lastinIT:=in_it and (it_count=1);
+                        if in_it then
+                          include(taicpu(curtai).flags,cf_inIT)
+                        else
+                          exclude(taicpu(curtai).flags,cf_inIT);
+                        if in_it and (it_count=1) then
+                          include(taicpu(curtai).flags,cf_lastinIT)
+                        else
+                          exclude(taicpu(curtai).flags,cf_lastinIT);
 
                         if in_it then
                           begin
@@ -2198,7 +2214,6 @@ implementation
             IF_ARMv4,
             IF_ARMv4,
             IF_ARMv4T or IF_ARMv4,
-            IF_ARMv4T or IF_ARMv4 or IF_ARMv5,
             IF_ARMv4T or IF_ARMv4 or IF_ARMv5 or IF_ARMv5T,
             IF_ARMv4T or IF_ARMv4 or IF_ARMv5 or IF_ARMv5T or IF_ARMv5TE,
             IF_ARMv4T or IF_ARMv4 or IF_ARMv5 or IF_ARMv5T or IF_ARMv5TE or IF_ARMv5TEJ,
@@ -2228,13 +2243,13 @@ implementation
             { fpu_vfpv3_d16  } IF_VFPv2 or IF_VFPv3,
             { fpu_fpv4_s16   } IF_NONE,
             { fpu_vfpv4      } IF_VFPv2 or IF_VFPv3 or IF_VFPv4,
+            { fpu_vfpv4      } IF_VFPv2 or IF_VFPv3 or IF_VFPv4,
             { fpu_neon_vfpv4 } IF_VFPv2 or IF_VFPv3 or IF_VFPv4 or IF_NEON
           );
       begin
         fArmVMask:=Masks[current_settings.cputype] or FPUMasks[current_settings.fputype];
 
-        if objdata.ThumbFunc then
-        //if current_settings.instructionset=is_thumb then
+        if cf_thumb in flags then
           begin
             fArmMask:=IF_THUMB;
             if CPUARM_HAS_THUMB2 in cpu_capabilities[current_settings.cputype] then
@@ -2490,7 +2505,7 @@ implementation
           end;
 
         { Check wideformat flag }
-        if wideformat and ((p^.flags and IF_WIDE)=0) then
+        if (cf_wideformat in flags) and ((p^.flags and IF_WIDE)=0) then
           begin
             matches:=0;
             exit;
@@ -2588,8 +2603,8 @@ implementation
         begin
           if (p^.code[0]=#$60) and
              (GenerateThumb2Code and
-              ((not inIT) and (oppostfix<>PF_S)) or
-              (inIT and (condition=C_None))) then
+              ((not(cf_inIT in flags)) and (oppostfix<>PF_S)) or
+              ((cf_inIT in flags) and (condition=C_None))) then
             begin
               Matches:=0;
               exit;
@@ -2603,10 +2618,10 @@ implementation
         end
       else if p^.code[0]=#$62 then
         begin
-          if (GenerateThumb2Code and
-              (condition<>C_None) and
-              (not inIT) and
-              (not lastinIT)) then
+          if GenerateThumb2Code and
+            (condition<>C_None) and
+            (not(cf_inIT in flags)) and
+            (not(cf_lastinIT in flags)) then
             begin
               Matches:=0;
               exit;
@@ -2614,7 +2629,7 @@ implementation
         end
       else if p^.code[0]=#$63 then
         begin
-          if inIT then
+          if cf_inIT in flags then
             begin
               Matches:=0;
               exit;
@@ -2635,7 +2650,7 @@ implementation
         end
       else if p^.code[0]=#$6B then
         begin
-          if inIT or
+          if (cf_inIT in flags) or
              (oppostfix<>PF_S) then
             begin
               Matches:=0;

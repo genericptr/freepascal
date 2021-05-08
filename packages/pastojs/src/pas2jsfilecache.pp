@@ -27,7 +27,7 @@ interface
 uses
   {$IFDEF Pas2js}
     {$IFDEF NodeJS}
-    JS, NodeJSFS,
+    JS, node.fs,
     {$ENDIF}
   {$ENDIF}
   Classes, SysUtils,
@@ -259,7 +259,7 @@ type
     function FindUnitJSFileName(const aUnitFilename: string): String; override;
     function FindUnitFileName(const aUnitname, InFilename, ModuleDir: string; out IsForeign: boolean): String; override;
     function FindResourceFileName(const aFilename, ModuleDir: string): String; override;
-    function FindIncludeFileName(const aFilename, ModuleDir: string): String; override;
+    function FindIncludeFileName(const aFilename, SrcDir, ModuleDir: string; Mode: TModeSwitch): String; override;
     function AddIncludePaths(const Paths: string; FromCmdLine: boolean; out ErrorMsg: string): boolean;
     function AddUnitPaths(const Paths: string; FromCmdLine: boolean; out ErrorMsg: string): boolean;
     function AddSrcUnitPaths(const Paths: string; FromCmdLine: boolean; out ErrorMsg: string): boolean;
@@ -925,7 +925,7 @@ begin
       Filename:=ChompPathDelim(ResolveDots(Filename));
       if not FilenameIsAbsolute(Filename) then
         Filename:=WorkingDirectory+Filename;
-      Result:={$IFDEF pas2js}NodeJSFS{$ELSE}SysUtils{$ENDIF}.DirectoryExists(Filename);
+      Result:={$IFDEF pas2js}Node.FS{$ELSE}SysUtils{$ENDIF}.DirectoryExists(Filename);
       end;
     end;
 end;
@@ -939,7 +939,7 @@ begin
   if Info.Dir<>nil then
     Result:=Info.Dir.IndexOfFile(Info.ShortFilename)>=0
   else
-    Result:={$IFDEF pas2js}NodeJSFS{$ELSE}SysUtils{$ENDIF}.FileExists(Info.Filename);
+    Result:={$IFDEF pas2js}Node.FS{$ELSE}SysUtils{$ENDIF}.FileExists(Info.Filename);
 end;
 
 function TPas2jsCachedDirectories.FileExistsI(var Filename: string): integer;
@@ -952,7 +952,7 @@ begin
   if not GetFileInfo(Info) then exit;
   if Info.Dir=nil then
   begin
-    if {$IFDEF pas2js}NodeJSFS{$ELSE}SysUtils{$ENDIF}.FileExists(Info.Filename) then
+    if {$IFDEF pas2js}Node.FS{$ELSE}SysUtils{$ENDIF}.FileExists(Info.Filename) then
       Result:=1;
   end
   else
@@ -1697,6 +1697,7 @@ var
   {$IFDEF FPC}
   i: Integer;
   l: TMaxPrecInt;
+  FS: TFileStream;
   {$ENDIF}
 begin
   if Assigned(OnWriteFile) then
@@ -1726,7 +1727,12 @@ begin
     end;
     {$ELSE}
     try
-      ms.SaveToFile(Filename);
+      FS:=TFileStream.Create (FileName,fmCreate or fmShareDenyNone);
+      Try
+        ms.SaveToStream(FS);
+      finally
+        FS.free;
+      end;
     except
       on E: Exception do begin
         i:=GetLastOSError;
@@ -1832,25 +1838,52 @@ begin
     UsePointDirectory, AlwaysRequireSharedBaseFolder, RelPath);
 end;
 
-function TPas2jsFilesCache.FindIncludeFileName(const aFilename,
-  ModuleDir: string): String;
+function TPas2jsFilesCache.FindIncludeFileName(const aFilename, SrcDir,
+  ModuleDir: string; Mode: TModeSwitch): String;
 
   function SearchCasedInIncPath(const Filename: string): string;
+  var
+    SearchedDir: array of string;
+
+    function SearchDir(Dir: string): boolean;
+    var
+      i: Integer;
+      CurFile: String;
+    begin
+      Dir:=IncludeTrailingPathDelimiter(Dir);
+      for i:=0 to length(SearchedDir)-1 do
+        if SearchedDir[i]=Dir then exit;
+      CurFile:=Dir+Filename;
+      //writeln('SearchDir aFilename=',aFilename,' SrcDir=',SrcDir,' ModDir=',ModuleDir,' Mode=',Mode,' CurFile=',CurFile);
+      Result:=SearchLowUpCase(CurFile);
+      if Result then
+        SearchCasedInIncPath:=CurFile
+      else begin
+        i:=length(SearchedDir);
+        SetLength(SearchedDir,i+1);
+        SearchedDir[i]:=Dir;
+      end;
+    end;
+
   var
     i: Integer;
   begin
     // file name is relative
-    // first search in the same directory as the unit
+    SearchedDir:=nil;
+
+    // first search in the same directory as the include file
+    if not (Mode in [msDelphi,msDelphiUnicode])
+        and (SrcDir<>'') then
+      if SearchDir(SrcDir) then exit;
+
+    // then search in the same directory as the unit
     if ModuleDir<>'' then
-      begin
-      Result:=IncludeTrailingPathDelimiter(ModuleDir)+Filename;
-      if SearchLowUpCase(Result) then exit;
-      end;
+      if SearchDir(ModuleDir) then exit;
+
     // then search in include path
-    for i:=0 to IncludePaths.Count-1 do begin
-      Result:=IncludeTrailingPathDelimiter(IncludePaths[i])+Filename;
-      if SearchLowUpCase(Result) then exit;
-    end;
+    for i:=0 to IncludePaths.Count-1 do
+      if SearchDir(IncludePaths[i]) then exit;
+
     Result:='';
   end;
 
@@ -1988,11 +2021,18 @@ var
 
   function SearchInDir(Dir: string; var Filename: string): boolean;
   // search in Dir for pp, pas, p times given case, lower case, upper case
+  var
+    CurFile : String;
   begin
     Dir:=IncludeTrailingPathDelimiter(Dir);
     if IndexOfFile(SearchedDirs,Dir)>=0 then exit(false);
     SearchedDirs.Add(Dir);
-    if SearchLowUpCase(Filename) then exit(true);
+    CurFile:=Dir+Filename;
+    if SearchLowUpCase(CurFile) then
+      begin
+      FileName:=CurFile;
+      exit(true);
+      end;
     Result:=false;
   end;
 

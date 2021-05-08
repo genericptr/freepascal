@@ -116,7 +116,7 @@ begin
   Count := 0;
   { first index is one }
   LocalIndex := 1;
-  while (P[Count] <> #0) do
+  while assigned(P) and (P[Count] <> #0) do
   begin
     while (p[count]=' ') or (p[count]=#9) or (p[count]=LineEnding) do
       Inc(count);
@@ -240,10 +240,15 @@ begin
     if l = 0 then
     begin
       s1 := GetProgDir;
-      if s1[Length(s1)] = ':' then
-        paramstr := s1 + GetProgramName
+      if length(s1) > 0 then
+      begin
+        if s1[Length(s1)] = ':' then
+          paramstr := s1 + GetProgramName
+        else
+          paramstr:=s1+'/'+GetProgramName;
+      end
       else
-        paramstr:=s1+'/'+GetProgramName;
+        paramstr:=GetProgramName;
     end
     else
     begin

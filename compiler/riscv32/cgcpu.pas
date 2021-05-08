@@ -105,32 +105,44 @@ unit cgcpu;
       var
         ai: taicpu;
       begin
-        if (fromsize=tosize) or
-           ((tcgsize2unsigned[fromsize]=tcgsize2unsigned[tosize]) and
-            (tcgsize2unsigned[fromsize]=OS_32)) then
+        list.concat(tai_comment.Create(strpnew('Move '+tcgsize2str(fromsize)+'->'+tcgsize2str(tosize))));
+
+        if (tosize=OS_S32) and (fromsize=OS_32) then
           begin
             ai:=taicpu.op_reg_reg_const(A_ADDI,reg2,reg1,0);
             list.concat(ai);
             rg[R_INTREGISTER].add_move_instruction(ai);
           end
-        else if fromsize=OS_8 then
+        else if (tcgsize2unsigned[tosize]=OS_32) and (fromsize=OS_8) then
+          list.Concat(taicpu.op_reg_reg_const(A_ANDI,reg2,reg1,$FF))
+        else if (tcgsize2size[fromsize] > tcgsize2size[tosize]) or
+          ((tcgsize2size[fromsize] = tcgsize2size[tosize]) and (fromsize <> tosize)) or
+          { do we need to mask out the sign when loading from smaller signed to larger unsigned type? }
+          ((tcgsize2unsigned[fromsize]<>fromsize) and ((tcgsize2unsigned[tosize]=tosize)) and
+            (tcgsize2size[fromsize] < tcgsize2size[tosize]) and (tcgsize2size[tosize] <> sizeof(pint)) ) then
           begin
-            list.Concat(taicpu.op_reg_reg_const(A_AND,reg2,reg1,$FF))
+            if tcgsize2size[fromsize]<tcgsize2size[tosize] then
+              begin
+                list.Concat(taicpu.op_reg_reg_const(A_SLLI,reg2,reg1,8*(4-tcgsize2size[fromsize])));
+
+                if tcgsize2unsigned[fromsize]<>fromsize then
+                  list.Concat(taicpu.op_reg_reg_const(A_SRAI,reg2,reg2,8*(tcgsize2size[tosize]-tcgsize2size[fromsize])))
+                else
+                  list.Concat(taicpu.op_reg_reg_const(A_SRLI,reg2,reg2,8*(tcgsize2size[tosize]-tcgsize2size[fromsize])));
+              end
+            else
+              list.Concat(taicpu.op_reg_reg_const(A_SLLI,reg2,reg1,8*(4-tcgsize2size[tosize])));
+
+            if tcgsize2unsigned[tosize]=tosize then
+              list.Concat(taicpu.op_reg_reg_const(A_SRLI,reg2,reg2,8*(4-tcgsize2size[tosize])))
+            else
+              list.Concat(taicpu.op_reg_reg_const(A_SRAI,reg2,reg2,8*(4-tcgsize2size[tosize])));
           end
         else
           begin
-            if tcgsize2size[tosize]<tcgsize2size[fromsize] then
-              fromsize:=tosize;
-
-            if tcgsize2unsigned[fromsize]<>OS_32 then
-              list.Concat(taicpu.op_reg_reg_const(A_SLLI,reg2,reg1,8*(4-tcgsize2size[fromsize])))
-            else
-              a_load_reg_reg(list,fromsize,fromsize,reg1,reg2);
-
-            if tcgsize2unsigned[fromsize]=fromsize then
-              list.Concat(taicpu.op_reg_reg_const(A_SRLI,reg2,reg2,8*(4-tcgsize2size[fromsize])))
-            else
-              list.Concat(taicpu.op_reg_reg_const(A_SRAI,reg2,reg2,8*(4-tcgsize2size[fromsize])));
+            ai:=taicpu.op_reg_reg_const(A_ADDI,reg2,reg1,0);
+            list.concat(ai);
+            rg[R_INTREGISTER].add_move_instruction(ai);
           end;
       end;
 
@@ -158,7 +170,7 @@ unit cgcpu;
         regs, fregs: tcpuregisterset;
         r: TSuperRegister;
         href: treference;
-        stackcount: longint;
+        stackcount, stackAdjust: longint;
       begin
         if not(nostackframe) then
           begin
@@ -198,7 +210,16 @@ unit cgcpu;
                   end;
               end;
 
-            stackcount:=0;
+            stackAdjust:=0;
+            if (CPURV_HAS_COMPACT in cpu_capabilities[current_settings.cputype]) and
+               (stackcount>0) then
+              begin
+                list.concat(taicpu.op_reg_reg_const(A_ADDI,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,-stackcount));
+                inc(href.offset,stackcount);
+                stackAdjust:=stackcount;
+                dec(localsize,stackcount);
+              end;
+
             for r:=RS_X0 to RS_X31 do
               if r in regs then
                 begin
@@ -212,10 +233,10 @@ unit cgcpu;
                 begin
                   list.concat(taicpu.op_reg_ref(A_FSD,newreg(R_FPUREGISTER,r,R_SUBWHOLE),href));
                   dec(href.offset,8);
-                end;              
+                end;
 
             if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
-              list.concat(taicpu.op_reg_reg_const(A_ADDI,NR_FRAME_POINTER_REG,NR_STACK_POINTER_REG,0));
+              list.concat(taicpu.op_reg_reg_const(A_ADDI,NR_FRAME_POINTER_REG,NR_STACK_POINTER_REG,stackAdjust));
 
             if localsize>0 then
               begin

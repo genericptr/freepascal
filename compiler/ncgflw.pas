@@ -24,6 +24,11 @@ unit ncgflw;
 
 {$i fpcdefs.inc}
 
+{$if defined(jvm) or defined(wasm)}
+  {$define SkipABIEH}
+{$endif}
+
+
 interface
 
     uses
@@ -75,9 +80,9 @@ interface
 
        tcgraisenode = class(traisenode)
          function pass_1: tnode;override;
-{$ifndef jvm}
+{$ifndef SkipABIEH}
          procedure pass_generate_code;override;
-{$endif jvm}
+{$endif SkipABIEH}
        end;
 
        tcgtryexceptnode = class(ttryexceptnode)
@@ -115,9 +120,9 @@ implementation
       cpubase,
       tgobj,paramgr,
       cgobj,hlcgobj,nutils
-{$ifndef jvm}
+{$ifndef SkipABIEH}
       ,psabiehpi
-{$endif jvm}
+{$endif}
       ;
 {*****************************************************************************
                          Second_While_RepeatN
@@ -404,6 +409,8 @@ implementation
       begin
          location_reset(location,LOC_VOID,OS_NO);
 
+         if fc_no_direct_exit in flowcontrol then
+           include(flowcontrol,fc_gotolabel);
          include(flowcontrol,fc_exit);
          if assigned(left) then
            secondpass(left);
@@ -412,6 +419,8 @@ implementation
            hlcg.g_local_unwind(current_asmdata.CurrAsmList,current_procinfo.CurrExitLabel)
          else
            hlcg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrExitLabel);
+         if not(cs_opt_size in current_settings.optimizerswitches) then
+           current_asmdata.CurrAsmList.concat(cai_align.create_max(current_settings.alignment.jumpalign,current_settings.alignment.jumpalignskipmax));
        end;
 
 
@@ -432,7 +441,9 @@ implementation
              if (fc_unwind_loop in flowcontrol) then
                hlcg.g_local_unwind(current_asmdata.CurrAsmList,current_procinfo.CurrBreakLabel)
              else
-               hlcg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrBreakLabel)
+               hlcg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrBreakLabel);
+             if not(cs_opt_size in current_settings.optimizerswitches) then
+               current_asmdata.CurrAsmList.concat(cai_align.create_max(current_settings.alignment.jumpalign,current_settings.alignment.jumpalignskipmax));
            end
          else
            CGMessage(cg_e_break_not_allowed);
@@ -456,7 +467,9 @@ implementation
              if (fc_unwind_loop in flowcontrol) then
                hlcg.g_local_unwind(current_asmdata.CurrAsmList,current_procinfo.CurrContinueLabel)
              else
-               hlcg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrContinueLabel)
+               hlcg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrContinueLabel);
+             if not(cs_opt_size in current_settings.optimizerswitches) then
+               current_asmdata.CurrAsmList.concat(cai_align.create_max(current_settings.alignment.jumpalign,current_settings.alignment.jumpalignskipmax));
            end
          else
            CGMessage(cg_e_continue_not_allowed);
@@ -476,7 +489,9 @@ implementation
 {$ifdef OLDREGVARS}
          load_all_regvars(current_asmdata.CurrAsmList);
 {$endif OLDREGVARS}
-         hlcg.a_jmp_always(current_asmdata.CurrAsmList,tcglabelnode(labelnode).getasmlabel)
+         hlcg.a_jmp_always(current_asmdata.CurrAsmList,tcglabelnode(labelnode).getasmlabel);
+         if not(cs_opt_size in current_settings.optimizerswitches) then
+           current_asmdata.CurrAsmList.concat(cai_align.create_max(current_settings.alignment.jumpalign,current_settings.alignment.jumpalignskipmax));
        end;
 
 
@@ -532,7 +547,7 @@ implementation
           { we must also destroy the address frame which guards
             the exception object }
           cexceptionstatehandler.popaddrstack(list);
-          hlcg.g_exception_reason_discard(list,osuinttype,excepttemps.reasonbuf);
+          hlcg.g_exception_reason_discard(list,exceptionreasontype,excepttemps.reasonbuf);
           if frametype=ft_except then
             begin
               cexceptionstatehandler.cleanupobjectstack(list);
@@ -865,8 +880,8 @@ implementation
     procedure tcgtryfinallynode.emit_jump_out_of_try_finally_frame(list: TasmList; const reason: byte; const finallycodelabel: tasmlabel; var excepttemps: tcgexceptionstatehandler.texceptiontemps; framelabel: tasmlabel);
       begin
          hlcg.a_label(list,framelabel);
-         hlcg.g_exception_reason_discard(list,osuinttype,excepttemps.reasonbuf);
-         hlcg.g_exception_reason_save_const(list,osuinttype,reason,excepttemps.reasonbuf);
+         hlcg.g_exception_reason_discard(list,exceptionreasontype,excepttemps.reasonbuf);
+         hlcg.g_exception_reason_save_const(list,exceptionreasontype,reason,excepttemps.reasonbuf);
          hlcg.a_jmp_always(list,finallycodelabel);
       end;
 
@@ -926,13 +941,13 @@ implementation
         procedure handle_breakcontinueexit(const finallycode: tasmlabel; doreraise: boolean);
           begin
             { no exception happened, but maybe break/continue/exit }
-            hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,osuinttype,OC_EQ,0,reasonreg,endfinallylabel);
+            hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,0,reasonreg,endfinallylabel);
             if fc_exit in finallyexceptionstate.newflowcontrol then
-              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,osuinttype,OC_EQ,2,reasonreg,oldCurrExitLabel);
+              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,2,reasonreg,oldCurrExitLabel);
             if fc_break in finallyexceptionstate.newflowcontrol then
-              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,osuinttype,OC_EQ,3,reasonreg,oldBreakLabel);
+              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,3,reasonreg,oldBreakLabel);
             if fc_continue in finallyexceptionstate.newflowcontrol then
-              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,osuinttype,OC_EQ,4,reasonreg,oldContinueLabel);
+              hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,4,reasonreg,oldContinueLabel);
             if doreraise then
               cexceptionstatehandler.handle_reraise(current_asmdata.CurrAsmList,excepttemps,finallyexceptionstate,tek_normalfinally)
             else
@@ -1009,8 +1024,8 @@ implementation
                exit;
              if not implicitframe then
                current_asmdata.CurrAsmList.concat(tai_marker.create(mark_NoLineInfoStart));
-             reasonreg:=hlcg.getintregister(current_asmdata.CurrAsmList,osuinttype);
-             hlcg.g_exception_reason_load(current_asmdata.CurrAsmList,osuinttype,osuinttype,excepttemps.reasonbuf,reasonreg);
+             reasonreg:=hlcg.getintregister(current_asmdata.CurrAsmList,exceptionreasontype);
+             hlcg.g_exception_reason_load(current_asmdata.CurrAsmList,exceptionreasontype,exceptionreasontype,excepttemps.reasonbuf,reasonreg);
              handle_breakcontinueexit(finallyNoExceptionLabel,false);
 
              current_asmdata.CurrAsmList.concatList(tmplist);
@@ -1048,11 +1063,11 @@ implementation
          if not assigned(third) then
            begin
              { the value should now be in the exception handler }
-             reasonreg:=hlcg.getintregister(current_asmdata.CurrAsmList,osuinttype);
-             hlcg.g_exception_reason_load(current_asmdata.CurrAsmList,osuinttype,osuinttype,excepttemps.reasonbuf,reasonreg);
+             reasonreg:=hlcg.getintregister(current_asmdata.CurrAsmList,exceptionreasontype);
+             hlcg.g_exception_reason_load(current_asmdata.CurrAsmList,exceptionreasontype,exceptionreasontype,excepttemps.reasonbuf,reasonreg);
              if implicitframe then
                begin
-                 hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,osuinttype,OC_EQ,0,reasonreg,endfinallylabel);
+                 hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,0,reasonreg,endfinallylabel);
                  { finally code only needed to be executed on exception (-> in
                    if-branch -> fc_inflowcontrol) }
                  if current_procinfo.procdef.generate_safecall_wrapper then
@@ -1113,7 +1128,7 @@ implementation
           end;
       end;
 
-{$ifndef jvm}
+{$ifndef SkipABIEH}
     { has to be factored out as well }
     procedure tcgraisenode.pass_generate_code;
       var
@@ -1160,7 +1175,7 @@ implementation
             include(flowcontrol,fc_catching_exceptions);
           end;
       end;
-{$endif jvm}
+{$endif SkipABIEH}
 
 
 begin

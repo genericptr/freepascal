@@ -91,6 +91,11 @@ interface
           ait_llvmmetadatareftypedconst, { reference to metadata inside a metadata constant }
           ait_llvmmetadatarefoperand, { llvm metadata referece: !metadataname !id }
 {$endif}
+{$ifdef wasm}
+          ait_importexport,
+          ait_local,
+          ait_functype,
+{$endif}
           { SEH directives used in ARM,MIPS and x86_64 COFF targets }
           ait_seh_directive,
           { Dwarf CFI directive }
@@ -233,6 +238,11 @@ interface
           'llvmmetadatareftc',
           'llvmmetadatarefop',
 {$endif}
+{$ifdef wasm}
+          'importexport',
+          'local',
+          'functype',
+{$endif}
           'cfi',
           'seh_directive',
           'eabi_attribute'
@@ -243,15 +253,18 @@ interface
       toptype=(top_none,top_reg,top_ref,top_const,top_bool,top_local
 {$ifdef arm}
        { ARM only }
-       ,top_regset
        ,top_modeflags
        ,top_specialreg
 {$endif arm}
 {$if defined(arm) or defined(aarch64)}
+       ,top_regset
        ,top_conditioncode
        ,top_shifterop
        ,top_realconst
 {$endif defined(arm) or defined(aarch64)}
+{$ifdef aarch64}
+       ,top_indexedreg
+{$endif}
 {$ifdef m68k}
        { m68k only }
        ,top_regset
@@ -285,6 +298,11 @@ interface
        ,top_fenceflags
        ,top_roundingmode
 {$endif defined(riscv32) or defined(riscv64)}
+{$ifdef wasm}
+       ,top_functype
+       ,top_single
+       ,top_double
+{$endif wasm}
        );
 
       { kinds of operations that an instruction can perform on an operand }
@@ -338,6 +356,9 @@ interface
                      ait_llvmmetadatareftypedconst,
                      ait_llvmmetadatarefoperand,
 {$endif llvm}
+{$ifdef wasm}
+                     ait_importexport,ait_local,ait_functype,
+{$endif wasm}
                      ait_seh_directive,
                      ait_cfi,
                      ait_eabi_attribute
@@ -381,7 +402,7 @@ interface
         { supported by recent clang-based assemblers for data-in-code  }
         asd_data_region, asd_end_data_region,
         { ARM }
-        asd_thumb_func,asd_code,
+        asd_thumb_func,asd_code,asd_force_thumb,
         { restricts the assembler only to those instructions, which are
           available on the specified CPU; this represents directives such as
           NASM's 'CPU 686' or MASM/TASM's '.686p'. Might not be supported by
@@ -398,7 +419,10 @@ interface
           ash_endprologue,ash_handler,ash_handlerdata,
           ash_eh,ash_32,ash_no32,
           ash_setframe,ash_stackalloc,ash_pushreg,
-          ash_savereg,ash_savexmm,ash_pushframe,
+          ash_savereg,ash_savereg_x,ash_saveregp,ash_saveregp_x,
+          ash_savexmm,ash_savefreg,ash_savefreg_x,ash_savefregp,ash_savefregp_x,ash_pushframe,
+          ash_setfp,ash_addfp,ash_savefplr,ash_savefplr_x,
+          ash_nop,
           ash_pushnv,ash_savenv
         );
 
@@ -428,6 +452,7 @@ interface
         { ARM }
         'thumb_func',
         'code',
+	'force_thumb',
         'cpu',
         { for the OMF object format }
         'omf_line',
@@ -439,7 +464,10 @@ interface
         '.seh_endprologue','.seh_handler','.seh_handlerdata',
         '.seh_eh','.seh_32','seh_no32',
         '.seh_setframe','.seh_stackalloc','.seh_pushreg',
-        '.seh_savereg','.seh_savexmm','.seh_pushframe',
+        '.seh_savereg','.seh_savereg_x','.seh_saveregp','.seh_saveregp_x',
+        '.seh_savexmm','.seh_savefreg','.seh_savefreg_x','.seh_savefregp','.seh_savefregp_x','.seh_pushframe',
+        '.seh_setfp','.seh_addfp','.seh_savefplr','.seh_savefplr_x',
+        '.seh_nop',
         '.pushnv','.savenv'
       );
       symbolpairkindstr: array[TSymbolPairKind] of string[11]=(
@@ -473,6 +501,10 @@ interface
             top_conditioncode : (cc : TAsmCond);
             top_realconst : (val_real:bestreal);
         {$endif defined(arm) or defined(aarch64)}
+        {$ifdef aarch64}
+            top_regset : (basereg: tregister; nregs, regsetindex: byte);
+            top_indexedreg : (indexedreg: tregister; regindex: byte);
+        {$endif}
         {$ifdef m68k}
             top_regset : (dataregset,addrregset,fpuregset: tcpuregisterset);
             top_regpair : (reghi,reglo: tregister);
@@ -503,6 +535,11 @@ interface
             top_fenceflags : (fenceflags : TFenceFlags);
             top_roundingmode : (roundingmode : TRoundingMode);
         {$endif defined(riscv32) or defined(riscv64)}
+        {$ifdef wasm}
+            top_functype : (functype: TWasmFuncType);
+            top_single : (sval:single);
+            top_double : (dval:double);
+        {$endif wasm}
         end;
         poper=^toper;
 
@@ -696,6 +733,7 @@ interface
           constructor Create_rel_sym_offset(_typ : taiconst_type; _sym,_endsym : tasmsymbol; _ofs : int64);
           constructor Create_rva_sym(_sym:tasmsymbol);
           constructor Createname(const name:string;ofs:asizeint);
+          constructor Createname_rel(const name, endname: string);
           constructor Createname(const name:string;_symtyp:Tasmsymtype;ofs:asizeint);
           constructor Create_type_name(_typ:taiconst_type;const name:string;ofs:asizeint);
           constructor Create_type_name(_typ:taiconst_type;const name:string;_symtyp:Tasmsymtype;ofs:asizeint);
@@ -1108,7 +1146,7 @@ implementation
     constructor tai_symbolpair.ppuload(t: taitype; ppufile: tcompilerppufile);
       begin
         inherited ppuload(t,ppufile);
-        kind:=TSymbolPairKind(ppufile.getbyte);;
+        kind:=TSymbolPairKind(ppufile.getbyte);
         sym:=ppufile.getpshortstring;
         value:=ppufile.getpshortstring;
       end;
@@ -1871,6 +1909,13 @@ implementation
       end;
 
 
+    constructor tai_const.Createname_rel(const name,endname:string);
+      begin
+         self.create_sym_offset(current_asmdata.RefAsmSymbol(name,AT_NONE),0);
+         endsym:=current_asmdata.RefAsmSymbol(endname,AT_NONE)
+      end;
+
+
     constructor tai_const.Create_type_name(_typ:taiconst_type;const name:string;ofs:asizeint);
       begin
          self.Create_type_name(_typ,name,AT_NONE,ofs);
@@ -2072,7 +2117,7 @@ implementation
             result:=8;
           aitconst_secrel32_symbol,
           aitconst_rva_symbol :
-            if target_info.system=system_x86_64_win64 then
+            if target_info.system in systems_peoptplus then
               result:=sizeof(longint)
             else
               result:=sizeof(pint);
@@ -2974,6 +3019,10 @@ implementation
               top_wstring:
                 donewidestring(pwstrval);
 {$endif jvm}
+{$ifdef wasm}
+              top_functype:
+                FreeAndNil(functype);
+{$endif wasm}
               else
                 ;
             end;
@@ -3334,8 +3383,20 @@ implementation
         sd_offset,     { stackalloc }
         sd_reg,        { pushreg }
         sd_regoffset,  { savereg }
+        sd_regoffset,  { savereg_x }
+        sd_regoffset,  { saveregp }
+        sd_regoffset,  { saveregp_x }
         sd_regoffset,  { savexmm }
+        sd_regoffset,  { savefreg }
+        sd_regoffset,  { savefreg_x }
+        sd_regoffset,  { savefregp }
+        sd_regoffset,  { savefregp_x }
         sd_none,       { pushframe }
+        sd_none,       { setfp }
+        sd_none,       { addfp }
+        sd_offset,     { savefplr }
+        sd_offset,     { savefplr_x }
+        sd_none,       { nop }
         sd_reg,        { pushnv }
         sd_none        { savenv }
       );

@@ -2163,13 +2163,14 @@ var
   LInstance: PInstance;
 begin
   if ATypeInfo = nil then
-    Exit(SelectBinaryComparer(GetTypeData(ATypeInfo), ASize))
+    Exit(SelectBinaryComparer(Nil, ASize))
   else
   begin
     LInstance := @ComparerInstances[ATypeInfo.Kind];
-    Result := LInstance.Instance;
     if LInstance.Selector then
-      Result := TSelectFunc(Result)(GetTypeData(ATypeInfo), ASize);
+      Result := TSelectFunc(LInstance.SelectorInstance)(GetTypeData(ATypeInfo), ASize)
+    else
+      Result := LInstance.Instance;
   end;
 end;
 
@@ -2278,7 +2279,7 @@ var
   LSelectMethod: TSelectMethod;
 begin
   if ATypeInfo = nil then
-    Exit(SelectBinaryEqualityComparer(GetTypeData(ATypeInfo), ASize))
+    Exit(SelectBinaryEqualityComparer(Nil, ASize))
   else
   begin
     LInstance := @FEqualityComparerInstances[ATypeInfo.Kind];
@@ -2491,7 +2492,7 @@ var
   LSelectMethod: TSelectMethod;
 begin
   if ATypeInfo = nil then
-    Exit(SelectBinaryEqualityComparer(GetTypeData(ATypeInfo), ASize))
+    Exit(SelectBinaryEqualityComparer(Nil, ASize))
   else
   begin
     LInstance := @FExtendedEqualityComparerInstances[ATypeInfo.Kind];

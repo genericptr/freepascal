@@ -48,8 +48,8 @@ interface
      tllvmprocdefdecltype = (lpd_def,lpd_decl,lpd_alias,lpd_procvar);
 
     { returns the identifier to use as typename for a def in llvm (llvm only
-      allows naming struct types) -- only supported for defs with a typesym, and
-      only for tabstractrecorddef descendantds and complex procvars }
+      allows naming struct types) -- only supported for tabstractrecorddef
+      descendantds and complex procvars }
     function llvmtypeidentifier(def: tdef): TSymStr;
 
     { encode a type into the internal format used by LLVM (for a type
@@ -109,6 +109,8 @@ interface
 
     function llvmasmsymname(const sym: TAsmSymbol): TSymStr;
 
+    function llvmfloatintrinsicsuffix(def: tfloatdef): TIDString;
+
 
 implementation
 
@@ -128,9 +130,10 @@ implementation
 
   function llvmtypeidentifier(def: tdef): TSymStr;
     begin
-      if not assigned(def.typesym) then
-        internalerror(2015041901);
-      result:='%"typ.'+def.fullownerhierarchyname(false)+def.typesym.realname+'"'
+      if assigned(def.typesym) then
+        result:='%"typ.'+def.fullownerhierarchyname(false)+def.typesym.realname+'"'
+      else
+        result:='%"typ.'+def.fullownerhierarchyname(false)+def.unique_id_str+'"';
     end;
 
 
@@ -221,7 +224,7 @@ implementation
                   begin
                     { todo: update once we support vectors }
                     if not(toregtyp in [R_FPUREGISTER,R_MMREGISTER]) then
-                      internalerror(2014062203);
+                      internalerror(2014062202);
                     if tobytesize<frombytesize then
                       result:=la_fptrunc
                     else
@@ -288,6 +291,23 @@ implementation
         result:=llvmmangledname(sym.name)
       else
         result:='label %'+sym.name;
+    end;
+
+  function llvmfloatintrinsicsuffix(def: tfloatdef): TIDString;
+    begin
+      case def.floattype of
+        s32real:
+          result:='_f32';
+        s64real:
+          result:='_f64';
+        s80real,sc80real:
+          result:='_f80';
+        s128real:
+          result:='_f128';
+        else
+          { comp/currency need to be converted to s(c)80real first }
+          internalerror(2019122902);
+      end;
     end;
 
 
@@ -359,7 +379,9 @@ implementation
             end;
           pointerdef :
             begin
-              if is_voidpointer(def) then
+              if def=llvm_metadatatype then
+                encodedstr:=encodedstr+'metadata'
+              else if is_voidpointer(def) then
                 encodedstr:=encodedstr+'i8*'
               else
                 begin
@@ -423,9 +445,7 @@ implementation
           recorddef :
             begin
               { avoid endlessly recursive definitions }
-              if assigned(def.typesym) and
-                 ((lef_inaggregate in flags) or
-                  not(lef_typedecl in flags)) then
+              if not(lef_typedecl in flags) then
                 encodedstr:=encodedstr+llvmtypeidentifier(def)
               else
                 llvmaddencodedabstractrecordtype(trecorddef(def),encodedstr);
@@ -516,9 +536,7 @@ implementation
                   if def.typ=procvardef then
                     encodedstr:=encodedstr+'*';
                 end
-              else if ((lef_inaggregate in flags) or
-                  not(lef_typedecl in flags)) and
-                 assigned(tprocvardef(def).typesym) then
+              else if not(lef_typedecl in flags) then
                 begin
                   { in case the procvardef recursively references itself, e.g.
                     via a pointer }
@@ -548,8 +566,7 @@ implementation
               odt_object,
               odt_cppclass:
                 begin
-                  if not(lef_typedecl in flags) and
-                     assigned(def.typesym) then
+                  if not(lef_typedecl in flags) then
                     encodedstr:=encodedstr+llvmtypeidentifier(def)
                   else
                     llvmaddencodedabstractrecordtype(tabstractrecorddef(def),encodedstr);
@@ -721,11 +738,16 @@ implementation
                 register (-> paranr_result is smaller than paranr_self for that
                 platform in symconst) }
 {$ifdef aarch64}
-              if not first then
+              if not first and
+                 not is_managed_type(hp.vardef) then
                 internalerror(2015101404);
 {$endif aarch64}
               if withattributes then
-                 if first then
+                 if first
+{$ifdef aarch64}
+                    and not is_managed_type(hp.vardef)
+{$endif aarch64}
+                    then
                    encodedstr:=encodedstr+' sret noalias nocapture'
                  else
                    encodedstr:=encodedstr+' noalias nocapture';
@@ -876,56 +898,72 @@ implementation
 
 
     function llvmgettemprecorddef(const fieldtypes: array of tdef; packrecords, recordalignmin: shortint): trecorddef;
+
+      procedure addtypename(var typename: TSymStr; hdef: tdef);
+        begin
+          case hdef.typ of
+            orddef:
+              case torddef(hdef).ordtype of
+                s8bit,
+                u8bit,
+                pasbool1,
+                pasbool8:
+                  typename:=typename+'i8';
+                s16bit,
+                u16bit:
+                  typename:=typename+'i16';
+                s32bit,
+                u32bit:
+                  typename:=typename+'i32';
+                s64bit,
+                u64bit:
+                  typename:=typename+'i64';
+                customint:
+                  typename:=typename+'i'+tostr(torddef(hdef).packedbitsize);
+                else
+                  { other types should not appear currently, add as needed }
+                  internalerror(2014012001);
+              end;
+            floatdef:
+              case tfloatdef(hdef).floattype of
+                s32real:
+                  typename:=typename+'f32';
+                s64real:
+                  typename:=typename+'f64';
+                else
+                  { other types should not appear currently, add as needed }
+                  internalerror(2014012008);
+              end;
+            arraydef:
+              begin
+                if not is_special_array(hdef) and
+                   not is_packed_array(hdef) then
+                  begin
+                    typename:=typename+'['+tostr(tarraydef(hdef).elecount)+'x';
+                    addtypename(typename,tarraydef(hdef).elementdef);
+                    typename:=typename+']';
+                  end
+                else
+                  typename:=typename+'d'+hdef.unique_id_str;
+              end
+            else
+              typename:=typename+'d'+hdef.unique_id_str;
+          end;
+        end;
+
       var
         i: longint;
         res: PHashSetItem;
         oldsymtablestack: tsymtablestack;
         hrecst: trecordsymtable;
-        hdef: tdef;
         hrecdef: trecorddef;
         sym: tfieldvarsym;
-        typename: string;
+        typename: TSymStr;
       begin
         typename:=internaltypeprefixName[itp_llvmstruct];
         for i:=low(fieldtypes) to high(fieldtypes) do
           begin
-            hdef:=fieldtypes[i];
-            case hdef.typ of
-              orddef:
-                case torddef(hdef).ordtype of
-                  s8bit,
-                  u8bit,
-                  pasbool1,
-                  pasbool8:
-                    typename:=typename+'i8';
-                  s16bit,
-                  u16bit:
-                    typename:=typename+'i16';
-                  s32bit,
-                  u32bit:
-                    typename:=typename+'i32';
-                  s64bit,
-                  u64bit:
-                    typename:=typename+'i64';
-                  customint:
-                    typename:=typename+'i'+tostr(torddef(hdef).packedbitsize);
-                  else
-                    { other types should not appear currently, add as needed }
-                    internalerror(2014012001);
-                end;
-              floatdef:
-                case tfloatdef(hdef).floattype of
-                  s32real:
-                    typename:=typename+'f32';
-                  s64real:
-                    typename:=typename+'f64';
-                  else
-                    { other types should not appear currently, add as needed }
-                    internalerror(2014012008);
-                end;
-              else
-                typename:=typename+'d'+hdef.unique_id_str;
-            end;
+            addtypename(typename,fieldtypes[i]);
           end;
         if not assigned(current_module) then
           internalerror(2014012002);

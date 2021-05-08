@@ -341,6 +341,12 @@ Unit AoptObj;
         { removes p from asml, updates registers and replaces it by a valid value, if this is the case true is returned }
         function RemoveCurrentP(var p : tai): boolean;
 
+        { removes p from asml, updates registers and replaces p with hp1 (if the next instruction was known beforehand) }
+        procedure RemoveCurrentP(var p: tai; const hp1: tai); inline;
+
+        { removes hp from asml then frees it }
+        procedure RemoveInstruction(const hp: tai); inline;
+
        { traces sucessive jumps to their final destination and sets it, e.g.
          je l1                je l3
          <code>               <code>
@@ -458,8 +464,8 @@ Unit AoptObj;
 
     function JumpTargetOp(ai: taicpu): poper; inline;
       begin
-{$if defined(MIPS) or defined(riscv64) or defined(riscv32)}
-        { MIPS or RiscV branches can have 1,2 or 3 operands, target label is the last one. }
+{$if defined(MIPS) or defined(riscv64) or defined(riscv32) or defined(xtensa)}
+        { MIPS, Xtensa or RiscV branches can have 1,2 or 3 operands, target label is the last one. }
         result:=ai.oper[ai.ops-1];
 {$elseif defined(SPARC64)}
         if ai.ops=2 then
@@ -1016,6 +1022,7 @@ Unit AoptObj;
                    ((p.typ = ait_marker) and
                     (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd]))) do
                  begin
+                   prefetch(pointer(p.Next)^);
                    { Here's the optimise part }
                    if (p.typ in [ait_align, ait_label]) then
                      begin
@@ -1040,6 +1047,7 @@ Unit AoptObj;
             while assigned(p) and
                   (p.typ=ait_RegAlloc) Do
               begin
+                prefetch(pointer(p.Next)^);
                 case tai_regalloc(p).ratype of
                   ra_alloc :
                     Include(UsedRegs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
@@ -1074,6 +1082,7 @@ Unit AoptObj;
             while assigned(p) and
                   (p.typ=ait_RegAlloc) Do
               begin
+                prefetch(pointer(p.Next)^);
                 case tai_regalloc(p).ratype of
                   ra_alloc :
                     Include(UsedRegs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
@@ -1373,12 +1382,10 @@ Unit AoptObj;
         removedSomething := false;
         firstRemovedWasAlloc := false;
 {$ifdef allocregdebug}
-        hp := tai_comment.Create(strpnew('allocating '+std_regname(newreg(R_INTREGISTER,supreg,R_SUBWHOLE))+
-          ' from here...'));
-        insertllitem(asml,p1.previous,p1,hp);
-        hp := tai_comment.Create(strpnew('allocated '+std_regname(newreg(R_INTREGISTER,supreg,R_SUBWHOLE))+
-          ' till here...'));
-        insertllitem(asml,p2,p2.next,hp);
+        hp := tai_comment.Create(strpnew('allocating '+std_regname(reg)+' from here...'));
+        insertllitem(p1.previous,p1,hp);
+        hp := tai_comment.Create(strpnew('allocated '+std_regname(reg)+' till here...'));
+        insertllitem(p2,p2.next,hp);
 {$endif allocregdebug}
         { do it the safe way: always allocate the full super register,
           as we do no register re-allocation in the peephole optimizer,
@@ -1393,6 +1400,8 @@ Unit AoptObj;
             reg:=newreg(R_FPUREGISTER,getsupreg(reg),R_SUBWHOLE);
           R_ADDRESSREGISTER:
             reg:=newreg(R_ADDRESSREGISTER,getsupreg(reg),R_SUBWHOLE);
+          R_SPECIALREGISTER:
+            reg:=newreg(R_SPECIALREGISTER,getsupreg(reg),R_SUBWHOLE);
           else
             Internalerror(2018030701);
         end;
@@ -1495,6 +1504,24 @@ Unit AoptObj;
       end;
 
 
+    procedure TAOptObj.RemoveCurrentP(var p: tai; const hp1: tai); inline;
+      begin
+        if (p=hp1) then
+          internalerror(2020120501);
+        UpdateUsedRegs(tai(p.Next));
+        AsmL.Remove(p);
+        p.Free;
+        p := hp1;
+      end;
+
+
+    procedure TAOptObj.RemoveInstruction(const hp: tai); inline;
+      begin
+        AsmL.Remove(hp);
+        hp.Free;
+      end;
+
+
     function FindLiveLabel(hp: tai; var l: tasmlabel): Boolean;
       var
         next: tai;
@@ -1542,14 +1569,14 @@ Unit AoptObj;
     { Returns True if hp is an unconditional jump to a label }
     function IsJumpToLabelUncond(hp: taicpu): boolean;
       begin
-{$if defined(avr)}
+{$if defined(avr) or defined(z80)}
         result:=(hp.opcode in aopt_uncondjmp) and
-{$else avr}
+{$else}
         result:=(hp.opcode=aopt_uncondjmp) and
-{$endif avr}
-{$if defined(arm) or defined(aarch64)}
+{$endif}
+{$if defined(arm) or defined(aarch64) or defined(z80)}
           (hp.condition=c_None) and
-{$endif arm or aarch64}
+{$endif arm or aarch64 or z80}
           (hp.ops>0) and
 {$if defined(riscv32) or defined(riscv64)}
           (hp.oper[0]^.reg=NR_X0) and
@@ -1603,16 +1630,33 @@ Unit AoptObj;
     procedure TAOptObj.MakeUnconditional(p: taicpu);
       begin
         { TODO: If anyone can improve this particular optimisation to work on
-          AVR and RISC-V, please do (it's currently not called at all). [Kit] }
-{$if not defined(avr) and not defined(riscv32) and not defined(riscv64)}
+          AVR, please do (it's currently not called at all). [Kit] }
+{$if not defined(avr)}
 {$if defined(powerpc) or defined(powerpc64)}
         p.condition.cond := C_None;
         p.condition.simple := True;
 {$else powerpc}
         p.condition := C_None;
 {$endif powerpc}
+{$ifndef z80}
         p.opcode := aopt_uncondjmp;
-{$endif not avr and not riscv}
+{$endif not z80}
+{$ifdef RISCV}
+        p.loadoper(1, p.oper[p.ops-1]^);
+        p.loadreg(0, NR_X0);
+        p.ops:=2;
+{$endif}
+{$ifdef xtensa}
+        p.opcode := aopt_uncondjmp;
+        p.loadoper(0, p.oper[p.ops-1]^);
+        p.ops:=1;
+{$endif}
+{$endif not avr}
+{$ifdef mips}
+        { MIPS conditional jump instructions also conntain register
+          operands. A proper implementation is needed here. }
+        internalerror(2020071301);
+{$endif}
       end;
 
 
@@ -1661,12 +1705,16 @@ Unit AoptObj;
                   if (hp1.typ=ait_instruction) and (taicpu(hp1).is_jmp) then
                     RemoveDelaySlot(hp1);
 {$endif cpudelayslot}
-                  if (hp1.typ = ait_align) then
+                  hp2 := hp1;
+                  while (hp2.typ = ait_align) do
                     begin
                       { Only remove the align if a label doesn't immediately follow }
-                      if GetNextInstruction(hp1, hp2) and (hp2.typ = ait_label) then
+                      if GetNextInstruction(hp2, hp2) and (hp2.typ = ait_label) then
                         { The label is unskippable }
                         Exit;
+
+                      { Check again in case there's more than one adjacent alignment entry
+                        (a frequent construct under x86, for example). [Kit] }
                     end;
                   asml.remove(hp1);
                   hp1.free;
@@ -1693,6 +1741,7 @@ Unit AoptObj;
         { Stop if hp is an instruction, for example }
         while (hp1 <> BlockEnd) and (hp1.typ in [ait_label,ait_align]) do
           begin
+            prefetch(pointer(hp1.Next)^);
             case hp1.typ of
               ait_label:
                 begin
@@ -1997,6 +2046,8 @@ Unit AoptObj;
                             asml.remove(hp1);
                             hp1.free;
 
+                            stoploop := False;
+
                             if not CJLabel.is_used then
                               begin
                                 CJLabel := NCJLabel;
@@ -2029,6 +2080,11 @@ Unit AoptObj;
                   end
                 else
                   begin
+                    { Do not try to optimize if the test generating the condition
+                      is the same instruction, like 'bne	$v0,$zero,.Lj3' for MIPS }
+                    if (taicpu(p).ops>1) or (taicpu(hp1).ops>1) then
+                      exit;
+
                     { Check for:
                         jmp<cond1>    @Lbl1
                         jmp<cond2>    @Lbl2
@@ -2082,12 +2138,12 @@ Unit AoptObj;
                             Result := True;
                             Exit;
 
-{$if not defined(avr) and not defined(riscv32) and not defined(riscv64)}
+{$if not defined(avr)}
                           end
                         else
                           { NOTE: There is currently no watertight, cross-platform way to create
                             an unconditional jump without access to the cg object.  If anyone can
-                            improve this particular optimisation to work on AVR and RISC-V,
+                            improve this particular optimisation to work on AVR,
                             please do. [Kit] }
                           begin
                             { Since cond1 is a subset of inv(cond2), jmp<cond2> will always branch if
@@ -2124,8 +2180,8 @@ Unit AoptObj;
         tmp, hp1: tai;
       begin
         Result := False;
-        hp1 := tai(p.Next);
-        tmp := hp1; { Might be an align before the label, so keep a note of it }
+        if not GetNextInstruction(p,hp1) then
+          exit;
         if (hp1 = BlockEnd) then
           Exit;
 
@@ -2139,6 +2195,7 @@ Unit AoptObj;
 {$ifdef cpudelayslot}
             RemoveDelaySlot(p);
 {$endif cpudelayslot}
+            tmp := tai(p.Next); { Might be an align before the label, so keep a note of it }
             asml.remove(p);
             p.free;
 
@@ -2208,7 +2265,7 @@ Unit AoptObj;
                         stoploop := False;
                     end
 {$ifndef JVM}
-                  else if (taicpu(p).opcode = aopt_condjmp) then
+                  else if (taicpu(p).opcode {$ifdef z80}in{$else}={$endif} aopt_condjmp) then
                     ThisPassResult := OptimizeConditionalJump(ThisLabel, p, hp1, stoploop)
 {$endif JVM}
                     ;
@@ -2396,26 +2453,39 @@ Unit AoptObj;
         ClearUsedRegs;
         while (p <> BlockEnd) Do
           begin
-            UpdateUsedRegs(tai(p.next));
+            prefetch(pointer(p.Next)^);
             if PrePeepHoleOptsCpu(p) then
               continue;
             if assigned(p) then
               begin
-                UpdateUsedRegs(p);
                 p:=tai(p.next);
+                UpdateUsedRegs(p);
               end;
           end;
       end;
 
 
     procedure TAOptObj.PeepHoleOptPass1;
+      const
+        MaxPasses: array[1..3] of Cardinal = (1, 2, 8);
       var
-        p,hp1,hp2,hp3 : tai;
+        p : tai;
         stoploop, FirstInstruction, JumpOptsAvailable: boolean;
+        PassCount, MaxCount: Cardinal;
       begin
         JumpOptsAvailable := CanDoJumpOpts();
 
         StartPoint := BlockStart;
+        PassCount := 0;
+
+        { Determine the maximum number of passes allowed based on the compiler switches }
+        if (cs_opt_level3 in current_settings.optimizerswitches) then
+          { it should never take more than 8 passes, but the limit is finite to protect against faulty optimisations }
+          MaxCount := MaxPasses[3]
+        else if (cs_opt_level2 in current_settings.optimizerswitches) then
+          MaxCount := MaxPasses[2] { The original double run of Pass 1 }
+        else
+          MaxCount := MaxPasses[1];
 
         repeat
           stoploop:=true;
@@ -2425,7 +2495,7 @@ Unit AoptObj;
 
           while Assigned(p) and (p <> BlockEnd) Do
             begin
-              prefetch(p.Next);
+              prefetch(pointer(p.Next)^);
 
               { I'am not sure why this is done, UsedRegs should reflect the register usage before the instruction
                 If an instruction needs the information of this, it can easily create a TempUsedRegs (FK)
@@ -2439,7 +2509,6 @@ Unit AoptObj;
               { Handle jump optimizations first }
               if JumpOptsAvailable and DoJumpOptimizations(p, stoploop) then
                 begin
-                  UpdateUsedRegs(p);
                   if FirstInstruction then
                     { Update StartPoint, since the old p was removed;
                       don't set FirstInstruction to False though, as
@@ -2469,7 +2538,10 @@ Unit AoptObj;
                 p := tai(UpdateUsedRegsAndOptimize(p).Next);
 
             end;
-        until stoploop or not(cs_opt_level3 in current_settings.optimizerswitches);
+
+          Inc(PassCount);
+
+        until stoploop or (PassCount >= MaxCount);
       end;
 
 
@@ -2481,6 +2553,7 @@ Unit AoptObj;
         ClearUsedRegs;
         while (p <> BlockEnd) Do
           begin
+            prefetch(pointer(p.Next)^);
             if PeepHoleOptPass2Cpu(p) then
               continue;
             if assigned(p) then
@@ -2497,13 +2570,13 @@ Unit AoptObj;
         ClearUsedRegs;
         while (p <> BlockEnd) Do
           begin
-            UpdateUsedRegs(tai(p.next));
+            prefetch(pointer(p.Next)^);
             if PostPeepHoleOptsCpu(p) then
               continue;
             if assigned(p) then
               begin
-                UpdateUsedRegs(p);
                 p:=tai(p.next);
+                UpdateUsedRegs(p);
               end;
           end;
       end;

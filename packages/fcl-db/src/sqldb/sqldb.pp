@@ -222,6 +222,7 @@ type
     procedure ApplyRecUpdate(Query : TCustomSQLQuery; UpdateKind : TUpdateKind); virtual;
     function RefreshLastInsertID(Query : TCustomSQLQuery; Field : TField): Boolean; virtual;
     procedure GetDBInfo(const ASchemaType : TSchemaType; const ASchemaObjectName, AReturnField : string; AList: TStrings);
+    function PortParamName: string; virtual;
     function GetConnectionCharSet: string; virtual;
     procedure SetTransaction(Value : TSQLTransaction); virtual;
     procedure DoConnect; override;
@@ -268,6 +269,7 @@ type
 
     Property Statements : TThreadList Read FStatements;
     property Port: cardinal read GetPort write SetPort;
+    property CodePage: TSystemCodePage read FCodePage;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -800,6 +802,7 @@ type
     Property Proxy : TSQLConnection Read FProxy;
   Published
     Property ConnectorType : String Read FConnectorType Write SetConnectorType;
+    Property Port;
   end;
 
   TSQLConnectionClass = Class of TSQLConnection;
@@ -1195,8 +1198,12 @@ end;
 
 procedure TCustomSQLStatement.DeAllocateCursor;
 begin
-  if Assigned(FCursor) and Assigned(Database) then
-    DataBase.DeAllocateCursorHandle(FCursor);
+  if Assigned(FCursor) then
+     begin
+     if Assigned(Database) then
+       DataBase.DeAllocateCursorHandle(FCursor);
+     FreeAndNil(FCursor);
+     end;
 end;
 
 function TCustomSQLStatement.ExpandMacros( OrigSQL : String ) : String;
@@ -1372,9 +1379,12 @@ end;
 
 destructor TSQLConnection.Destroy;
 begin
-  Connected:=False; // needed because we want to de-allocate statements
-  FreeAndNil(FStatements);
-  inherited Destroy;
+  try
+    Connected:=False; // needed because we want to de-allocate statements
+  Finally  
+    FreeAndNil(FStatements);
+    inherited Destroy;
+  end;
 end;
 
 function TSQLConnection.StrToStatementType(s : string) : TStatementType;
@@ -1510,12 +1520,13 @@ begin
     end;
   finally;
     DeAllocateCursorHandle(Cursor);
+    FreeAndNil(Cursor);
   end;
 end;
 
 function TSQLConnection.GetPort: cardinal;
 begin
-  result := StrToIntDef(Params.Values['Port'],0);
+  result := StrToIntDef(Params.Values[PortParamName],0);
 end;
 
 procedure TSQLConnection.SetOptions(AValue: TSQLConnectionOptions);
@@ -1528,9 +1539,9 @@ end;
 procedure TSQLConnection.SetPort(const AValue: cardinal);
 begin
   if AValue<>0 then
-    Params.Values['Port']:=IntToStr(AValue)
-  else with params do if IndexOfName('Port') > -1 then
-    Delete(IndexOfName('Port'));
+    Params.Values[PortParamName]:=IntToStr(AValue)
+  else with params do if IndexOfName(PortParamName) > -1 then
+    Delete(IndexOfName(PortParamName));
 end;
 
 function TSQLConnection.AttemptCommit(trans: TSQLHandle): boolean;
@@ -2016,7 +2027,8 @@ begin
      if (sql_where<>'') then
        sql_where:=sql_where + ' and ';
      sql_where:= sql_where + '(' + FieldNameQuoteChars[0] + F.FieldName + FieldNameQuoteChars[1];
-     if F.OldValue = NULL then
+     // primary key normally cannot be null
+     if Assigned(F.Dataset) and F.Dataset.Active and (F.OldValue = NULL) then
         sql_where :=  sql_where + ' is null '
      else
         sql_where :=  sql_where +'= :"' + 'OLD_' + F.FieldName + '"';
@@ -2310,6 +2322,11 @@ begin
       DatabaseErrorFmt(SErrImplicitConnect,[Name]);
     Connected:=True;
     end;
+end;
+
+function TSQLConnection.PortParamName: string;
+begin
+  Result := 'Port';
 end;
 
 procedure TSQLConnection.CreateDB;
@@ -3120,7 +3137,7 @@ begin
       UpdateServerIndexDefs;
 
     FStatement.Execute;
-    if not Cursor.FSelectable then
+    if (Cursor=nil) or (not Cursor.FSelectable) then
       DatabaseError(SErrNoSelectStatement,Self);
 
     // InternalInitFieldDef is only called after a prepare. i.e. not twice if

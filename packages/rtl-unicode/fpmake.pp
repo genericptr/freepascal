@@ -12,15 +12,17 @@ Const
   // in workable state atm.
   UnixLikes = AllUnixOSes -[QNX];
 
-  CollationOSes = [aix,android,darwin,emx,freebsd,go32v2,linux,netbsd,openbsd,os2,solaris,win32,win64,dragonfly,haiku];
-  CPUnits       = [aix,amiga,aros,android,beos,darwin,iphonesim,emx,gba,nds,freebsd,go32v2,haiku,linux,morphos,netbsd,netware,netwlibc,openbsd,os2,solaris,watcom,wii,win32,win64,wince,dragonfly];
+  CollationOSes = [aix,android,darwin,emx,freebsd,go32v2,linux,netbsd,openbsd,os2,solaris,win32,win64,dragonfly,haiku,freertos,watcom];
+  CPUnits       = [aix,amiga,aros,android,beos,darwin,iphonesim,ios,emx,gba,nds,freebsd,go32v2,haiku,linux,morphos,netbsd,netware,netwlibc,openbsd,os2,solaris,watcom,wii,win32,win64,wince,dragonfly,freertos];
   utf8bidiOSes  = [netware,netwlibc];
   freebidiOSes  = [netware,netwlibc];
+  GraphemeBreakPropertyOSes = AllOSes-[embedded,zxspectrum,msxdos,amstradcpc];
+  EastAsianWidthOSes        = AllOSes-[embedded,zxspectrum,msxdos,amstradcpc];
 
 // Character not movable because fpwidestring depends on it.
 //  CharacterOSes = [android,darwin,freebsd,linux,netbsd,openbsd,solaris,win32,win64,dragonfly];
 
-  UnicodeAllOSes =   CollationOSes + utf8bidiOSes + freebidiOSes + CPUnits;
+  UnicodeAllOSes =   CollationOSes + utf8bidiOSes + freebidiOSes + CPUnits + GraphemeBreakPropertyOSes + EastAsianWidthOSes;
 
 // Amiga has a crt in its RTL dir, but it is commented in the makefile
 
@@ -79,6 +81,10 @@ begin
         AddInclude('collation_ru_le.inc');
       end;
     T:=P.Targets.AddImplicitUnit('collation_de.pas',CollationOSes);
+    with T.Dependencies do
+      begin
+        AddInclude('collation_de_le.inc');
+      end;
     T:=P.Targets.AddImplicitUnit('collation_ja.pas',CollationOSes);
     with T.Dependencies do
       begin
@@ -134,6 +140,18 @@ begin
     T:=P.Targets.AddImplicitUnit('cp950.pas',CPUnits);
 
 //    T:=P.Targets.AddUnit('character.pp',characterOSes);
+
+    T:=P.Targets.AddUnit('graphemebreakproperty.pp',GraphemeBreakPropertyOSes);
+    with T.Dependencies do
+      begin
+        AddInclude('graphemebreakproperty_code.inc');
+      end;
+
+    T:=P.Targets.AddUnit('eastasianwidth.pp',EastAsianWidthOSes);
+    with T.Dependencies do
+      begin
+        AddInclude('eastasianwidth_code.inc');
+      end;
   end
 end;
 

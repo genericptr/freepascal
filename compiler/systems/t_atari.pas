@@ -73,7 +73,7 @@ begin
      end
     else
      begin
-      ExeCmd[1]:='vlink -b ataritos $FLAGS $GCSECTIONS $OPT $STRIP -o $EXE -T $RES';
+      ExeCmd[1]:='vlink -b ataritos $FLAGS $GCSECTIONS $OPT $STRIP $MAP -o $EXE -T $RES';
      end;
    end;
 end;
@@ -104,6 +104,8 @@ begin
 
   { Open link.res file }
   LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
+  if UseVLink and (source_info.dirsep <> '/') then
+    LinkRes.fForceUseForwardSlash:=true;
 
   { Write path to search libraries }
   HPath:=TCmdStrListItem(current_module.locallibrarysearchpath.First);
@@ -215,13 +217,17 @@ var
   DynLinkStr : string;
   GCSectionsStr : string;
   FlagsStr : string;
+  MapStr: string;
   ExeName: string;
 begin
   StripStr:='';
   GCSectionsStr:='';
   DynLinkStr:='';
+  MapStr:='';
   FlagsStr:='-tos-flags fastload,fastram';
 
+  if UseVlink and (cs_link_map in current_settings.globalswitches) then
+    MapStr:='-M'+maybequoted(ScriptFixFileName(current_module.mapfilename));
   if (cs_link_strip in current_settings.globalswitches) then
     StripStr:='-s';
   if rlinkpath<>'' then
@@ -242,6 +248,7 @@ begin
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
   Replace(cmdstr,'$EXE',maybequoted(ScriptFixFileName(ExeName)));
   Replace(cmdstr,'$RES',maybequoted(ScriptFixFileName(outputexedir+Info.ResName)));
+  Replace(cmdstr,'$MAP',MapStr);
   Replace(cmdstr,'$FLAGS',FlagsStr);
   Replace(cmdstr,'$STRIP',StripStr);
   Replace(cmdstr,'$GCSECTIONS',GCSectionsStr);

@@ -170,7 +170,7 @@ uses
 
       { Number of first imaginary register }
 {$ifdef x86_64}
-      first_mm_imreg     = $10;
+      first_mm_imreg     = $20;
 {$else x86_64}
       first_mm_imreg     = $08;
 {$endif x86_64}
@@ -385,11 +385,15 @@ topsize2memsize: array[topsize] of integer =
     function requires_fwait_on_8087(op: TAsmOp): boolean;
 {$endif i8086}
 
+   function UseAVX: boolean;
+   function UseAVX512: boolean;
+
 implementation
 
     uses
       globtype,
-      rgbase,verbose;
+      rgbase,verbose,
+      cpuinfo;
 
     const
     {$if defined(x86_64)}
@@ -463,12 +467,14 @@ implementation
               else
                 internalerror(2009071902);
             end;
-          OS_M128,OS_MS128,OS_MF128,OS_MD128:
+          OS_M128:
             cgsize2subreg:=R_SUBMMX;
-          OS_M256,OS_MS256,OS_MF256,OS_MD256:
+          OS_M256:
             cgsize2subreg:=R_SUBMMY;
-          OS_M512,OS_MS512,OS_MF512,OS_MD512:
+          OS_M512:
             cgsize2subreg:=R_SUBMMZ;
+          OS_S128,
+          OS_128,
           OS_NO:
             { error message should have been thrown already before, so avoid only
               an internal error }
@@ -481,7 +487,7 @@ implementation
 
     function reg_cgsize(const reg: tregister): tcgsize;
       const subreg2cgsize:array[Tsubregister] of Tcgsize =
-            (OS_NO,OS_8,OS_8,OS_16,OS_32,OS_64,OS_NO,OS_NO,OS_NO,OS_F32,OS_F64,OS_NO,OS_M128,OS_M256,OS_M512,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO);
+            (OS_NO,OS_8,OS_8,OS_16,OS_32,OS_64,OS_NO,OS_NO,OS_NO,OS_F32,OS_F64,OS_NO,OS_M128,OS_M256,OS_M512,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO,OS_NO);
       begin
         case getregtype(reg) of
           R_INTREGISTER :
@@ -505,11 +511,11 @@ implementation
             end;
           R_ADDRESSREGISTER:
             case reg of
-              NR_K0..NR_K7: reg_cgsize:=OS_64;
+              NR_K0..NR_K7: reg_cgsize:=OS_NO;
               else internalerror(2003031801);
             end;
           else
-            internalerror(2003031801);
+            internalerror(2003031802);
           end;
         end;
 
@@ -517,7 +523,7 @@ implementation
     function reg2opsize(r:Tregister):topsize;
       const
         subreg2opsize : array[tsubregister] of topsize =
-          (S_NO,S_B,S_B,S_W,S_L,S_Q,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO);
+          (S_NO,S_B,S_B,S_W,S_L,S_Q,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO);
       begin
         reg2opsize:=S_L;
         case getregtype(r) of
@@ -591,7 +597,7 @@ implementation
       begin
         result := flags_2_cond[f];
         if (result=C_None) then
-          InternalError(2014041301);
+          InternalError(2014041302);
       end;
 
 
@@ -946,6 +952,18 @@ implementation
         end;
       end;
 {$endif i8086}
+
+
+  function UseAVX: boolean;
+    begin
+      Result:={$ifdef i8086}false{$else i8086}(FPUX86_HAS_AVXUNIT in fpu_capabilities[current_settings.fputype]){$endif i8086};
+    end;
+
+
+  function UseAVX512: boolean;
+    begin
+      Result:={$ifdef i8086}false{$else i8086}UseAVX and (FPUX86_HAS_AVX512F in fpu_capabilities[current_settings.fputype]){$endif i8086};
+    end;
 
 
 end.

@@ -61,6 +61,9 @@ interface
        tcaseblock = record
           { label (only used in pass_generate_code) }
           blocklabel : tasmlabel;
+{$ifdef WASM}
+          BlockBr : Integer;
+{$endif WASM}
 
           { shortcut - set to true if blocklabel isn't actually unique to the
             case block due to one of the following conditions:
@@ -247,6 +250,7 @@ implementation
 
       begin
          result:=nil;
+
          resultdef:=pasbool1type;
          typecheckpass(right);
          set_varstate(right,vs_read,[vsf_must_be_valid]);
@@ -257,7 +261,6 @@ implementation
          if is_array_constructor(right.resultdef) then
           begin
             arrayconstructor_to_set(right);
-            firstpass(right);
             if codegenerror then
              exit;
           end;
@@ -269,6 +272,13 @@ implementation
 
          if not assigned(left.resultdef) then
            internalerror(20021126);
+
+         { avoid any problems with type parameters later on }
+         if is_typeparam(left.resultdef) or is_typeparam(right.resultdef) then
+           begin
+             resultdef:=cundefinedtype;
+             exit;
+           end;
 
          t:=self;
          if isbinaryoverloaded(t,[]) then
@@ -374,6 +384,25 @@ implementation
                      exit;
                    end;
                end;
+           end
+         { a in [a] => true, if a has no side effects }
+         else if (right.nodetype=addn) and
+           (taddnode(right).left.nodetype=setconstn) and
+           (tsetconstnode(taddnode(right).left).elements=0) and
+           (taddnode(right).right.nodetype=setelementn) and
+           (tsetelementnode(taddnode(right).right).right=nil) and
+           ((tsetelementnode(taddnode(right).right).left.isequal(left)) or
+            (
+              (tsetelementnode(taddnode(right).right).left.nodetype=typeconvn) and
+              (ttypeconvnode(tsetelementnode(taddnode(right).right).left).left.isequal(left))
+            )
+           ) and
+           not(might_have_sideeffects(left,[mhs_exceptions])) then
+           begin
+             t:=cordconstnode.create(1, pasbool1type, true);
+             typecheckpass(t);
+             result:=t;
+             exit;
            end;
       end;
 
@@ -424,8 +453,9 @@ implementation
          { both types must be compatible }
          if compare_defs(left.resultdef,right.resultdef,left.nodetype)=te_incompatible then
            IncompatibleTypes(left.resultdef,right.resultdef);
-         { Check if only when its a constant set }
-         if (left.nodetype=ordconstn) and (right.nodetype=ordconstn) then
+         { check if only when its a constant set and
+           ignore range nodes which are generic parameter derived }
+         if not (nf_generic_para in flags) and (left.nodetype=ordconstn) and (right.nodetype=ordconstn) then
           begin
             { upper limit must be greater or equal than lower limit }
             if (tordconstnode(left).value>tordconstnode(right).value) and
@@ -1080,7 +1110,7 @@ implementation
           end;
         if assigned(elseblock) then
           begin
-            WriteLn(T, PrintNodeIndention, '<block id="else">');;
+            WriteLn(T, PrintNodeIndention, '<block id="else">');
             PrintNodeIndent;
             XMLPrintNode(T, ElseBlock);
             PrintNodeUnindent;

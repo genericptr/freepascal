@@ -97,7 +97,7 @@ implementation
       systems,
       verbose,globals,cutils,compinnr,
       globtype,constexp,
-      symconst,symtype,symdef,
+      symconst,symtype,symdef,symcpu,
       defcmp,defutil,
       htypechk,pass_1,
       cgbase,
@@ -131,7 +131,10 @@ implementation
               end;
             if rv = 0 then
               begin
-                Message(parser_e_division_by_zero);
+                { if the node is derived from a generic const parameter
+                  then don't issue an error }
+                if not (nf_generic_para in flags) then
+                  Message(parser_e_division_by_zero);
                 { recover }
                 tordconstnode(right).value := 1;
               end;
@@ -151,7 +154,14 @@ implementation
                  Message(cg_e_mod_only_defined_for_pos_quotient);
                  { recover }
                  tordconstnode(right).value := 1;
-               end;
+               end
+            else if (rv=-1) and
+              (nodetype=modn) then
+              begin
+                result:=cordconstnode.create(0,left.resultdef,true);
+                left:=nil;
+                exit;
+              end;
           end;
 
         if is_constintnode(right) and is_constintnode(left) then
@@ -273,19 +283,32 @@ implementation
              (not is_signed(ld) and
               (rd.size >= ld.size))) then
            begin
-             inserttypeconv(left,right.resultdef);
-             ld:=torddef(left.resultdef);
-           end;
-         if (ld.ordtype in [u8bit,u16bit,u32bit,u64bit]) and
+             if rd.size<uinttype.size then
+               begin
+                 inserttypeconv(left,uinttype);
+                 inserttypeconv(right,uinttype);
+               end
+             else
+               inserttypeconv(left,rd);
+             resultdef:=right.resultdef;
+           end
+         else if (ld.ordtype in [u8bit,u16bit,u32bit,u64bit]) and
             ((is_constintnode(right) and
               (tordconstnode(right).value >= 0) and
               (tordconstnode(right).value <= get_max_value(ld))) or
              (not is_signed(rd) and
               (ld.size >= rd.size))) then
-          begin
-            inserttypeconv(right,left.resultdef);
-            rd:=torddef(right.resultdef);
-          end;
+           begin
+             if ld.size<uinttype.size then
+               begin
+                 inserttypeconv(left,uinttype);
+                 inserttypeconv(right,uinttype);
+               end
+             else
+               inserttypeconv(right,ld);
+             resultdef:=left.resultdef;
+           end
+         else
 
          { when there is one currency value, everything is done
            using currency }
@@ -450,7 +473,7 @@ implementation
         if result.resultdef.typ<>orddef then
           internalerror(2013031701);
         if resultdef.typ<>orddef then
-          internalerror(2013031701);
+          internalerror(2013031702);
         if torddef(result.resultdef).ordtype <> torddef(resultdef).ordtype then
           inserttypeconv(result,resultdef);
       end;
@@ -823,7 +846,7 @@ implementation
 {$elseif defined(cpu16bitalu) or defined(cpu8bitalu)}
                      inserttypeconv(left,get_common_intdef(torddef(left.resultdef),torddef(uinttype),true));
 {$else}
-                     internalerror(2013031301);
+                     internalerror(2013031302);
 {$endif}
                    end
                end;
@@ -943,9 +966,17 @@ implementation
            exit;
 
          resultdef:=left.resultdef;
-         if (left.resultdef.typ=floatdef) or
-            is_currency(left.resultdef) then
+         if is_currency(left.resultdef) then
            begin
+           end
+         else if left.resultdef.typ=floatdef then
+           begin
+             if not(tfloatdef(left.resultdef).floattype in [s64comp,s64currency]) and
+               (cs_excessprecision in current_settings.localswitches) then
+               begin
+                 inserttypeconv(left,pbestrealtype^);
+                 resultdef:=left.resultdef
+               end;
            end
 {$ifdef SUPPORT_MMX}
          else if (cs_mmx in current_settings.localswitches) and
@@ -1176,52 +1207,8 @@ implementation
           begin
              v:=tordconstnode(left).value;
              def:=left.resultdef;
-             case torddef(left.resultdef).ordtype of
-               pasbool1,
-               pasbool8,
-               pasbool16,
-               pasbool32,
-               pasbool64:
-                 v:=byte(not(boolean(int64(v))));
-               bool8bit,
-               bool16bit,
-               bool32bit,
-               bool64bit:
-                 begin
-                   if v=0 then
-                     v:=-1
-                   else
-                     v:=0;
-                 end;
-               uchar,
-               uwidechar,
-               u8bit,
-               s8bit,
-               u16bit,
-               s16bit,
-               s32bit,
-               u32bit,
-               s64bit,
-               u64bit:
-                 begin
-                   { unsigned, equal or bigger than the native int size? }
-                   if (torddef(left.resultdef).ordtype in [u64bit,u32bit,u16bit,u8bit,uchar,uwidechar]) and
-                      (is_nativeord(left.resultdef) or is_oversizedord(left.resultdef)) then
-                     begin
-                       { Delphi-compatible: not dword = dword (not word = longint) }
-                       { Extension: not qword = qword                              }
-                       v:=qword(not qword(v));
-                       { will be truncated by the ordconstnode for u32bit }
-                     end
-                   else
-                     begin
-                       v:=int64(not int64(v));
-                       def:=get_common_intdef(torddef(left.resultdef),torddef(sinttype),false);
-                     end;
-                 end;
-               else
-                 CGMessage(type_e_mismatch);
-             end;
+             if not calc_not_ordvalue(v,def) then
+               CGMessage(type_e_mismatch);
              { not-nodes are not range checked by the code generator -> also
                don't range check while inlining; the resultdef is a bit tricky
                though: the node's resultdef gets changed in most cases compared
@@ -1317,12 +1304,12 @@ implementation
            begin
              if (expectloc in [LOC_REFERENCE,LOC_CREFERENCE,LOC_CREGISTER]) then
                expectloc:=LOC_REGISTER;
-            { before loading it into flags we need to load it into
-              a register thus 1 register is need PM }
-{$ifdef cpuflags}
+             { xtensa has boolean registers which are treateed as flags but they
+               are not used for boolean expressions }
+{$if defined(cpuflags) and not(defined(xtensa))}
              if left.expectloc<>LOC_JUMP then
                expectloc:=LOC_FLAGS;
-{$endif def cpuflags}
+{$endif defined(cpuflags) and not(defined(xtensa)}
            end
          else
 {$ifdef SUPPORT_MMX}

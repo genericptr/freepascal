@@ -83,15 +83,13 @@ end;
 Function TStrings.GetSkipLastLineBreak : Boolean;
 
 begin
-  CheckSpecialChars;
-  Result:=FSkipLastLineBreak;
+  Result:=not TrailingLineBreak;
 end;
 
 procedure TStrings.SetSkipLastLineBreak(const AValue : Boolean);
 
 begin
-  CheckSpecialChars;
-  FSkipLastLineBreak:=AValue;
+  TrailingLineBreak:=not AValue;
 end;
 
 Function TStrings.GetLBS : TTextLineBreakStyle;
@@ -194,6 +192,19 @@ begin
   end;
 end;
 
+function TStrings.GetLineBreakCharLBS: string;
+begin
+  CheckSpecialChars;
+  if FLineBreak<>sLineBreak then
+    Result:=FLineBreak
+  else
+    Case FLBS of
+      tlbsLF   : Result:=#10;
+      tlbsCRLF : Result:=#13#10;
+      tlbsCR   : Result:=#13;
+    end;
+end;
+
 function TStrings.GetMissingNameValueSeparatorAction: TMissingNameValueSeparatorAction;
 begin
   CheckSpecialChars;
@@ -217,7 +228,6 @@ begin
     BreakChars:=[#0,QuoteChar,Delimiter]
   else  
     BreakChars:=[#0..' ',QuoteChar,Delimiter];
-
   // Check for break characters and quote if required.
   For i:=0 to count-1 do
     begin
@@ -231,7 +241,7 @@ begin
         inc(p);
       DoQuote:=(p<>pchar(S)+length(S));  
       end;
-    if DoQuote then
+    if DoQuote and (QuoteChar<>#0) then
       Result:=Result+QuoteString(S,QuoteChar)
     else
       Result:=Result+S;
@@ -239,7 +249,7 @@ begin
       Result:=Result+Delimiter;
     end;
   // Quote empty string:
-  If (Length(Result)=0) and (Count=1) then
+  If (Length(Result)=0) and (Count=1) and (QuoteChar<>#0) then
     Result:=QuoteChar+QuoteChar;
 end;
 
@@ -446,9 +456,24 @@ begin
   GetNameValue(Index,Result,V);
 end;
 
+function TStrings.GetStrictDelimiter: Boolean;
+begin
+  Result:=soStrictDelimiter in FOptions;
+end;
+
 function TStrings.GetTrailingLineBreak: Boolean;
 begin
-  Result:=Not SkipLastLineBreak;
+  Result:=soTrailingLineBreak in FOptions;
+end;
+
+function TStrings.GetUseLocale: Boolean;
+begin
+  Result:=soUseLocale in FOptions;
+end;
+
+function TStrings.GetWriteBOM: Boolean;
+begin
+  Result:=soWriteBOM in FOptions;
 end;
 
 Function TStrings.GetValue(const Name: string): string;
@@ -506,7 +531,7 @@ Procedure TStrings.SetDelimitedText(const AValue: string);
 
 begin
   CheckSpecialChars;
-  DoSetDelimitedText(aValue,True,FStrictDelimiter,FQuoteChar,FDelimiter);
+  DoSetDelimitedText(aValue,True,StrictDelimiter,FQuoteChar,FDelimiter);
 end;
 
 Procedure TStrings.DoSetDelimitedText(const AValue: string; DoClear,aStrictDelimiter : Boolean; aQuoteChar,aDelimiter : Char);
@@ -521,100 +546,78 @@ var
     Add(StringReplace(Copy(AValue,i+1,j-i-1),aQuoteChar+aQuoteChar,aQuoteChar, [rfReplaceAll]));
   end;
 
+  Function CheckQuoted : Boolean;
+  { Paraphrased from Delphi XE2 help:
+    Strings must be separated by Delimiter characters or spaces.
+    They may be enclosed in QuoteChars.
+    QuoteChars in the string must be repeated to distinguish them from the QuoteChars enclosing the string.
+  }
+
+  begin
+    Result:=(AValue[i]=aQuoteChar) and (aQuoteChar<>#0);
+    If Not Result then
+      exit;
+    // next string is quoted
+    j:=i+1;
+    while (j<=len) and
+          ((AValue[j]<>aQuoteChar) or
+          ((j+1<=len) and (AValue[j+1]=aQuoteChar))) do
+      begin
+      if (j<=len) and (AValue[j]=aQuoteChar) then
+        inc(j,2)
+      else
+        inc(j);
+      end;
+    AddQuoted;
+    i:=j+1;
+  end;
+
+  Procedure MaybeSkipSpaces; inline;
+
+  begin
+    if Not aStrictDelimiter then
+      while (i<=len) and (Ord(AValue[i])<=Ord(' ')) do
+        inc(i);
+  end;
+
 begin
- BeginUpdate;
-
- i:=1;
- j:=1;
- aNotFirst:=false;
-
- { Paraphrased from Delphi XE2 help:
- Strings must be separated by Delimiter characters or spaces.
- They may be enclosed in QuoteChars.
- QuoteChars in the string must be repeated to distinguish them from the QuoteChars enclosing the string.
- }
- try
-  if DoClear then
-    Clear;
-  len:=length(AValue);
-  If aStrictDelimiter then
-    begin
-    while i<=Len do begin
-     // skip delimiter
-     if aNotFirst and (i<=len) and (AValue[i]=aDelimiter) then
-       inc(i);
-
-     // read next string
-     if i<=len then begin
-      if AValue[i]=aQuoteChar then begin
-       // next string is quoted
-       j:=i+1;
-       while (j<=len) and
-             ((AValue[j]<>aQuoteChar) or
-              ((j+1<=len) and (AValue[j+1]=aQuoteChar))) do
+  BeginUpdate;
+  i:=1;
+  j:=1;
+  aNotFirst:=false;
+  try
+    if DoClear then
+      Clear;
+    len:=length(AValue);
+    while i<=len do
+      begin
+      // skip delimiter
+      if aNotFirst and (i<=len) and (AValue[i]=aDelimiter) then
+        inc(i);
+      MaybeSkipSpaces;
+      // read next string
+      if i>len then
         begin
-        if (j<=len) and (AValue[j]=aQuoteChar) then
-          inc(j,2)
-        else
-          inc(j);
+        if aNotFirst then Add('');
+        end
+      else
+        begin
+        // next string is quoted
+        if not CheckQuoted then
+          begin
+          // next string is not quoted; read until control character/space/delimiter
+          j:=i;
+          while (j<=len) and
+                (aStrictDelimiter or (Ord(AValue[j])>Ord(' '))) and
+                (AValue[j]<>aDelimiter) do
+            inc(j);
+          Add( Copy(AValue,i,j-i));
+          i:=j;
+          end;
         end;
-       AddQuoted;
-       i:=j+1;
-      end else begin
-       // next string is not quoted; read until delimiter
-       j:=i;
-       while (j<=len) and
-             (AValue[j]<>aDelimiter) do inc(j);
-       Add( Copy(AValue,i,j-i));
-       i:=j;
-      end;
-     end else begin
-      if aNotFirst then Add('');
-     end;
-     aNotFirst:=true;
-    end;
-    end
-  else 
-    begin
-    while i<=len do begin
-     // skip delimiter
-     if aNotFirst and (i<=len) and (AValue[i]=aDelimiter) then inc(i);
-
-     // skip spaces
-     while (i<=len) and (Ord(AValue[i])<=Ord(' ')) do inc(i);
-    
-     // read next string
-     if i<=len then begin
-      if AValue[i]=aQuoteChar then begin
-       // next string is quoted
-       j:=i+1;
-       while (j<=len) and
-             ( (AValue[j]<>aQuoteChar) or
-               ( (j+1<=len) and (AValue[j+1]=aQuoteChar) ) ) do begin
-        if (j<=len) and (AValue[j]=aQuoteChar) then inc(j,2)
-                                                          else inc(j);
-       end;
-       AddQuoted;
-       i:=j+1;
-      end else begin
-       // next string is not quoted; read until control character/space/delimiter
-       j:=i;
-       while (j<=len) and
-             (Ord(AValue[j])>Ord(' ')) and
-             (AValue[j]<>aDelimiter) do inc(j);
-       Add( Copy(AValue,i,j-i));
-       i:=j;
-      end;
-     end else begin
-      if aNotFirst then Add('');
-     end;
-
-     // skip spaces
-     while (i<=len) and (Ord(AValue[i])<=Ord(' ')) do inc(i);
-
-     aNotFirst:=true;
-    end;
-    end;
+      MaybeSkipSpaces;
+      aNotFirst:=true;
+      end; // While I<=Len
  finally
    EndUpdate;
  end;
@@ -639,9 +642,37 @@ Procedure TStrings.SetStringsAdapter(const Value: IStringsAdapter);
 begin
 end;
 
+procedure TStrings.SetStrictDelimiter(AValue: Boolean);
+begin
+  if AValue then
+    Include(FOptions,soStrictDelimiter)
+  else
+    Exclude(FOptions,soStrictDelimiter);
+end;
+
 procedure TStrings.SetTrailingLineBreak(AValue: Boolean);
 begin
-  SkipLastLineBreak:=Not aValue;
+  if AValue then
+    Include(FOptions,soTrailingLineBreak)
+  else
+    Exclude(FOptions,soTrailingLineBreak);
+end;
+
+procedure TStrings.SetUseLocale(AValue: Boolean);
+begin
+  if AValue then
+    Include(FOptions,soUseLocale)
+  else
+    Exclude(FOptions,soUseLocale);
+end;
+
+
+procedure TStrings.SetWriteBOM(AValue: Boolean);
+begin
+  if AValue then
+    Include(FOptions,soWriteBOM)
+  else
+    Exclude(FOptions,soWriteBOM);
 end;
 
 
@@ -684,6 +715,13 @@ begin
   for i := 0 to Count - 1 do
     Writer.WriteString(Strings[i]);
   Writer.WriteListEnd;
+end;
+
+
+
+function TStrings.CompareStrings(const s1,s2 : string) : Integer;
+begin
+  Result := DoCompareText(s1, s2);
 end;
 
 
@@ -739,16 +777,8 @@ Var P : Pchar;
     S,NL : String;
 
 begin
-  CheckSpecialChars;
+  NL:=GetLineBreakCharLBS;
   // Determine needed place
-  if FLineBreak<>sLineBreak then
-    NL:=FLineBreak
-  else
-    Case FLBS of
-      tlbsLF   : NL:=#10;
-      tlbsCRLF : NL:=#13#10;
-      tlbsCR   : NL:=#13;
-    end;
   L:=0;
   NLS:=Length(NL);
   For I:=0 to count-1 do
@@ -946,7 +976,7 @@ end;
 procedure TStrings.AddDelimitedText(const S: String);
 begin
   CheckSpecialChars;
-  DoSetDelimitedText(S,False,FStrictDelimiter,FQuoteChar,FDelimiter);
+  DoSetDelimitedText(S,False,StrictDelimiter,FQuoteChar,FDelimiter);
 end;
 
 Procedure TStrings.SetUpdateState(Updating: Boolean);
@@ -966,13 +996,50 @@ begin
   inherited destroy;
 end;
 
+function TStrings.ToObjectArray: TObjectDynArray;
+
+begin
+  Result:=ToObjectArray(0,Count-1);
+end;
+
+function TStrings.ToObjectArray(aStart,aEnd : Integer): TObjectDynArray;
+Var
+  I : Integer;
+
+begin
+  Result:=Nil;
+  if aStart>aEnd then exit;
+  SetLength(Result,aEnd-aStart+1);
+  For I:=aStart to aEnd do
+    Result[i-aStart]:=Objects[i];
+end;
+
+function TStrings.ToStringArray: TStringDynArray;
+
+begin
+  Result:=ToStringArray(0,Count-1);
+end;
+
+function TStrings.ToStringArray(aStart,aEnd : Integer): TStringDynArray;
+
+Var
+  I : Integer;
+
+begin
+  Result:=Nil;
+  if aStart>aEnd then exit;
+  SetLength(Result,aEnd-aStart+1);
+  For I:=aStart to aEnd do
+    Result[i-aStart]:=Strings[i];
+end;
+
 
 constructor TStrings.Create;
 begin
   inherited Create;
   FDefaultEncoding:=TEncoding.Default;
   FEncoding:=nil;
-  FWriteBOM:=True;
+  FOptions := [soTrailingLineBreak,soUseLocale,soPreserveBOM];
   FAlwaysQuote:=False;
 end;
 
@@ -1068,6 +1135,18 @@ begin
   end;
 end;
 
+procedure TStrings.SetStrings(TheStrings: TStrings);
+
+begin
+  AddStrings(TheStrings,True);
+end;
+
+procedure TStrings.SetStrings(TheStrings: array of string);
+
+begin
+  AddStrings(TheStrings,True);
+end;
+
 Procedure TStrings.Assign(Source: TPersistent);
 
 Var
@@ -1086,7 +1165,7 @@ begin
       FNameValueSeparator:=S.FNameValueSeparator;
       FLBS:=S.FLBS;
       FLineBreak:=S.FLineBreak;
-      FWriteBOM:=S.FWriteBOM;
+      FOptions:=S.FOptions;
       DefaultEncoding:=S.DefaultEncoding;
       SetEncoding(S.Encoding);
       AddStrings(S);
@@ -1181,7 +1260,10 @@ end;
 
 Function TStrings.DoCompareText(const s1,s2 : string) : PtrInt;
   begin
-    result:=CompareText(s1,s2);
+    if UseLocale then
+      result:=AnsiCompareText(s1,s2)
+    else
+      result:=CompareText(s1,s2);
   end;
 
 
@@ -1342,6 +1424,8 @@ begin
   finally
     EndUpdate;
   end;
+  if soPreserveBOM in FOptions then
+    WriteBOM:=False;
 end;
 
 
@@ -1376,6 +1460,8 @@ begin
     SetLength(Buffer,BufLen-BufDelta+BytesRead);
     PreambleLength:=TEncoding.GetBufferEncoding(Buffer,AEncoding,FDefaultEncoding);
     T:=AEncoding.GetAnsiString(Buffer,PreambleLength,Length(Buffer)-PreambleLength);
+    if soPreserveBOM in FOptions then
+      WriteBOM:=PreambleLength>0;
     SetEncoding(AEncoding);
     SetLength(Buffer,0);
     SetTextStr(T);
@@ -1443,6 +1529,21 @@ end;
 
 
 
+Procedure TStrings.SaveToFile(const FileName: string; IgnoreEncoding : Boolean);
+
+Var TheStream : TFileStream;
+
+begin
+  TheStream:=TFileStream.Create(FileName,fmCreate);
+  try
+    SaveToStream(TheStream, IgnoreEncoding);
+  finally
+    TheStream.Free;
+  end;
+end;
+
+
+
 Procedure TStrings.SaveToFile(const FileName: string; AEncoding: TEncoding);
 
 Var TheStream : TFileStream;
@@ -1459,17 +1560,34 @@ end;
 
 
 Procedure TStrings.SaveToStream(Stream: TStream);
-Var
-  S : String;
 begin
-  if Encoding<>nil then
-    SaveToStream(Stream,Encoding)
-  else
-  begin
-    S:=Text;
-    if S = '' then Exit;
-    Stream.WriteBuffer(Pointer(S)^,Length(S));
-  end;
+  SaveToStream(Stream,False)
+end;
+
+
+
+Procedure TStrings.SaveToStream(Stream: TStream; IgnoreEncoding: Boolean);
+Var
+  I,L,NLS : SizeInt;
+  S,NL : String;
+
+begin
+  if not IgnoreEncoding then
+    begin
+    SaveToStream(Stream,FEncoding);
+    Exit;
+    end;
+  NL:=GetLineBreakCharLBS;
+  NLS:=Length(NL)*SizeOf(Char);
+  For i:=0 To count-1 do
+    begin
+    S:=Strings[I];
+    L:=Length(S);
+    if L<>0 then
+      Stream.WriteBuffer(S[1], L*SizeOf(Char));
+    if (I<Count-1) or Not SkipLastLineBreak then
+      Stream.WriteBuffer(NL[1], NLS);
+    end;
 end;
 
 
@@ -1477,20 +1595,34 @@ end;
 
 Procedure TStrings.SaveToStream(Stream: TStream; AEncoding: TEncoding);
 
-Var B : TBytes;
+Var B,BNL : TBytes;
+    NL,S: string;
+    i,BNLS: SizeInt;
 
 begin
   if AEncoding=nil then
     AEncoding:=FDefaultEncoding;
-  if FWriteBOM then
+  if WriteBOM then
     begin
       B:=AEncoding.GetPreamble;
       if Length(B)>0 then
         Stream.WriteBuffer(B[0],Length(B));
     end;
-  B:=AEncoding.GetAnsiBytes(Text);
-  if Length(B)>0 then
-    Stream.WriteBuffer(B[0],Length(B));
+
+  NL := GetLineBreakCharLBS;
+  BNL:=AEncoding.GetAnsiBytes(NL);
+  BNLS:=Length(BNL);
+  For i:=0 To count-1 do
+    begin
+    S:=Strings[I];
+    if S<>'' then
+      begin
+      B:=AEncoding.GetAnsiBytes(S);
+      Stream.WriteBuffer(B[0],Length(B));
+      end;
+    if (I<Count-1) or Not SkipLastLineBreak then
+      Stream.WriteBuffer(BNL[0],BNLS);
+    end;
 end;
 
 
@@ -1848,15 +1980,18 @@ end;
 function TStringList.DoCompareText(const s1, s2: string): PtrInt;
 begin
   if FCaseSensitive then
-    result:=AnsiCompareStr(s1,s2)
-  else
-    result:=AnsiCompareText(s1,s2);
-end;
-
-
-function TStringList.CompareStrings(const s1,s2 : string) : Integer;
-begin
-  Result := DoCompareText(s1, s2);
+  begin
+    if UseLocale then
+      result:=AnsiCompareStr(s1,s2)
+    else
+      result:=CompareStr(s1,s2);
+  end else
+  begin
+    if UseLocale then
+      result:=AnsiCompareText(s1,s2)
+    else
+      result:=CompareText(s1,s2);
+  end;
 end;
 
 

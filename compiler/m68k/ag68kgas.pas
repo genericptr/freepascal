@@ -169,7 +169,7 @@ interface
       end;
 
 
-    function getopstr(var o:toper) : string;
+    function getopstr(size: topsize; var o:toper) : string;
       var
         i : tsuperregister;
       begin
@@ -220,10 +220,14 @@ interface
             getopstr:='#'+tostr(longint(o.val));
           top_realconst:
             begin
-              str(o.val_real,getopstr);
-              if getopstr[1]=' ' then
-                getopstr[1]:='+';
-              getopstr:='#0d'+getopstr;
+              case size of
+                S_FS:
+                  getopstr:='#0x'+hexstr(longint(single(o.val_real)),sizeof(single)*2);
+                S_FD:
+                  getopstr:='#0x'+hexstr(BestRealRec(o.val_real).Data,sizeof(bestreal)*2);
+              else
+                internalerror(2021020801);
+              end;
             end;
           else internalerror(200405021);
         end;
@@ -278,8 +282,11 @@ interface
             { old versions of GAS don't like PEA.L and LEA.L }
             result:=gas_op2str[op];
           A_SXX, A_FSXX, A_DBXX, A_DBRA:
-            { Scc/FScc is always BYTE, DBRA/DBcc is always WORD, doesn't need opsize (KB) }
-            result:=gas_op2str[op]+cond2str[taicpu(hp).condition];
+            begin
+              { Scc/FScc is always BYTE, DBRA/DBcc is always WORD, doesn't need opsize (KB) }
+              result:=gas_op2str[op];
+              replace(result,'xx',cond2str[taicpu(hp).condition]);
+            end;
           { fix me: a fugly hack to utilize GNU AS pseudo instructions for more optimal branching }
           A_JSR:
             result:='jbsr';
@@ -329,11 +336,12 @@ interface
                         sep:=#9
                       else
                       if (i=2) and
-                         (op in [A_DIVSL,A_DIVUL,A_MULS,A_MULU,A_DIVS,A_DIVU,A_REMS,A_REMU]) then
+                         ((op=A_DIVSL) or (op=A_DIVUL) or (op=A_MULS) or (op=A_MULU) or
+                          (op=A_DIVS) or (op=A_DIVU) or (op=A_REMS) or (op=A_REMU)) then
                         sep:=':'
                       else
                         sep:=',';
-                      s:=s+sep+getopstr(taicpu(hp).oper[i]^);
+                      s:=s+sep+getopstr(taicpu(hp).opsize,taicpu(hp).oper[i]^);
                     end;
                 end;
            end;
@@ -352,9 +360,10 @@ interface
             idtxt  : 'AS';
             asmbin : 'as';
             asmcmd : '$ARCH -o $OBJ $EXTRAOPT $ASM';
-            supported_targets : [system_m68k_macos,system_m68k_linux,system_m68k_PalmOS,system_m68k_netbsd,system_m68k_embedded];
+            supported_targets : [system_m68k_macosclassic,system_m68k_linux,system_m68k_PalmOS,system_m68k_netbsd,system_m68k_embedded];
             flags : [af_needar,af_smartlink_sections];
             labelprefix : '.L';
+            labelmaxlen : -1;
             comment : '# ';
             dollarsign: '$';
           );
@@ -368,6 +377,7 @@ interface
             supported_targets : [system_m68k_Amiga,system_m68k_Atari];
             flags : [af_needar];
             labelprefix : '.L';
+            labelmaxlen : -1;
             comment : '# ';
             dollarsign: '$';
           );

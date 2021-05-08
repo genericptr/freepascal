@@ -369,7 +369,7 @@ implementation
                   outppu.putstring(s);
                   outppu.putlongint(m);
                 end;
-               current_module.linkotherofiles.add(s,link_always);;
+               current_module.linkotherofiles.add(s,link_always);
              end;
             if not MakeStatic then
              outppu.writeentry(b);
@@ -532,7 +532,7 @@ implementation
     begin
       pkgentry:=ppackageentry(packagelist.find(package.packagename^));
       if not assigned(pkgentry) then
-        internalerror(2015100301);
+        internalerror(2015100302);
       inc(pkgentry^.usedunits);
     end;
 

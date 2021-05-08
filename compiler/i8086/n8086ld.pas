@@ -134,7 +134,7 @@ implementation
             { make sure hregister can't allocate the register necessary for the parameter }
             pvd:=search_system_type('TRELOCATETHREADVARHANDLER').typedef;
             if pvd.typ<>procvardef then
-              internalerror(2012120901);
+              internalerror(2012120902);
             paraloc1.init;
             paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,tprocvardef(pvd),1,paraloc1);
             hregister:=hlcg.getaddressregister(current_asmdata.CurrAsmList,pvd);
@@ -211,9 +211,8 @@ implementation
                      (not (vo_is_external in gvs.varoptions) and gvs.Owner.iscurrentunit) then
                     begin
                       inherited pass_generate_code;
-                      if (location.loc<>LOC_REFERENCE) and (location.loc<>LOC_CREFERENCE) then
-                        internalerror(2017121101);
-                      location.reference.segment:=NR_DS;
+                      if location.loc in [LOC_REFERENCE,LOC_CREFERENCE] then
+                        location.reference.segment:=NR_DS;
                       exit;
                     end;
 

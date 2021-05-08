@@ -61,27 +61,9 @@
 
 type
   PReal = ^Real;
-{ also necessary for Int() on systems with 64bit floats (JM) }
-{$ifndef FPC_SYSTEM_HAS_float64}
-{$ifdef ENDIAN_LITTLE}
-  float64 = record
-{$ifndef FPC_DOUBLE_HILO_SWAPPED}
-    low,high: longint;
-{$else}
-    high,low: longint;
-{$endif FPC_DOUBLE_HILO_SWAPPED}
-  end;
-{$else}
-  float64 = record
-{$ifndef FPC_DOUBLE_HILO_SWAPPED}
-    high,low: longint;
-{$else}
-    low,high: longint;
-{$endif FPC_DOUBLE_HILO_SWAPPED}
-  end;
-{$endif}
-{$endif FPC_SYSTEM_HAS_float64}
-
+{ float64 definition is now in genmathh.inc,
+  to ensure that float64 will always be in
+  the system interface symbol table. }
 
 const
       PIO4   =  7.85398163397448309616E-1;    {  pi/4        }
@@ -140,7 +122,7 @@ Begin
   if (float_flag_invalid in unmasked_flags) then
      HandleError(207)
   else if (float_flag_divbyzero in unmasked_flags) then
-     HandleError(200)
+     HandleError(208)
   else if (float_flag_overflow in unmasked_flags) then
      HandleError(205)
   else if (float_flag_underflow in unmasked_flags) then
@@ -197,10 +179,6 @@ end;
 
 
 {$ifndef FPC_SYSTEM_HAS_TRUNC}
-{$ifndef FPC_SYSTEM_HAS_float32}
-type
-  float32 = longint;
-{$endif FPC_SYSTEM_HAS_float32}
 
 {$ifdef SUPPORT_DOUBLE}
    { based on softfloat float64_to_int64_round_to_zero }
@@ -1340,7 +1318,7 @@ type
           if j0>=63 then     { Overflow, let trunc() raise an exception }
             exit(trunc(d))   { and/or return +/-MaxInt64 if it's masked }
           else
-            result:=((int64(hx) shl 32) or float64low(d)) shl (j0-52);
+            result:=((int64(hx) shl 32) or dword(float64low(d))) shl (j0-52);
         end
       else
         begin
@@ -1457,6 +1435,12 @@ type
       hfsq,f,s,z,R,w,t1,t2,dk: double;
       k,hx,i,j: longint;
       lx: longword;
+{$push}
+{ if we have to check manually fpu exceptions, then force the exit statements here to
+  throw one }
+{$CHECKFPUEXCEPTIONS+}
+{ turn off fastmath as it converts (d-d)/zero into 0 and thus not raising an exception }
+{$OPTIMIZATION NOFASTMATH}
     begin
       hx := float64high(d);
       lx := float64low(d);
@@ -1473,6 +1457,7 @@ type
       end;
       if (hx >= $7ff00000) then
         exit(d+d);
+{$pop}
       inc(k, (hx shr 20)-1023);
       hx := hx and $000fffff;
       i := (hx + $95f64) and $100000;
@@ -2109,7 +2094,7 @@ function TDoubleRec.GetFrac : QWord;
 
 procedure TDoubleRec.SetFrac(e : QWord);
   begin
-    Data:=(Data and $7ff0000000000000) or (e and $fffffffffffff);
+    Data:=(Data and $fff0000000000000) or (e and $fffffffffffff);
   end;
 
 {

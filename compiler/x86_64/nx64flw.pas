@@ -45,6 +45,7 @@ interface
       finalizepi: tcgprocinfo;
       constructor create(l,r:TNode);override;
       constructor create_implicit(l,r:TNode);override;
+      function dogetcopy : tnode;override;
       function simplify(forinline: boolean): tnode;override;
       procedure pass_generate_code;override;
     end;
@@ -58,7 +59,8 @@ implementation
     cgbase,cgobj,cgutils,tgobj,
     cpubase,htypechk,
     pass_1,pass_2,
-    aasmbase,aasmtai,aasmdata,aasmcpu,procinfo,cpupi;
+    aasmbase,aasmtai,aasmdata,aasmcpu,
+    procinfo,cpupi,procdefutil;
 
   var
     endexceptlabel: tasmlabel;
@@ -173,6 +175,7 @@ constructor tx64tryfinallynode.create(l, r: TNode);
       end;
   end;
 
+
 constructor tx64tryfinallynode.create_implicit(l, r: TNode);
   begin
     inherited create_implicit(l, r);
@@ -189,6 +192,33 @@ constructor tx64tryfinallynode.create_implicit(l, r: TNode);
       end;
   end;
 
+
+function tx64tryfinallynode.dogetcopy: tnode;
+  var
+    n: tx64tryfinallynode;
+  begin
+    n:=tx64tryfinallynode(inherited dogetcopy);
+    if target_info.system=system_x86_64_win64 then
+      begin
+        n.finalizepi:=tcgprocinfo(cprocinfo.create(finalizepi.parent));
+        n.finalizepi.force_nested;
+        n.finalizepi.procdef:=create_outline_procdef('$fin$',current_procinfo.procdef.struct,potype_exceptfilter,voidtype);
+        n.finalizepi.entrypos:=finalizepi.entrypos;
+        n.finalizepi.entryswitches:=finalizepi.entryswitches;
+        n.finalizepi.exitpos:=finalizepi.exitpos;
+        n.finalizepi.exitswitches:=finalizepi.exitswitches;
+        n.finalizepi.flags:=finalizepi.flags;
+        { node already transformed? }
+        if assigned(finalizepi.code) then
+          begin
+            n.finalizepi.code:=finalizepi.code.getcopy;
+            n.right:=ccallnode.create(nil,tprocsym(n.finalizepi.procdef.procsym),nil,nil,[],nil);
+          end;
+      end;
+    result:=n;
+  end;
+
+
 function tx64tryfinallynode.simplify(forinline: boolean): tnode;
   begin
     result:=inherited simplify(forinline);
@@ -196,19 +226,24 @@ function tx64tryfinallynode.simplify(forinline: boolean): tnode;
       exit;
     if (result=nil) then
       begin
-        finalizepi.code:=right;
-        foreachnodestatic(right,@copy_parasize,finalizepi);
-        right:=ccallnode.create(nil,tprocsym(finalizepi.procdef.procsym),nil,nil,[],nil);
-        firstpass(right);
-        { For implicit frames, no actual code is available at this time,
-          it is added later in assembler form. So store the nested procinfo
-          for later use. }
-        if implicitframe then
+        { actually, this is not really the right place to do a node transformation like this }
+        if not(assigned(finalizepi.code)) then
           begin
-            current_procinfo.finalize_procinfo:=finalizepi;
+            finalizepi.code:=right;
+            foreachnodestatic(right,@copy_parasize,finalizepi);
+            right:=ccallnode.create(nil,tprocsym(finalizepi.procdef.procsym),nil,nil,[],nil);
+            firstpass(right);
+            { For implicit frames, no actual code is available at this time,
+              it is added later in assembler form. So store the nested procinfo
+              for later use. }
+            if implicitframe then
+              begin
+                current_procinfo.finalize_procinfo:=finalizepi;
+              end;
           end;
       end;
   end;
+
 
 procedure emit_nop;
   var
@@ -220,6 +255,7 @@ procedure emit_nop;
     cg.a_label(current_asmdata.CurrAsmList,dummy);
     current_asmdata.CurrAsmList.concat(Taicpu.op_none(A_NOP,S_NO));
   end;
+
 
 procedure tx64tryfinallynode.pass_generate_code;
   var
@@ -320,6 +356,12 @@ procedure tx64tryfinallynode.pass_generate_code;
         current_asmdata.CurrAsmList.concat(Taicpu.op_none(A_NOP,S_NO));
         cg.a_label(current_asmdata.CurrAsmList,endtrylabel);
       end;
+
+    { i32913 - if the try..finally block is also inside a try..finally or
+      try..except block, make a note of any Exit calls so all necessary labels
+      are generated. [Kit] }
+    if ((flowcontrol*[fc_exit,fc_break,fc_continue])<>[]) and (fc_inflowcontrol in oldflowcontrol) then
+      oldflowcontrol:=oldflowcontrol+(flowcontrol*[fc_exit,fc_break,fc_continue]);
 
     flowcontrol:=[fc_inflowcontrol];
     { generate finally code as a separate procedure }
@@ -431,6 +473,12 @@ procedure tx64tryexceptnode.pass_generate_code;
         current_procinfo.CurrBreakLabel:=breakexceptlabel;
       end;
 
+    { i32913 - if the try..finally block is also inside a try..finally or
+      try..except block, make a note of any Exit calls so all necessary labels
+      are generated. [Kit] }
+    if ((flowcontrol*[fc_exit,fc_break,fc_continue])<>[]) and (fc_inflowcontrol in oldflowcontrol) then
+      oldflowcontrol:=oldflowcontrol+(flowcontrol*[fc_exit,fc_break,fc_continue]);
+
     flowcontrol:=[fc_inflowcontrol];
     { on statements }
     if assigned(right) then
@@ -520,6 +568,12 @@ procedure tx64tryexceptnode.pass_generate_code;
 errorexit:
     { restore all saved labels }
     endexceptlabel:=oldendexceptlabel;
+
+    { i32913 - if the try..finally block is also inside a try..finally or
+      try..except block, make a note of any Exit calls so all necessary labels
+      are generated. [Kit] }
+    if ((flowcontrol*[fc_exit,fc_break,fc_continue])<>[]) and (fc_inflowcontrol in oldflowcontrol) then
+      oldflowcontrol:=oldflowcontrol+(flowcontrol*[fc_exit,fc_break,fc_continue]);
 
     { restore the control flow labels }
     current_procinfo.CurrExitLabel:=oldCurrExitLabel;
