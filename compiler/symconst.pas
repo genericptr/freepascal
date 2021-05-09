@@ -435,9 +435,7 @@ type
       "varargs" modifier or Mac-Pascal ".." parameter }
     po_variadic,
     { implicitly return same type as the class instance to which the message is sent }
-    po_objc_related_result_type,
-    { procdef is implemented from trait }
-    po_is_trait_implemented
+    po_objc_related_result_type
   );
   tprocoptions=set of tprocoption;
 
@@ -561,7 +559,8 @@ type
     oo_has_class_constructor, { the object/class has a class constructor }
     oo_has_class_destructor,  { the object/class has a class destructor  }
     oo_is_enum_class,     { the class represents an enum (JVM) }
-    oo_has_new_destructor { the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_has_new_destructor,{ the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_implements_default_property { the record implements a default property }
   );
   tobjectoptions=set of tobjectoption;
 
@@ -1103,8 +1102,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_auto_setter',{po_is_auto_setter}
       'po_noinline',{po_noinline}
       'C-style array-of-const', {po_variadic}
-      'objc-related-result-type', {po_objc_related_result_type}
-      'po-is-trait-implemented' {po_is_trait_implemented}
+      'objc-related-result-type' {po_objc_related_result_type}
     );
 
 implementation

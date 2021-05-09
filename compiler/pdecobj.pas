@@ -161,6 +161,214 @@ implementation
         result:=pd;
       end;
 
+    procedure implement_default_property(default_property:tpropertysym; record_def:tabstractrecorddef);
+      
+      { builds the property symbol access list for fields }
+      function build_field_symlist(pl:tpropaccesslist; caller_sym:tsym; target_sym:tsym; out def:tdef):boolean; inline;
+        begin
+          { add caller }
+          addsymref(caller_sym);
+          pl.addsym(sl_load,caller_sym);
+          { add target }
+          addsymref(target_sym);
+          pl.addsym(sl_subscript,target_sym);
+          def:=tfieldvarsym(target_sym).vardef;
+        end;
+
+      procedure insert_field_var(fieldvar: tfieldvarsym);
+        var
+          p: tpropertysym;
+          sym: tsym;
+          def: tdef;
+        begin
+          { generate propertysym and insert in symtablestack }
+          p:=cpropertysym.create(fieldvar.realname);
+          p.visibility:=symtablestack.top.currentvisibility;
+          p.default:=longint($80000000);
+
+          { insert the property symbol into the symtable
+            this is where the duplicate symbol message will be given if there
+            is a duplicate field in the current record. }
+          symtablestack.top.insert(p);
+          
+          { set property def to be the field var def }
+          p.propdef:=fieldvar.vardef;
+
+          { make getter }
+          sym:=default_property.propaccesslist[palt_read].firstsym^.sym;
+          build_field_symlist(p.propaccesslist[palt_read],sym,fieldvar,def);
+          sym:=p.propaccesslist[palt_read].firstsym^.sym;
+          p.add_getter_or_setter_for_sym(palt_read,sym,def,nil);
+
+          { make setter }
+          sym:=default_property.propaccesslist[palt_read].firstsym^.sym;
+          build_field_symlist(p.propaccesslist[palt_write],sym,fieldvar,def);
+          sym:=p.propaccesslist[palt_write].firstsym^.sym;
+          p.add_getter_or_setter_for_sym(palt_write,sym,def,nil);
+        end;
+      
+      procedure insert_property(property_sym: tpropertysym); 
+        var
+          p: tpropertysym;
+          readprocdef,
+          writeprocdef: tprocdef;
+          hparavs: tparavarsym;
+          paranr: word;
+          sym,
+          caller_sym,
+          target_sym: tsym;
+          def: tdef;
+        begin
+          paranr := 0;
+
+          { Generate temp procdefs to search for matching read/write
+            procedures. the readprocdef will store all definitions }
+          readprocdef:=cprocdef.create(normal_function_level,false);
+          writeprocdef:=cprocdef.create(normal_function_level,false);
+
+          readprocdef.struct:=record_def;
+          writeprocdef.struct:=record_def;
+
+          { class property? }
+          if assigned(record_def) and (sp_static in property_sym.symoptions) then
+            begin
+              readprocdef.procoptions:=[po_staticmethod,po_classmethod];
+              writeprocdef.procoptions:=[po_staticmethod,po_classmethod];
+            end;
+
+          { generate propertysym and insert in symtablestack }
+          p:=cpropertysym.create(property_sym.realname);
+          p.visibility:=symtablestack.top.currentvisibility;
+          p.default:=longint($80000000);
+
+          { insert the property symbol into the symtable
+            this is where the duplicate symbol message will be given if there
+            is a duplicate field in the current record. }
+          symtablestack.top.insert(p);
+          
+          { set property def to be the field var def }
+          p.propdef:=property_sym.propdef;
+
+          caller_sym:=default_property.propaccesslist[palt_read].firstsym^.sym;
+
+          { duplicate parameters and other options }
+          property_sym.makeduplicate(p,readprocdef,writeprocdef,paranr);
+
+          { getter }
+          if property_sym.propaccesslist[palt_read].firstsym<>nil then
+            begin
+              target_sym:=property_sym.propaccesslist[palt_read].firstsym^.sym;
+              case target_sym.typ of
+                fieldvarsym:
+                  begin
+                    build_field_symlist(p.propaccesslist[palt_read],caller_sym,target_sym,def);
+                    sym:=p.propaccesslist[palt_read].firstsym^.sym;
+                    p.add_getter_or_setter_for_sym(palt_read,sym,def,nil);
+                  end;
+                procsym:
+                  begin
+                    addsymref(target_sym);
+                    p.propaccesslist[palt_read].addsym(sl_call,target_sym);
+                    readprocdef.returndef:=p.propdef;
+                    { Insert hidden parameters }
+                    handle_calling_convention(readprocdef,hcc_default_actions_intf_struct);
+                    p.add_getter_or_setter_for_sym(palt_read,target_sym,nil,readprocdef);
+                  end;
+              end;
+            end
+          else
+            p.inherit_accessor(palt_read);
+
+          { setter }
+          if property_sym.propaccesslist[palt_write].firstsym<>nil then
+            begin
+              target_sym:=property_sym.propaccesslist[palt_write].firstsym^.sym;
+              case target_sym.typ of
+                fieldvarsym:
+                  begin
+                    build_field_symlist(p.propaccesslist[palt_write],caller_sym,target_sym,def);
+                    sym:=p.propaccesslist[palt_write].firstsym^.sym;
+                    p.add_getter_or_setter_for_sym(palt_write,sym,def,nil);
+                  end;
+                procsym:
+                  begin
+                    addsymref(target_sym);
+                    p.propaccesslist[palt_write].addsym(sl_call,target_sym);
+                    { setter is a procedure with an extra value parameter of the of the property }
+                    writeprocdef.returndef:=voidtype;
+                    // TODO: do we need to inc this again here?
+                    inc(paranr);
+                    hparavs:=cparavarsym.create('$value',10*paranr,vs_value,p.propdef,[]);
+                    writeprocdef.parast.insert(hparavs);
+                    { Insert hidden parameters }
+                    handle_calling_convention(writeprocdef,hcc_default_actions_intf_struct);
+                    p.add_getter_or_setter_for_sym(palt_write,target_sym,nil,writeprocdef);
+                  end;
+              end;
+            end
+          else
+            p.inherit_accessor(palt_write);
+
+          { register propgetter and propsetter procdefs }
+          if assigned(current_module) and current_module.in_interface then
+            begin
+              if readprocdef.proctypeoption=potype_propgetter then
+                readprocdef.register_def
+              else
+                readprocdef.free;
+              if writeprocdef.proctypeoption=potype_propsetter then
+                writeprocdef.register_def
+              else
+                writeprocdef.free;
+            end
+          else
+            begin
+              if readprocdef.proctypeoption=potype_propgetter then
+                readprocdef.maybe_put_in_symtable_stack
+              else
+                readprocdef.free;
+              if writeprocdef.proctypeoption=potype_propsetter then
+                writeprocdef.maybe_put_in_symtable_stack
+              else
+                writeprocdef.free;
+            end;
+        end;
+      
+      var
+        i: integer;
+        sym: tsym;
+        classh: tobjectdef;
+      begin
+        record_def.default_property_implementer:=tabstractrecorddef(default_property.propdef);
+        include(record_def.objectoptions,oo_implements_default_property);
+        { search in the class hierarchy for members to hoist }
+        classh:=tobjectdef(record_def.default_property_implementer);
+        while assigned(classh) do
+          begin
+            for i:=0 to classh.symtable.SymList.count-1 do
+              begin
+                sym:=tsym(classh.symtable.SymList[i]);
+                { ignore hidden members }
+                if sym.visibility=vis_hidden then
+                  continue;
+                { only consider members if they are visible to the property }
+                if is_visible_for_object(classh.symtable,default_property.visibility,record_def) then
+                  case sym.typ of
+                    fieldvarsym:
+                      insert_field_var(tfieldvarsym(sym));
+                    propertysym:
+                      insert_property(tpropertysym(sym));
+                    procsym:
+                      begin
+                        if record_def.default_property_symtable=nil then
+                          record_def.default_property_symtable:=tfphashobjectlist.create(false);
+                        record_def.default_property_symtable.add(sym.name,sym);
+                      end;
+                  end;
+              end;
+            classh:=classh.childof;
+          end;
+      end;
 
     procedure struct_property_dec(is_classproperty:boolean;var rtti_attrs_def: trtti_attribute_list);
       var
@@ -180,7 +388,10 @@ implementation
               message(parser_e_only_one_default_property);
             include(current_structdef.objectoptions,oo_has_default_property);
             include(p.propoptions,ppo_defaultproperty);
-            if not(ppo_hasparameters in p.propoptions) then
+            { implement default properties members into caller }
+            if (current_structdef.typ=recorddef) and (p.propdef.typ=objectdef) then
+              implement_default_property(p,current_structdef)
+            else if not(ppo_hasparameters in p.propoptions) then
               message(parser_e_property_need_paras);
             if (token=_COLON) then
               begin

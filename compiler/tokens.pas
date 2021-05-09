@@ -129,7 +129,6 @@ type
     _SET,
     _SHL,
     _SHR,
-    _USE,
     _TRY,
     _VAR,
     _XOR,
@@ -148,7 +147,6 @@ type
     _SELF,
     _SYSV,
     _THEN,
-    _TRAIT,
     _TYPE,
     _UNIT,
     _UNIV,
@@ -473,7 +471,6 @@ const
       (str:'SET'           ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'SHL'           ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:_OP_SHL),
       (str:'SHR'           ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:_OP_SHR),
-      (str:'USE'           ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:NOTOKEN),
       (str:'TRY'           ;special:false;keyword:[m_except];op:NOTOKEN),
       (str:'VAR'           ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'XOR'           ;special:false;keyword:alllanguagemodes;op:_OP_XOR),
@@ -492,7 +489,6 @@ const
       (str:'SELF'          ;special:false;keyword:[m_none];op:NOTOKEN), {set inside methods only PM }
       (str:'SYSV'          ;special:false;keyword:[m_none];op:NOTOKEN),   { Syscall variation on MorphOS }
       (str:'THEN'          ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
-      (str:'TRAIT'         ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:NOTOKEN),
       (str:'TYPE'          ;special:false;keyword:alllanguagemodes;op:NOTOKEN),
       (str:'UNIT'          ;special:false;keyword:alllanguagemodes-[m_iso,m_extpas];op:NOTOKEN),
       (str:'UNIV'          ;special:false;keyword:[m_mac];op:NOTOKEN),

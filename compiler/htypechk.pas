@@ -2369,10 +2369,25 @@ implementation
               (srsym.typ=procsym) then
              begin
                hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+               { if the struct implements default properties then don't break yet 
+                 so we can add any additional overloads that may exist }
+               if oo_implements_default_property in structdef.objectoptions then
+                 foundanything:=false;
                { when there is no explicit overload we stop searching }
                if foundanything and
                   not hasoverload then
                  break;
+             end;
+           { now add additional overloads for default property }
+           if oo_implements_default_property in structdef.objectoptions then
+             begin
+               srsym:=tsym(structdef.default_property_symtable.FindWithHash(hashedid.id,hashedid.hash));
+               if assigned(srsym) then
+                 begin
+                   hasoverload:=processprocsym(tprocsym(srsym),foundanything);
+                   if foundanything and not hasoverload then
+                     break;
+                 end;
              end;
            if is_objectpascal_helper(structdef) and
               (

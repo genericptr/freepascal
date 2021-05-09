@@ -71,121 +71,6 @@ implementation
        pbase,pexpr,ptype,ptconst,pdecsub,pparautl;
 
 
-    procedure implement_trait_members(trait_sym:tsym; astruct:tabstractrecorddef; traitstruct: tabstractrecorddef);
-      
-      function add_symlist(pl:tpropaccesslist;load:tsym;field:tsym; out def:tdef):boolean;
-        begin
-          addsymref(load);
-          pl.addsym(sl_load,load);
-          addsymref(field);
-          pl.addsym(sl_subscript,field);
-          def:=tfieldvarsym(field).vardef;
-        end;
-
-      procedure insert_property(field: tfieldvarsym);
-        var
-          p: tpropertysym;
-          readprocdef,
-          writeprocdef: tprocdef;
-          sym: tsym;
-          def: tdef;
-        begin
-          writeln('  field ',field.realname,':',field.vardef.typename,' into ',astruct.typename);
-          // todo: do we ever need these or can they be nil?
-          //readprocdef:=cprocdef.create(normal_function_level,true);
-          //writeprocdef:=cprocdef.create(normal_function_level,true);
-          //readprocdef.struct:=astruct;
-          //writeprocdef.struct:=astruct;
-
-          { Generate propertysym and insert in symtablestack }
-          p:=cpropertysym.create(field.realname);
-          p.visibility:=symtablestack.top.currentvisibility;
-          p.default:=longint($80000000);
-          // note: this is where the duplicate symbol message will be given
-          symtablestack.top.insert(p);
-          
-          p.propdef:=field.vardef;
-
-          { getter }
-          add_symlist(p.propaccesslist[palt_read],trait_sym,field,def);
-          sym:=p.propaccesslist[palt_read].firstsym^.sym;
-          p.add_getter_or_setter_for_sym(palt_read,sym,def,nil);
-
-          { setter }
-          add_symlist(p.propaccesslist[palt_write],trait_sym,field,def);
-          sym:=p.propaccesslist[palt_write].firstsym^.sym;
-          p.add_getter_or_setter_for_sym(palt_write,sym,def,nil);
-
-          if not assigned(p.overriddenpropsym) then
-            include(p.propoptions,ppo_stored);
-
-          //if readprocdef.proctypeoption<>potype_propgetter then
-          //  readprocdef.owner.deletedef(readprocdef);
-          //if writeprocdef.proctypeoption<>potype_propsetter then
-          //  writeprocdef.owner.deletedef(writeprocdef);
-        end;
-      
-      procedure insert_proc(sym: tprocsym); 
-        var
-          pd,
-          parentpd: tprocdef;
-          proc: tprocsym;
-        begin
-          // todo: if there is already a method of the same name/params in the class
-          // then we need to implement it so don't auto add the abstract proc
-          //(compare_paras(fwpd.paras,currpd.paras,cp_all,paracompopt)<>te_exact) or
-          //(compare_defs(fwpd.returndef,currpd.returndef,nothingn)<>te_exact)
-          //if search_struct_member(astruct,sym.name) then
-          // todo: how do we find a proc with matching params?
-          //function Tprocsym.Find_procdef_bypara(para:TFPObjectList;retdef:tdef;
-          //                                        cpoptions:tcompare_paras_options):Tprocdef;
-
-          { there is already a method with the same signature so
-            the object must explictly resolve the ambiguity by
-            implementing the method }
-          proc:=tprocsym(search_struct_member(astruct,sym.name));
-          if (proc<>nil) and (proc.typ=procsym) then
-            begin
-              writeln('must implement proc ',sym.name);
-              // todo: make a method for this
-              if astruct.must_implement=nil then
-                astruct.must_implement:=tfplist.create;
-              astruct.must_implement.add(sym);
-              exit;
-            end;
-          parentpd:=tprocdef(tprocsym(sym).procdeflist[0]);
-          pd:=tprocdef(parentpd.getcopyas(procdef,pc_normal_no_hidden,''));
-          writeln('  proc ',sym.realname,'->',traitstruct.typename,' into ',astruct.typename,' @',hexstr(pd));
-          { inherit visibility of trait implementor }
-          pd.visibility:=trait_sym.visibility;
-          pd.trait_implementor:=trait_sym;
-          pd.trait_proc:=sym;
-          pd.procoptions:=pd.procoptions+[po_is_trait_implemented,
-                                          po_virtualmethod,
-                                          po_abstractmethod,
-                                          po_addressonly];
-          finish_copied_procdef(pd,parentpd.procsym.realname,astruct.symtable,astruct);
-        end;
-
-      var
-        i: integer;
-        sym: tsym;
-      begin
-        writeln('insert properties for trait ', trait_sym.realname,':',traitstruct.typename);
-        for i:=0 to traitstruct.symtable.SymList.count-1 do
-          begin
-            sym:=tsym(traitstruct.symtable.SymList[i]);
-            if is_visible_for_object(sym,astruct) then
-              begin
-                if (sym.typ=fieldvarsym) then
-                  insert_property(tfieldvarsym(sym))
-                else if (sym.typ=procsym) then
-                  insert_proc(tprocsym(sym));
-              end;
-          end;
-      end;
-
-
     function read_property_dec(is_classproperty:boolean;astruct:tabstractrecorddef):tpropertysym;
 
         { convert a node tree to symlist and return the last
@@ -693,46 +578,6 @@ implementation
                end
              else
                p.inherit_accessor(palt_write);
-             { parse trait implementors}
-             if try_to_consume(_USE) then
-               begin
-                { type is not a trait }
-                if not(df_is_trait in p.propdef.defoptions) then
-                  internalerror(2020);
-                // todo: is the trait type (astruct) already in astruct? check df_implements_traits first
-                gotreadorwrite:=true;
-                if token=_ID then
-                  begin
-                    sym:=search_struct_member(astruct,pattern);
-                    if assigned(sym) then
-                      begin
-                        if assigned(astruct) and
-                           not is_visible_for_object(sym,astruct) then
-                          Message(parser_e_cant_access_private_member);
-                        addsymref(sym);
-                        def:=tfieldvarsym(sym).vardef;
-                        { getter }
-                        p.propaccesslist[palt_read].clear;
-                        p.propaccesslist[palt_read].addsym(sl_load,sym);
-                        p.add_getter_or_setter_for_sym(palt_read,sym,def,readprocdef);
-                        { setter }
-                        p.propaccesslist[palt_write].clear;
-                        p.propaccesslist[palt_write].addsym(sl_load,sym);
-                        p.add_getter_or_setter_for_sym(palt_write,sym,def,writeprocdef);
-                        { insert trait members into struct }
-                        implement_trait_members(sym,current_structdef,tabstractrecorddef(def));
-                        include(current_structdef.defoptions,df_implements_traits);
-                      end
-                    else
-                      begin
-                        begin
-                          Message1(parser_e_illegal_field_or_method,orgpattern);
-                          def:=generrordef;
-                        end;
-                      end;
-                    consume(_ID);
-                  end;
-               end;
              { a new property (needs to declare a getter or setter, except in
                an interface }
              if not(ppo_overrides in p.propoptions) and
@@ -1597,10 +1442,6 @@ implementation
 {$endif}
 
              read_anon_type(hdef,false);
-             { traits can be not variable declarations  }
-             if assigned(hdef) and (df_is_trait in hdef.defoptions) then
-               // todo(ryan): make a real error message
-               internalerror(666);
              maybe_guarantee_record_typesym(hdef,symtablestack.top);
              for i:=0 to sc.count-1 do
                begin
@@ -1775,6 +1616,7 @@ implementation
             stowner:=tdef(stowner.owner.defowner);
           end;
       end;
+
 
     procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc : ppvariantrecdesc;out had_generic:boolean);
       var

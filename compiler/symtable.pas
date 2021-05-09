@@ -3829,6 +3829,25 @@ implementation
             result:=true;
             exit;
           end;
+        { search in default properties if nothing is found }
+        if oo_implements_default_property in recordh.objectoptions then
+          begin
+            if recordh.default_property_symtable<>nil then
+              begin
+                srsym:=tsym(recordh.default_property_symtable.FindWithHash(hashedid.id,hashedid.hash));
+                if assigned(srsym) then
+                  begin
+                    srsymtable:=srsym.owner;
+                    addsymref(srsym);
+                    result:=true;
+                    exit;
+                  end;
+              end;
+            { if nothing is found then search class helpers for the property }
+            result:=search_objectpascal_helper(recordh.default_property_implementer,recordh.default_property_implementer,s,srsym,srsymtable);
+            if result then
+              exit;
+          end;
         srsym:=nil;
         srsymtable:=nil;
       end;

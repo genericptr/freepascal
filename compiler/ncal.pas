@@ -194,7 +194,6 @@ interface
           procedure insertintolist(l : tnodelist);override;
           function  pass_1 : tnode;override;
           function  pass_typecheck:tnode;override;
-          function check_traits:tnode;
        {$ifdef state_tracking}
           function track_state_pass(exec_known:boolean):boolean;override;
        {$endif state_tracking}
@@ -214,7 +213,6 @@ interface
           property pushed_parasize: longint read pushedparasize;
        private
           AbstractMethodsList : TFPHashList;
-          orig_paras : tnode;
        end;
        tcallnodeclass = class of tcallnode;
 
@@ -1539,15 +1537,6 @@ implementation
          funcretnode:=nil;
          paralength:=-1;
          varargsparas:=nil;
-         // todo(ryan): why do we have to do this? the orginal params may still be safe somewhere...
-         { keep the raw parsed parameters in case we need for resolving traits }
-         if assigned(parameters) and
-           assigned(symtableproc.defowner) and 
-           (symtableproc.defowner.typ=objectdef) and 
-           (df_implements_traits in tobjectdef(symtableproc.defowner).defoptions) then
-           begin
-            orig_paras:=parameters.dogetcopy;
-           end;
          if assigned(current_structdef) and
             assigned(mp) and
             assigned(current_procinfo) then
@@ -3607,39 +3596,6 @@ implementation
           end;
       end;
 
-    function tcallnode.check_traits:tnode;
-      var
-        trait_node:tnode;
-        call_node:tcallnode;
-        trait_proc:tprocsym;
-        trait_implementor:tfieldvarsym;
-        pd:tprocdef;
-      begin
-        result:=nil;
-        pd:=tprocdef(self.procdefinition);
-        if po_is_trait_implemented in pd.procoptions then
-          begin
-            trait_proc:=pd.trait_proc as tprocsym;
-            if trait_proc=nil then
-              internalerror(2020);
-            trait_implementor:=pd.trait_implementor as tfieldvarsym;
-            if trait_implementor=nil then
-              internalerror(2020);
-            writeln('call ', trait_proc.owner.realname^,'.',
-                             trait_proc.realname,'->',
-                             self.methodpointer.resultdef.typename,'.',
-                             trait_implementor.realname);
-            trait_node:=csubscriptnode.create(trait_implementor,self.methodpointer);
-            do_typecheckpass(trait_node);
-            result:=ccallnode.create(orig_paras,
-                                 trait_proc,
-                                 trait_proc.owner,
-                                 trait_node,
-                                 self.callnodeflags,
-                                 self.spezcontext);
-            do_typecheckpass(result);
-          end;
-      end;
 
     function tcallnode.pass_typecheck:tnode;
 
@@ -4216,9 +4172,6 @@ implementation
            typecheckpass(call_self_node);
          if assigned(call_vmt_node) then
            typecheckpass(call_vmt_node);
-         
-         // todo: always causing crashes
-         //result:=check_traits;
 
          finally
            aktcallnode:=oldcallnode;

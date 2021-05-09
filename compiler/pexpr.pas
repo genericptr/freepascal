@@ -1320,7 +1320,6 @@ implementation
         isrecordtype:boolean;
         isobjecttype:boolean;
         ishelpertype:boolean;
-        p2:tnode;
       begin
          if sym=nil then
            begin
@@ -1358,7 +1357,7 @@ implementation
 
               if assigned(spezcontext) and not (sym.typ=procsym) then
                 internalerror(2015091801);
-  
+
               { we assume, that only procsyms and varsyms are in an object }
               { symbol table, for classes, properties are allowed          }
               case sym.typ of
@@ -1369,15 +1368,6 @@ implementation
                                    again,p1,callflags,spezcontext);
                       { we need to know which procedure is called }
                       do_typecheckpass(p1);
-
-                      // todo: calling this inside tcallnode causes crashes
-                      if p1.nodetype=calln then
-                        begin
-                          p2:=tcallnode(p1).check_traits;
-                          if assigned(p2) then
-                            p1:=p2;
-                        end;
-
                       { calling using classref? }
                       if (
                             isclassref or
