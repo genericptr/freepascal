@@ -368,7 +368,6 @@ interface
           function is_visible_for_rtti(option: trtti_option; vis: tvisibility): boolean; inline;
           function rtti_visibilities_for_option(option: trtti_option): tvisibilities; inline;
           function has_extended_rtti: boolean; inline;
-          function has_published_rtti: boolean; inline;
        end;
 
        pvariantrecdesc = ^tvariantrecdesc;
@@ -4979,15 +4978,6 @@ implementation
                   (rtti_options[roMethods]<>[]) or
                   (rtti_options[roProperties]<>[]);
       end;
-
-
-    function tabstractrecorddef.has_published_rtti: boolean;
-      begin
-        result := (vcPublished in rtti_options[roFields]) or
-                  (vcPublished in rtti_options[roMethods]) or
-                  (vcPublished in rtti_options[roProperties]);
-      end;
-
 
 {$ifdef DEBUG_NODE_XML}
     procedure tabstractrecorddef.XMLPrintDefData(var T: Text; Sym: TSym);

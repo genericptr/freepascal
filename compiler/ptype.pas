@@ -797,9 +797,7 @@ implementation
                      end;
                    _PUBLISHED :
                      begin
-                       { records can have published sections if extended RTTI is enabled }
-                       if not current_structdef.has_published_rtti then
-                         Message(parser_e_no_record_published);
+                        Message(parser_e_no_record_published);
                        consume(_PUBLISHED);
                        current_structdef.symtable.currentvisibility:=vis_published;
                        fields_allowed:=true;
