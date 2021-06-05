@@ -8523,9 +8523,9 @@ implementation
         rtti_options:=dir.options;
         if (dir.clause=vcInherit) and assigned(childof) and (childof.rtti_clause<>vcNone) then
           begin
-            rtti_options[roMethods] := rtti_options[roMethods] + childof.rtti_options[roMethods];
-            rtti_options[roFields] := rtti_options[roFields] + childof.rtti_options[roFields];
-            rtti_options[roProperties] := rtti_options[roProperties] + childof.rtti_options[roProperties];
+            rtti_options[roMethods]:=rtti_options[roMethods]+childof.rtti_options[roMethods];
+            rtti_options[roFields]:=rtti_options[roFields]+childof.rtti_options[roFields];
+            rtti_options[roProperties]:=rtti_options[roProperties]+childof.rtti_options[roProperties];
           end;
       end;
 
