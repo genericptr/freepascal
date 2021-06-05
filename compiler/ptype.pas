@@ -1056,7 +1056,7 @@ implementation
               // TODO: make a real error!
               internalerror(1)
             else
-              current_structdef.appy_rtti_directive(current_module.pending_rtti);
+              current_structdef.apply_rtti_directive(current_module.pending_rtti);
             current_module.pending_rtti.free;
             current_module.pending_rtti:=nil;
           end;

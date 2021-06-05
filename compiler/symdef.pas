@@ -364,7 +364,7 @@ interface
           { check if the symtable contains a field that spans an aword boundary }
           function contains_cross_aword_field: boolean;
           { extended RTTI }
-          procedure appy_rtti_directive(dir: trtti_directive); virtual;
+          procedure apply_rtti_directive(dir: trtti_directive); virtual;
           function is_visible_for_rtti(option: trtti_option; vis: tvisibility): boolean; inline;
           function rtti_visibilities_for_option(option: trtti_option): tvisibilities; inline;
           function has_extended_rtti: boolean; inline;
@@ -559,7 +559,7 @@ interface
           function check_objc_types: boolean;
           { C++ }
           procedure finish_cpp_data;
-          procedure appy_rtti_directive(dir: trtti_directive); override;
+          procedure apply_rtti_directive(dir: trtti_directive); override;
        end;
        tobjectdefclass = class of tobjectdef;
 
@@ -4938,7 +4938,7 @@ implementation
       end;
 
 
-    procedure tabstractrecorddef.appy_rtti_directive(dir: trtti_directive);
+    procedure tabstractrecorddef.apply_rtti_directive(dir: trtti_directive);
       begin
         rtti_clause:=dir.clause;
         rtti_options:=dir.options;
@@ -8517,7 +8517,7 @@ implementation
       end;
 
 
-    procedure tobjectdef.appy_rtti_directive(dir: trtti_directive);
+    procedure tobjectdef.apply_rtti_directive(dir: trtti_directive);
       begin
         rtti_clause:=dir.clause;
         rtti_options:=dir.options;
