@@ -797,7 +797,9 @@ implementation
                      end;
                    _PUBLISHED :
                      begin
-                       Message(parser_e_no_record_published);
+                       { records can have published sections if extended RTTI is enabled }
+                       if not current_structdef.has_published_rtti then
+                         Message(parser_e_no_record_published);
                        consume(_PUBLISHED);
                        current_structdef.symtable.currentvisibility:=vis_published;
                        fields_allowed:=true;
@@ -1048,7 +1050,18 @@ implementation
          { in non-Delphi modes we need a strict private symbol without type
            count and type parameters in the name to simply resolving }
          maybe_insert_generic_rename_symbol(n,genericlist);
-
+        { apply $RTTI directive to current object }
+        if (current_module.pending_rtti<>nil) then
+          begin
+            { records don't allow the inherit clause }
+            if current_module.pending_rtti.clause=vcInherit then
+              // TODO: make a real error!
+              internalerror(1)
+            else
+              current_structdef.appy_rtti_directive(current_module.pending_rtti);
+            current_module.pending_rtti.free;
+            current_module.pending_rtti:=nil;
+          end;
          if m_advanced_records in current_settings.modeswitches then
            begin
              parse_record_members(recsym);

@@ -339,6 +339,9 @@ interface
           { for targets that initialise typed constants via explicit assignments
             instead of by generating an initialised data sectino }
           tcinitcode     : tnode;
+          { extended rtti }
+          rtti_clause: trtti_clause;
+          rtti_options: array[trtti_option] of trtti_visibilities;
           constructor create(const n:string; dt:tdeftyp;doregister:boolean);
           constructor ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -360,6 +363,12 @@ interface
           function contains_float_field : boolean;
           { check if the symtable contains a field that spans an aword boundary }
           function contains_cross_aword_field: boolean;
+          { extended RTTI }
+          procedure appy_rtti_directive(dir: trtti_directive); virtual;
+          function is_visible_for_rtti(option: trtti_option; vis: tvisibility): boolean; inline;
+          function rtti_visibilities_for_option(option: trtti_option): tvisibilities; inline;
+          function has_extended_rtti: boolean; inline;
+          function has_published_rtti: boolean; inline;
        end;
 
        pvariantrecdesc = ^tvariantrecdesc;
@@ -551,6 +560,7 @@ interface
           function check_objc_types: boolean;
           { C++ }
           procedure finish_cpp_data;
+          procedure appy_rtti_directive(dir: trtti_directive); override;
        end;
        tobjectdefclass = class of tobjectdef;
 
@@ -4928,6 +4938,57 @@ implementation
         result:=false;
       end;
 
+
+    procedure tabstractrecorddef.appy_rtti_directive(dir: trtti_directive);
+      begin
+        rtti_clause:=dir.clause;
+        rtti_options:=dir.options;
+      end;
+
+
+    function tabstractrecorddef.is_visible_for_rtti(option: trtti_option; vis: tvisibility): boolean;
+      begin
+        case vis of
+          vis_private:   result:=vcprivate in rtti_options[option];
+          vis_protected: result:=vcprotected in rtti_options[option];
+          vis_public:    result:=vcpublic in rtti_options[option];
+          vis_published: result:=vcpublished in rtti_options[option];
+          otherwise
+            result:=false;
+        end;
+      end;
+
+
+    function tabstractrecorddef.rtti_visibilities_for_option(option: trtti_option): tvisibilities;
+      begin
+        result:=[];
+        if vcprivate in rtti_options[option] then
+          include(result,vis_private);
+        if vcprotected in rtti_options[option] then
+          include(result,vis_protected);
+        if vcpublic in rtti_options[option] then
+          include(result,vis_public);
+        if vcpublished in rtti_options[option] then
+          include(result,vis_published);
+      end;
+
+
+    function tabstractrecorddef.has_extended_rtti: boolean;
+      begin
+        result := (rtti_options[roFields]<>[]) or
+                  (rtti_options[roMethods]<>[]) or
+                  (rtti_options[roProperties]<>[]);
+      end;
+
+
+    function tabstractrecorddef.has_published_rtti: boolean;
+      begin
+        result := (vcPublished in rtti_options[roFields]) or
+                  (vcPublished in rtti_options[roMethods]) or
+                  (vcPublished in rtti_options[roProperties]);
+      end;
+
+
 {$ifdef DEBUG_NODE_XML}
     procedure tabstractrecorddef.XMLPrintDefData(var T: Text; Sym: TSym);
 
@@ -8463,6 +8524,19 @@ implementation
     procedure tobjectdef.finish_cpp_data;
       begin
         self.symtable.DefList.ForEachCall(@do_cpp_import_info,nil);
+      end;
+
+
+    procedure tobjectdef.appy_rtti_directive(dir: trtti_directive);
+      begin
+        rtti_clause:=dir.clause;
+        rtti_options:=dir.options;
+        if (dir.clause=vcInherit) and assigned(childof) and (childof.rtti_clause<>vcNone) then
+          begin
+            rtti_options[roMethods] := rtti_options[roMethods] + childof.rtti_options[roMethods];
+            rtti_options[roFields] := rtti_options[roFields] + childof.rtti_options[roFields];
+            rtti_options[roProperties] := rtti_options[roProperties] + childof.rtti_options[roProperties];
+          end;
       end;
 
 {$ifdef DEBUG_NODE_XML}

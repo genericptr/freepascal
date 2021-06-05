@@ -2667,6 +2667,162 @@ type
          end;
       end;
 
+    procedure dir_rtti;
+      const
+        DefaultFieldRttiVisibility = [vcPrivate..vcPublished];
+        DefaultMethodRttiVisibility = [vcPublic..vcPublished];
+        DefaultPropertyRttiVisibility = [vcPublic..vcPublished];
+
+      procedure consume(i : ttoken);
+        begin
+          current_scanner.readtoken(false);
+          if (token<>i) and (idtoken<>i) then
+            if token=_id then
+              Message2(scan_f_syn_expected,tokeninfo^[i].str,'identifier '+pattern)
+            else
+              Message2(scan_f_syn_expected,tokeninfo^[i].str,tokeninfo^[token].str)
+        end;
+
+      function consume_id: string;
+        var
+          last: char;
+        begin
+          last:=c;
+          current_scanner.readtoken(false);
+          if (token<>_ID) then
+            Message2(scan_f_syn_expected,tokeninfo^[_ID].str,last);
+          result:=pattern;
+        end;
+
+      procedure rtti_error(msg: string);
+        begin
+          writeln(msg);
+          internalerror(0);
+        end;
+
+      function read_rtti_options: trtti_visibilities;
+        var
+          id: string;
+        begin
+          result:=[];
+
+          consume(_LKLAMMER);
+          { first try to read explicit constants }
+          current_scanner.skipspace;
+          id:=current_scanner.readid;
+          if id<>'' then
+            begin
+              case id of
+                'DEFAULTFIELDRTTIVISIBILITY':
+                  result:=DefaultFieldRttiVisibility;
+                'DEFAULTMETHODRTTIVISIBILITY':
+                  result:=DefaultMethodRttiVisibility;
+                'DEFAULTPROPERTYRTTIVISIBILITY':
+                  result:=DefaultPropertyRttiVisibility;
+                otherwise
+                  rtti_error('invalid default visibility '+id);
+              end;
+              consume(_RKLAMMER);
+              exit;
+            end;
+          consume(_LECKKLAMMER);
+
+          current_scanner.skipspace;
+          id:=current_scanner.readid;
+          while id<>'' do
+            begin
+              case id of
+                'VCPRIVATE':
+                  if not(vcPrivate in result) then
+                    include(result, vcPrivate)
+                  else
+                    rtti_error('duplicate visibility '+id);
+                'VCPROTECTED':
+                  if not(vcProtected in result) then
+                    include(result, vcProtected)
+                  else
+                    rtti_error('duplicate visibility '+id);
+                'VCPUBLIC':
+                  if not(vcPublic in result) then
+                    include(result, vcPublic)
+                  else
+                    rtti_error('duplicate visibility '+id);
+                'VCPUBLISHED':
+                  if not(vcPublished in result) then
+                    include(result, vcPublished)
+                  else
+                    rtti_error('duplicate visibility '+id);
+                otherwise
+                  rtti_error('invalid visibility '+id);
+              end;
+              { read next visibility section }
+              current_scanner.skipspace;
+              current_scanner.readtoken(false);
+              case token of
+                _COMMA:
+                  begin
+                    current_scanner.skipspace;
+                    id:=consume_id;
+                  end;
+                _RECKKLAMMER:
+                  break;
+              end;
+            end;
+
+          { nothing was found so consume the trailing _RECKKLAMMER }
+          if result=[] then
+            consume(_RECKKLAMMER);
+          consume(_RKLAMMER);
+        end;
+
+      var
+        id: string;
+        mac: tmacro;
+        dir: trtti_directive;
+      begin
+        dir:=trtti_directive.create;
+
+        current_scanner.skipspace;
+        id:=consume_id;
+        case id of
+          'INHERIT':
+            dir.clause:=vcInherit;
+          'EXPLICIT':
+            dir.clause:=vcExplicit;
+          otherwise
+            rtti_error('invalid rtti clause '+id);
+        end;
+
+        current_scanner.skipspace;
+        if dir.clause=vcExplicit then
+          id:=consume_id
+        else
+          id:=current_scanner.readid;
+        while id<>'' do
+          begin
+            case id of
+              'METHODS':
+                dir.options[roMethods]:=read_rtti_options;
+              'PROPERTIES':
+                dir.options[roProperties]:=read_rtti_options;
+              'FIELDS':
+                dir.options[roFields]:=read_rtti_options;
+              otherwise
+                rtti_error('invalid rtti option '+id);
+            end;
+            current_scanner.skipspace;
+            id:=current_scanner.readid;
+          end;
+
+        { make sure the directive is terminated }
+        if (id='') and (c<>'}') then
+          rtti_error('expected end of rtti direction');
+
+        { set the directive }
+        if current_module.pending_rtti<>nil then  
+          current_module.pending_rtti.free;
+        current_module.pending_rtti:=dir;
+      end;
 
 {*****************************************************************************
                             Preprocessor writing
@@ -5859,6 +6015,9 @@ exit_label:
         AddConditional('ELSE',directive_all, @dir_else);
         AddConditional('ELSEIF',directive_all, @dir_elseif);
         AddConditional('ENDIF',directive_all, @dir_endif);
+
+        { Extended RTTI }
+        AddConditional('RTTI',directive_all, @dir_rtti);
 
         { Directives and conditionals for all modes except mode macpas}
         AddDirective('INCLUDE',directive_turbo, @dir_include);

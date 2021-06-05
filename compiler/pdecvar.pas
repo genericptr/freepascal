@@ -1822,6 +1822,7 @@ implementation
                    try_read_field_external_sc(sc);
                end;
              if (visibility=vis_published) and
+                not(vcpublished in current_structdef.rtti_options[rofields]) and
                 not(is_class(hdef)) then
                begin
                  MessagePos(tfieldvarsym(sc[0]).fileinfo,parser_e_cant_publish_that);
@@ -1830,6 +1831,7 @@ implementation
 
              if (visibility=vis_published) and
                 not(oo_can_have_published in tobjectdef(hdef).objectoptions) and
+                not(vcpublished in current_structdef.rtti_options[rofields]) and
                 not(m_delphi in current_settings.modeswitches) then
                begin
                  MessagePos(tfieldvarsym(sc[0]).fileinfo,parser_e_only_publishable_classes_can_be_published);
