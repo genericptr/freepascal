@@ -11,8 +11,16 @@
 
  **********************************************************************}
 
+{$IF DEFINED(CPUI8086) OR DEFINED(CPUAVR)}
+{ disable the extended RTTI for the RTL/FCL on these targets; the user can of
+  course still enable it for their own classes if needed (and published
+  properties and methods are accessible using the legacy RTTI as well) }
+{$DEFINE SMALLRTTI}
+{$ENDIF}
+
 { sadly MinEnumSize is not handled by Push/Pop :'( }
 {$MINENUMSIZE 1   this saves a lot of memory }
+{$PACKSET 1}
 
 type
   { If you change one of the following enumeration types you have also to
@@ -25,8 +33,21 @@ type
               tkClass,tkObject,tkWChar,tkBool,tkInt64,tkQWord,
               tkDynArray,tkInterfaceRaw,tkProcVar,tkUString,tkUChar,
               tkHelper,tkFile,tkClassRef,tkPointer);
+  
+  TVisibilityClasses = set of (vcPrivate, vcProtected, vcPublic, vcPublished);
 
 {$MINENUMSIZE DEFAULT}
+
+const
+{$IFNDEF SMALLRTTI}
+  DefaultFieldRttiVisibility = [vcPrivate..vcPublished];
+  DefaultMethodRttiVisibility = [vcPublic..vcPublished];
+  DefaultPropertyRttiVisibility = [vcPublic..vcPublished];
+{$ELSE SMALLRTTI}
+  DefaultFieldRttiVisibility = [];
+  DefaultMethodRttiVisibility = [];
+  DefaultPropertyRttiVisibility = [];
+{$ENDIF SMALLRTTI}
 
 const
   { some Delphi-compatible aliases }
