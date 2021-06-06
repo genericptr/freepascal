@@ -1051,12 +1051,7 @@ implementation
         { apply $RTTI directive to current object }
         if (current_module.pending_rtti<>nil) then
           begin
-            { records don't allow the inherit clause }
-            if current_module.pending_rtti.clause=vcInherit then
-              // TODO: make a real error!
-              internalerror(1)
-            else
-              current_structdef.apply_rtti_directive(current_module.pending_rtti);
+            current_structdef.apply_rtti_directive(current_module.pending_rtti);
             current_module.pending_rtti.free;
             current_module.pending_rtti:=nil;
           end;

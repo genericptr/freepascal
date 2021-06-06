@@ -4940,7 +4940,10 @@ implementation
 
     procedure tabstractrecorddef.apply_rtti_directive(dir: trtti_directive);
       begin
-        rtti_clause:=dir.clause;
+        { records don't support the inherit clause but shouldn't
+          give an error either if used (for Delphi compatibility), 
+          so we silently enforce the clause as explicit. }
+        rtti_clause:=vcexplicit;
         rtti_options:=dir.options;
       end;
 

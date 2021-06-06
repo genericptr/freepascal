@@ -188,8 +188,7 @@ implementation
                 is_global and
                 not is_objc_class_or_protocol(def)
                ) or
-               (ds_rtti_table_used in def.defstates) or
-               ((def.typ=recorddef) and (trecorddef(def).has_extended_rtti)) then
+               (ds_rtti_table_used in def.defstates) then
               RTTIWriter.write_rtti(def,fullrtti);
           end;
       end;
