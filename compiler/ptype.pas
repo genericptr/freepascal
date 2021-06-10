@@ -1048,13 +1048,9 @@ implementation
          { in non-Delphi modes we need a strict private symbol without type
            count and type parameters in the name to simply resolving }
          maybe_insert_generic_rename_symbol(n,genericlist);
-        { apply $RTTI directive to current object }
-        if (current_module.pending_rtti<>nil) then
-          begin
-            current_structdef.apply_rtti_directive(current_module.pending_rtti);
-            current_module.pending_rtti.free;
-            current_module.pending_rtti:=nil;
-          end;
+         { apply $RTTI directive to current object }
+         current_structdef.apply_rtti_directive(current_module.rtti_directive);
+         
          if m_advanced_records in current_settings.modeswitches then
            begin
              parse_record_members(recsym);

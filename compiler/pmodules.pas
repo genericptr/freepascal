@@ -929,8 +929,6 @@ type
          { parse hint directives }
          try_consume_hintdirective(current_module.moduleoptions, current_module.deprecatedmsg);
 
-         consume(_SEMICOLON);
-
          { handle the global switches, do this before interface, because after interface has been
            read, all following directives are parsed as well }
          setupglobalswitches;
@@ -946,6 +944,9 @@ type
          { load default system unit, it must be loaded before interface is parsed
            else we cannot use e.g. feature switches before the next real token }
          loadsystemunit;
+
+         { consume the semicolon now that the system unit is loaded }
+         consume(_SEMICOLON);
 
          { system unit is loaded, now insert feature defines }
          for feature:=low(tfeature) to high(tfeature) do
@@ -2029,8 +2030,6 @@ type
                 read, all following directives are parsed as well }
               setupglobalswitches;
 
-              consume(_SEMICOLON);
-
 {$ifdef DEBUG_NODE_XML}
               XMLInitializeNodeFile('library', program_name);
 {$endif DEBUG_NODE_XML}
@@ -2079,8 +2078,6 @@ type
                 read, all following directives are parsed as well }
               setupglobalswitches;
 
-              consume(_SEMICOLON);
-
 {$ifdef DEBUG_NODE_XML}
               XMLInitializeNodeFile('program', program_name);
 {$endif DEBUG_NODE_XML}
@@ -2115,6 +2112,9 @@ type
 
          { load system unit }
          loadsystemunit;
+
+         { consume the semicolon now that the system unit is loaded }
+         consume(_SEMICOLON);
 
          { system unit is loaded, now insert feature defines }
          for feature:=low(tfeature) to high(tfeature) do

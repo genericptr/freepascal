@@ -340,8 +340,7 @@ interface
             instead of by generating an initialised data sectino }
           tcinitcode     : tnode;
           { extended rtti }
-          rtti_clause: trtti_clause;
-          rtti_options: array[trtti_option] of trtti_visibilities;
+          rtti: trtti_directive;
           constructor create(const n:string; dt:tdeftyp;doregister:boolean);
           constructor ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -4943,18 +4942,20 @@ implementation
         { records don't support the inherit clause but shouldn't
           give an error either if used (for Delphi compatibility), 
           so we silently enforce the clause as explicit. }
-        rtti_clause:=vcexplicit;
-        rtti_options:=dir.options;
+        rtti.clause:=vcexplicit;
+        rtti.options:=dir.options;
       end;
 
 
     function tabstractrecorddef.is_visible_for_rtti(option: trtti_option; vis: tvisibility): boolean;
       begin
         case vis of
-          vis_private:   result:=vcprivate in rtti_options[option];
-          vis_protected: result:=vcprotected in rtti_options[option];
-          vis_public:    result:=vcpublic in rtti_options[option];
-          vis_published: result:=vcpublished in rtti_options[option];
+          vis_private,
+          vis_strictprivate:   result:=vcprivate in rtti.options[option];
+          vis_protected,
+          vis_strictprotected: result:=vcprotected in rtti.options[option];
+          vis_public:          result:=vcpublic in rtti.options[option];
+          vis_published:       result:=vcpublished in rtti.options[option];
           otherwise
             result:=false;
         end;
@@ -4964,22 +4965,22 @@ implementation
     function tabstractrecorddef.rtti_visibilities_for_option(option: trtti_option): tvisibilities;
       begin
         result:=[];
-        if vcprivate in rtti_options[option] then
+        if vcprivate in rtti.options[option] then
           include(result,vis_private);
-        if vcprotected in rtti_options[option] then
+        if vcprotected in rtti.options[option] then
           include(result,vis_protected);
-        if vcpublic in rtti_options[option] then
+        if vcpublic in rtti.options[option] then
           include(result,vis_public);
-        if vcpublished in rtti_options[option] then
+        if vcpublished in rtti.options[option] then
           include(result,vis_published);
       end;
 
 
     function tabstractrecorddef.has_extended_rtti: boolean;
       begin
-        result := (rtti_options[roFields]<>[]) or
-                  (rtti_options[roMethods]<>[]) or
-                  (rtti_options[roProperties]<>[]);
+        result := (rtti.options[roFields]<>[]) or
+                  (rtti.options[roMethods]<>[]) or
+                  (rtti.options[roProperties]<>[]);
       end;
 
 {$ifdef DEBUG_NODE_XML}
@@ -8522,13 +8523,13 @@ implementation
 
     procedure tobjectdef.apply_rtti_directive(dir: trtti_directive);
       begin
-        rtti_clause:=dir.clause;
-        rtti_options:=dir.options;
-        if (dir.clause=vcInherit) and assigned(childof) and (childof.rtti_clause<>vcNone) then
+        rtti.clause:=dir.clause;
+        rtti.options:=dir.options;
+        if (dir.clause=vcInherit) and assigned(childof) and (childof.rtti.clause<>vcNone) then
           begin
-            rtti_options[roMethods]:=rtti_options[roMethods]+childof.rtti_options[roMethods];
-            rtti_options[roFields]:=rtti_options[roFields]+childof.rtti_options[roFields];
-            rtti_options[roProperties]:=rtti_options[roProperties]+childof.rtti_options[roProperties];
+            rtti.options[roMethods]:=rtti.options[roMethods]+childof.rtti.options[roMethods];
+            rtti.options[roFields]:=rtti.options[roFields]+childof.rtti.options[roFields];
+            rtti.options[roProperties]:=rtti.options[roProperties]+childof.rtti.options[roProperties];
           end;
       end;
 

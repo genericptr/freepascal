@@ -1616,12 +1616,7 @@ implementation
               olddef:=nil;
               
             { apply $RTTI directive to current object }
-            if current_module.pending_rtti<>nil then
-              begin
-                current_structdef.apply_rtti_directive(current_module.pending_rtti);
-                current_module.pending_rtti.free;
-                current_module.pending_rtti:=nil;
-              end;
+            current_structdef.apply_rtti_directive(current_module.rtti_directive);
 
             { parse and insert object members }
             parse_object_members;

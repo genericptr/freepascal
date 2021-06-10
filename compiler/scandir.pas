@@ -64,7 +64,7 @@ unit scandir;
       defutil,
       dirparse,link,
       syscinfo,
-      symconst,symtable,symbase,symtype,symsym,
+      symconst,symtable,symbase,symtype,symsym,symdef,
       rabase;
 
 {*****************************************************************************
@@ -1324,6 +1324,85 @@ unit scandir;
           Message(scan_e_resourcefiles_not_supported);
       end;
 
+    procedure dir_rtti;
+
+      procedure rtti_error(msg: string);
+        begin
+          writeln(msg);
+          internalerror(0);
+        end;
+
+      function read_rtti_options: trtti_visibilities;
+        var
+          sym: ttypesym;
+          value: tnormalset;
+        begin
+          result:=[];
+          sym:=search_system_type('TVISIBILITYCLASSES');
+          if current_scanner.readpreprocset(tsetdef(sym.typedef),value) then
+            begin
+              result:=prtti_visibilities(@value)^;
+              if (vcPrivate) in result then
+                writeln('🐟 vcPrivate');
+              if (vcProtected) in result then
+                writeln('🐟 vcProtected');
+              if (vcPublic) in result then
+                writeln('🐟 vcPublic');
+              if (vcPublished) in result then
+                writeln('🐟 vcPublished');
+            end;
+        end;
+
+      var
+        id: string;
+        mac: tmacro;
+        dir: trtti_directive;
+      begin
+        dir.clause:=vcNone;
+        dir.options[roMethods]:=[];
+        dir.options[roFields]:=[];
+        dir.options[roProperties]:=[];
+
+        current_scanner.skipspace;
+        id:=current_scanner.readid;
+        case id of
+          'INHERIT':
+            dir.clause:=vcInherit;
+          'EXPLICIT':
+            dir.clause:=vcExplicit;
+          otherwise
+            rtti_error('invalid rtti clause '+id);
+        end;
+
+        current_scanner.skipspace;
+        id:=current_scanner.readid;
+        { the inherit clause doesn't require any options but explicit does }
+        if (id='') and (dir.clause=vcExplicit) then
+          rtti_error('explicit clause requires at least one option');
+        while id<>'' do
+          begin
+            case id of
+              'METHODS':
+                dir.options[roMethods]:=read_rtti_options;
+              'PROPERTIES':
+                dir.options[roProperties]:=read_rtti_options;
+              'FIELDS':
+                dir.options[roFields]:=read_rtti_options;
+              otherwise
+                rtti_error('invalid rtti option '+id);
+            end;
+            current_scanner.skipspace;
+            id:=current_scanner.readid;
+          end;
+
+        { make sure the directive is terminated }
+        if (id='') and (c<>'}') then
+          rtti_error('expected end of rtti direction');
+
+        { set the directive in the module }
+        current_module.rtti_directive:=dir;
+      end;
+
     procedure dir_saturation;
       begin
         do_localswitch(cs_mmx_saturation);
@@ -2027,6 +2106,7 @@ unit scandir;
         AddDirective('PROFILE',directive_all, @dir_profile);
         AddDirective('PUSH',directive_all, @dir_push);
         AddDirective('R',directive_all, @dir_resource);
+        AddDirective('RTTI',directive_all, @dir_rtti);
         AddDirective('RANGECHECKS',directive_all, @dir_rangechecks);
         AddDirective('REFERENCEINFO',directive_all, @dir_referenceinfo);
         AddDirective('REGION',directive_all, @dir_region);

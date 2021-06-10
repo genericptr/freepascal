@@ -234,7 +234,7 @@ interface
          tcinitcode     : tobject;
 
         { the current extended rtti directive }
-        pending_rtti : trtti_directive;
+        rtti_directive : trtti_directive;
 
         {create creates a new module which name is stored in 's'. LoadedFrom
         points to the module calling it. It is nil for the first compiled
@@ -757,8 +757,6 @@ implementation
 {$ifdef MEMDEBUG}
         memsymtable.stop;
 {$endif}
-        if assigned(pending_rtti) then
-          pending_rtti.free;
         inherited Destroy;
       end;
 

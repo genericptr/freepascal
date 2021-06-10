@@ -28,6 +28,7 @@ interface
     uses
        cclasses,
        globtype,globals,constexp,version,tokens,
+       symtype,symdef,symsym,
        verbose,comphook,
        finput,
        widestr;
@@ -230,6 +231,7 @@ interface
           procedure readtoken(allowrecordtoken:boolean);
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
+          function  readpreprocset(conforms_to:tsetdef;var value:tnormalset):boolean;
           function  asmgetchar:char;
        end;
 
@@ -286,7 +288,7 @@ implementation
       cutils,cfileutl,
       systems,
       switches,
-      symbase,symtable,symtype,symsym,symconst,symdef,defutil,
+      symbase,symtable,symconst,defutil,defcmp,node,
       { This is needed for tcputype }
       cpuinfo,
       fmodule,fppu,
@@ -970,6 +972,7 @@ type
     function asInt: Integer;
     function asInt64: Int64;
     function asStr: String;
+    function asSet: tnormalset;
     destructor destroy; override;
   end;
 
@@ -1426,6 +1429,11 @@ type
       result:=value.valueord.svalue;
     end;
 
+  function texprvalue.asSet: tnormalset;
+    begin
+      result:=pnormalset(value.valueptr)^;
+    end;
+
   function texprvalue.asStr: String;
     var
       b:byte;
@@ -1480,7 +1488,7 @@ type
   const
     preproc_operators=[_EQ,_NE,_LT,_GT,_LTE,_GTE,_MINUS,_PLUS,_STAR,_SLASH,_OP_DIV,_OP_MOD,_OP_SHL,_OP_SHR,_OP_IN,_OP_AND,_OP_OR,_OP_XOR];
 
-    function preproc_comp_expr:texprvalue;
+    function preproc_comp_expr(conform_to:tdef=nil):texprvalue;
 
         function preproc_sub_expr(pred_level:Toperator_precedence;eval:Boolean):texprvalue; forward;
 
@@ -2092,14 +2100,35 @@ type
                                   end;
                                 enumsym:
                                   begin
-                                    result.free;
-                                    result:=texprvalue.create_int(tenumsym(srsym).value);
+                                    { the enum must be belong to the set type }
+                                    if (conform_to<>nil) and (conform_to.typ=setdef) then
+                                      begin
+                                        // TODO: te_exact or lower?
+                                        if compare_defs(tenumsym(srsym).definition,tsetdef(conform_to).elementdef,nothingn)<>te_exact then
+                                          begin
+                                            result.free;
+                                            result:=nil;
+                                            Message(scan_e_error_in_preproc_expr);
+                                          end;
+                                      end;
+                                    if result<>nil then
+                                      begin
+                                        result.free;
+                                        result:=texprvalue.create_int(tenumsym(srsym).value);
+                                      end;
                                   end;
                                 else
                                   ;
                               end;
                           end
-                        end
+                        { the id must be belong to the set type }
+                        else if (conform_to<>nil) and (conform_to.typ=setdef) then
+                          begin
+                            result.free;
+                            result:=nil;
+                            Message(scan_e_error_in_preproc_expr);
+                          end;
+                      end
                       { skip id(<expr>) if expression must not be evaluated }
                       else if not(eval) and (result.consttyp=conststring) then
                         begin
@@ -2130,13 +2159,22 @@ type
                while current_scanner.preproc_token in [_ID,_INTCONST] do
                begin
                  exprvalue:=preproc_factor(eval);
+                 { the const set does not conform to the set def }
+                 if (conform_to<>nil) and 
+                   (conform_to.typ=setdef) and 
+                   (exprvalue.consttyp=constnone) then
+                   begin
+                     result:=texprvalue.create_error;
+                     break;
+                   end;
                  include(ns,exprvalue.asInt);
                  if current_scanner.preproc_token = _COMMA then
                    preproc_consume(_COMMA);
                end;
-               // TODO Add check of setElemType
+               // TODO: Add check of setElemType, this is done in preproc_factor correctly now?
                preproc_consume(_RECKKLAMMER);
-               result:=texprvalue.create_set(ns);
+               if result=nil then
+                 result:=texprvalue.create_set(ns);
              end
            else if current_scanner.preproc_token = _INTCONST then
              begin
@@ -2665,163 +2703,6 @@ type
            else
              Message(scan_f_include_deep_ten);
          end;
-      end;
-
-    procedure dir_rtti;
-      const
-        DefaultFieldRttiVisibility = [vcPrivate..vcPublished];
-        DefaultMethodRttiVisibility = [vcPublic..vcPublished];
-        DefaultPropertyRttiVisibility = [vcPublic..vcPublished];
-
-      procedure consume(i : ttoken);
-        begin
-          current_scanner.readtoken(false);
-          if (token<>i) and (idtoken<>i) then
-            if token=_id then
-              Message2(scan_f_syn_expected,tokeninfo^[i].str,'identifier '+pattern)
-            else
-              Message2(scan_f_syn_expected,tokeninfo^[i].str,tokeninfo^[token].str)
-        end;
-
-      function consume_id: string;
-        var
-          last: char;
-        begin
-          last:=c;
-          current_scanner.readtoken(false);
-          if (token<>_ID) then
-            Message2(scan_f_syn_expected,tokeninfo^[_ID].str,last);
-          result:=pattern;
-        end;
-
-      procedure rtti_error(msg: string);
-        begin
-          writeln(msg);
-          internalerror(0);
-        end;
-
-      function read_rtti_options: trtti_visibilities;
-        var
-          id: string;
-        begin
-          result:=[];
-
-          consume(_LKLAMMER);
-          { first try to read explicit constants }
-          current_scanner.skipspace;
-          id:=current_scanner.readid;
-          if id<>'' then
-            begin
-              case id of
-                'DEFAULTFIELDRTTIVISIBILITY':
-                  result:=DefaultFieldRttiVisibility;
-                'DEFAULTMETHODRTTIVISIBILITY':
-                  result:=DefaultMethodRttiVisibility;
-                'DEFAULTPROPERTYRTTIVISIBILITY':
-                  result:=DefaultPropertyRttiVisibility;
-                otherwise
-                  rtti_error('invalid default visibility '+id);
-              end;
-              consume(_RKLAMMER);
-              exit;
-            end;
-          consume(_LECKKLAMMER);
-
-          current_scanner.skipspace;
-          id:=current_scanner.readid;
-          while id<>'' do
-            begin
-              case id of
-                'VCPRIVATE':
-                  if not(vcPrivate in result) then
-                    include(result, vcPrivate)
-                  else
-                    rtti_error('duplicate visibility '+id);
-                'VCPROTECTED':
-                  if not(vcProtected in result) then
-                    include(result, vcProtected)
-                  else
-                    rtti_error('duplicate visibility '+id);
-                'VCPUBLIC':
-                  if not(vcPublic in result) then
-                    include(result, vcPublic)
-                  else
-                    rtti_error('duplicate visibility '+id);
-                'VCPUBLISHED':
-                  if not(vcPublished in result) then
-                    include(result, vcPublished)
-                  else
-                    rtti_error('duplicate visibility '+id);
-                otherwise
-                  rtti_error('invalid visibility '+id);
-              end;
-              { read next visibility section }
-              current_scanner.skipspace;
-              current_scanner.readtoken(false);
-              case token of
-                _COMMA:
-                  begin
-                    current_scanner.skipspace;
-                    id:=consume_id;
-                  end;
-                _RECKKLAMMER:
-                  break;
-              end;
-            end;
-
-          { nothing was found so consume the trailing _RECKKLAMMER }
-          if result=[] then
-            consume(_RECKKLAMMER);
-          consume(_RKLAMMER);
-        end;
-
-      var
-        id: string;
-        mac: tmacro;
-        dir: trtti_directive;
-      begin
-        dir:=trtti_directive.create;
-
-        current_scanner.skipspace;
-        id:=consume_id;
-        case id of
-          'INHERIT':
-            dir.clause:=vcInherit;
-          'EXPLICIT':
-            dir.clause:=vcExplicit;
-          otherwise
-            rtti_error('invalid rtti clause '+id);
-        end;
-
-        current_scanner.skipspace;
-        if dir.clause=vcExplicit then
-          id:=consume_id
-        else
-          id:=current_scanner.readid;
-        while id<>'' do
-          begin
-            case id of
-              'METHODS':
-                dir.options[roMethods]:=read_rtti_options;
-              'PROPERTIES':
-                dir.options[roProperties]:=read_rtti_options;
-              'FIELDS':
-                dir.options[roFields]:=read_rtti_options;
-              otherwise
-                rtti_error('invalid rtti option '+id);
-            end;
-            current_scanner.skipspace;
-            id:=current_scanner.readid;
-          end;
-
-        { make sure the directive is terminated }
-        if (id='') and (c<>'}') then
-          rtti_error('expected end of rtti direction');
-
-        { set the directive }
-        if current_module.pending_rtti<>nil then  
-          current_module.pending_rtti.free;
-        current_module.pending_rtti:=dir;
       end;
 
 {*****************************************************************************
@@ -5952,6 +5833,26 @@ exit_label:
       end;
 
 
+    function tscannerfile.readpreprocset(conforms_to:tsetdef;var value:tnormalset):boolean;
+      var
+        hs : texprvalue;
+      begin
+        hs:=preproc_comp_expr(conforms_to);
+        if hs.def.typ=setdef then
+          begin
+            value:=hs.asSet;
+            result:=true;
+          end
+        else
+          begin
+            // TODO: what error message?
+            hs.error('Set','?');
+            result:=false;
+          end;
+        hs.free;
+      end;
+
+
     function tscannerfile.asmgetchar : char;
       begin
          readchar;
@@ -6015,9 +5916,6 @@ exit_label:
         AddConditional('ELSE',directive_all, @dir_else);
         AddConditional('ELSEIF',directive_all, @dir_elseif);
         AddConditional('ENDIF',directive_all, @dir_endif);
-
-        { Extended RTTI }
-        AddConditional('RTTI',directive_all, @dir_rtti);
 
         { Directives and conditionals for all modes except mode macpas}
         AddDirective('INCLUDE',directive_turbo, @dir_include);

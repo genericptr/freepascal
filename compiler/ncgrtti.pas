@@ -114,13 +114,20 @@ implementation
 
     function visibility_to_rtti(vis: tvisibility): trtti_visibility;
       begin
+        // TODO: make an extra "strict" bit in the rtti visibility field
         case vis of
-          vis_private: result:=vcprivate;
-          vis_protected: result:=vcprotected;
-          vis_public: result:=vcpublic;
-          vis_published: result:=vcpublished;
+          vis_private,
+          vis_strictprivate:
+            result:=vcprivate;
+          vis_protected,
+          vis_strictprotected:
+            result:=vcprotected;
+          vis_public:
+            result:=vcpublic;
+          vis_published:
+            result:=vcpublished;
           otherwise
-            // TODO: make real error!
+            // TODO: internalerror?
             internalerror(1);
         end;
       end;
