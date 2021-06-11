@@ -1951,7 +1951,8 @@ type
          resources_used : boolean;
          program_uses_checkpointer : boolean;
          program_name : ansistring;
-         consume_semicolon_after_uses : boolean;
+         consume_semicolon_after_uses,
+         consume_semicolon_after_loaded : boolean;
          ps : tprogramparasym;
          paramnum : longint;
          textsym : ttypesym;
@@ -1968,6 +1969,8 @@ type
          init_procinfo:=nil;
          finalize_procinfo:=nil;
          resources_used:=false;
+         consume_semicolon_after_loaded:=false;
+
          { make the compiler happy and avoid an uninitialized variable warning on Setlength(sc,length(sc)+1); }
          sc:=nil;
 
@@ -2030,6 +2033,8 @@ type
                 read, all following directives are parsed as well }
               setupglobalswitches;
 
+              consume_semicolon_after_loaded:=true;
+
 {$ifdef DEBUG_NODE_XML}
               XMLInitializeNodeFile('library', program_name);
 {$endif DEBUG_NODE_XML}
@@ -2078,6 +2083,8 @@ type
                 read, all following directives are parsed as well }
               setupglobalswitches;
 
+              consume_semicolon_after_loaded:=true;
+
 {$ifdef DEBUG_NODE_XML}
               XMLInitializeNodeFile('program', program_name);
 {$endif DEBUG_NODE_XML}
@@ -2114,7 +2121,8 @@ type
          loadsystemunit;
 
          { consume the semicolon now that the system unit is loaded }
-         consume(_SEMICOLON);
+         if consume_semicolon_after_loaded then
+           consume(_SEMICOLON);
 
          { system unit is loaded, now insert feature defines }
          for feature:=low(tfeature) to high(tfeature) do
