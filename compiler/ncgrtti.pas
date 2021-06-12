@@ -751,9 +751,9 @@ implementation
       begin
         list:=TFPList.Create;
         { build list of visible fields }
-        for i:=0 to def.symtable.SymList.Count-1 do
+        for i:=0 to def.symtable.symlist.Count-1 do
           begin
-            sym:=tsym(def.symtable.SymList[i]);
+            sym:=tsym(def.symtable.symlist[i]);
             if (sym.typ=fieldvarsym) and
                not(sp_static in sym.symoptions) and
                def.is_visible_for_rtti(rofields, sym.visibility) then
@@ -1574,6 +1574,7 @@ implementation
            { write extended rtti }
            if rt=fullrtti then
              begin
+               // TODO: write_extended_field_table is crashing sysctl.pp while compiling the RTL
                write_extended_field_table(tcb,def,defaultpacking);
                write_extended_method_table(tcb,def,defaultpacking);
                write_extended_property_table;

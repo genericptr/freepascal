@@ -609,6 +609,8 @@ implementation
                (sym.visibility=vis_published) then
              begin
                 { legacy fields can be objectdef only }
+                { TODO: show the internal error IF the extended RTTI for published fields is not set
+                  because this loop will encounter both legacy and extended RTTI }
                 if tfieldvarsym(sym).vardef.typ<>objectdef then
                   continue;
                 classindex:=classtablelist.IndexOf(tfieldvarsym(sym).vardef);

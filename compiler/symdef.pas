@@ -336,11 +336,10 @@ interface
           cloneddef      : tabstractrecorddef;
           cloneddefderef : tderef;
           objectoptions  : tobjectoptions;
+          rtti           : trtti_directive;
           { for targets that initialise typed constants via explicit assignments
             instead of by generating an initialised data sectino }
           tcinitcode     : tnode;
-          { extended rtti }
-          rtti: trtti_directive;
           constructor create(const n:string; dt:tdeftyp;doregister:boolean);
           constructor ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -4554,6 +4553,7 @@ implementation
         if (import_lib^='') then
           stringdispose(import_lib);
         ppufile.getset(tppuset4(objectoptions));
+        ppufile.getdata(rtti,sizeof(rtti));
       end;
 
     procedure tabstractrecorddef.ppuwrite(ppufile: tcompilerppufile);
@@ -4565,6 +4565,7 @@ implementation
         else
           ppufile.putstring('');
         ppufile.putset(tppuset4(objectoptions));
+        ppufile.putdata(rtti,sizeof(rtti));
       end;
 
     destructor tabstractrecorddef.destroy;

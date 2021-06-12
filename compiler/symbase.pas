@@ -144,11 +144,24 @@ interface
        end;
 
        { extended rtti directive }
-       trtti_clause = (vcNone,vcInherit,vcExplicit);
-       trtti_visibility = (vcPrivate,vcProtected,vcPublic,vcPublished);
+       trtti_clause = (
+         vcNone,
+         vcInherit,
+         vcExplicit
+       );
+       trtti_visibility = (
+         vcPrivate,
+         vcProtected,
+         vcPublic,
+         vcPublished
+       );
        trtti_visibilities = set of trtti_visibility;
        prtti_visibilities = ^trtti_visibilities;
-       trtti_option = (roMethods,roFields,roProperties);
+       trtti_option = (
+        roMethods,
+        roFields,
+        roProperties
+       );
        trtti_directive = record
          clause: trtti_clause;
          options: array[trtti_option] of trtti_visibilities;
