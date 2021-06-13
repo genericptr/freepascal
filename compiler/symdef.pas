@@ -4555,7 +4555,6 @@ implementation
         if (import_lib^='') then
           stringdispose(import_lib);
         ppufile.getset(tppuset4(objectoptions));
-        //ppufile.getdata(rtti,sizeof(rtti));
         rtti.clause:=trtti_clause(ppufile.getbyte);
         for ro in trtti_option do
           ppufile.getset(tppuset1(rtti.options[ro]));
@@ -4572,7 +4571,6 @@ implementation
         else
           ppufile.putstring('');
         ppufile.putset(tppuset4(objectoptions));
-        //ppufile.putdata(rtti,sizeof(rtti));
         ppufile.putbyte(byte(rtti.clause));
         for rv in rtti.options do
           ppufile.putset(tppuset1(rv));

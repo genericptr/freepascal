@@ -127,8 +127,7 @@ implementation
           vis_published:
             result:=rv_published;
           otherwise
-            // TODO: internalerror?
-            internalerror(1);
+            internalerror(2021061301);
         end;
       end;
 

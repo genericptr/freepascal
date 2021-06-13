@@ -1327,6 +1327,11 @@ unit scandir;
     procedure dir_rtti;
 
       // TODO: placeholder for new error messages to be created
+      {
+        rtti_error('invalid rtti clause '+id);
+        rtti_error('explicit clause requires at least one option');
+        rtti_error('expected end of rtti directive');
+      }
       procedure rtti_error(msg: string);
         begin
           writeln(msg);
@@ -1399,7 +1404,7 @@ unit scandir;
 
         { make sure the directive is terminated }
         if (id='') and (c<>'}') then
-          rtti_error('expected end of rtti direction');
+          rtti_error('expected end of rtti directive');
 
         { set the directive in the module }
         current_module.rtti_directive:=dir;
