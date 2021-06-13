@@ -118,14 +118,14 @@ implementation
         case vis of
           vis_private,
           vis_strictprivate:
-            result:=vcprivate;
+            result:=rv_private;
           vis_protected,
           vis_strictprotected:
-            result:=vcprotected;
+            result:=rv_protected;
           vis_public:
-            result:=vcpublic;
+            result:=rv_public;
           vis_published:
-            result:=vcpublished;
+            result:=rv_published;
           otherwise
             // TODO: internalerror?
             internalerror(1);
@@ -728,7 +728,7 @@ implementation
             begin
               sym:=tprocsym(def.symtable.symlist[i]);
               for j:=0 to sym.procdeflist.count-1 do
-                if def.is_visible_for_rtti(romethods,tprocdef(sym.procdeflist[j]).visibility) then
+                if def.is_visible_for_rtti(ro_methods,tprocdef(sym.procdeflist[j]).visibility) then
                   inc(methodcount);
             end;
 
@@ -738,7 +738,7 @@ implementation
         tcb.emit_tai(Tai_const.Create_16bit(methodcount),u16inttype);
         { emit method entries (array) }
         if methodcount>0 then
-          write_methods(tcb,def.symtable,true,def.rtti_visibilities_for_option(romethods));
+          write_methods(tcb,def.symtable,true,def.rtti_visibilities_for_option(ro_methods));
         tcb.end_anonymous_record;
       end;
 
@@ -756,7 +756,7 @@ implementation
             sym:=tsym(def.symtable.symlist[i]);
             if (sym.typ=fieldvarsym) and
                not(sp_static in sym.symoptions) and
-               def.is_visible_for_rtti(rofields, sym.visibility) then
+               def.is_visible_for_rtti(ro_fields, sym.visibility) then
               list.add(sym);
           end;
         {
@@ -1525,7 +1525,7 @@ implementation
             visibilities: tvisibilities;
           begin
             propnamelist:=TFPHashObjectList.Create;
-            visibilities:=def.rtti_visibilities_for_option(roproperties);
+            visibilities:=def.rtti_visibilities_for_option(ro_properties);
             collect_propnamelist(propnamelist,def,visibilities);
             properties_write_rtti_data(tcb,propnamelist,def.symtable,true,visibilities);
             propnamelist.free;
@@ -1752,7 +1752,7 @@ implementation
             visibilities : tvisibilities;
           begin
             propnamelist:=TFPHashObjectList.Create;
-            visibilities:=def.rtti_visibilities_for_option(roproperties);
+            visibilities:=def.rtti_visibilities_for_option(ro_properties);
             collect_propnamelist(propnamelist,def,visibilities);
             properties_write_rtti_data(tcb,propnamelist,def.symtable,true,visibilities);
             propnamelist.free;
@@ -2345,7 +2345,6 @@ implementation
               if (rt=initrtti) or (tobjectdef(def).objecttype=odt_object) then
                 fields_write_rtti(tobjectdef(def).symtable,rt)
               else
-                // TODO: make this work for extended rtti visibility
                 published_write_rtti(tobjectdef(def).symtable,rt);
 
               if (rt=fullrtti) then

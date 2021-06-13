@@ -4544,6 +4544,8 @@ implementation
       end;
 
     constructor tabstractrecorddef.ppuload(dt:tdeftyp;ppufile:tcompilerppufile);
+      var
+        ro: trtti_option;
       begin
         inherited ppuload(dt,ppufile);
         objrealname:=ppufile.getpshortstring;
@@ -4553,10 +4555,15 @@ implementation
         if (import_lib^='') then
           stringdispose(import_lib);
         ppufile.getset(tppuset4(objectoptions));
-        ppufile.getdata(rtti,sizeof(rtti));
+        //ppufile.getdata(rtti,sizeof(rtti));
+        rtti.clause:=trtti_clause(ppufile.getbyte);
+        for ro in trtti_option do
+          ppufile.getset(tppuset1(rtti.options[ro]));
       end;
 
     procedure tabstractrecorddef.ppuwrite(ppufile: tcompilerppufile);
+      var
+        rv: trtti_visibilities;
       begin
         inherited ppuwrite(ppufile);
         ppufile.putstring(objrealname^);
@@ -4565,7 +4572,10 @@ implementation
         else
           ppufile.putstring('');
         ppufile.putset(tppuset4(objectoptions));
-        ppufile.putdata(rtti,sizeof(rtti));
+        //ppufile.putdata(rtti,sizeof(rtti));
+        ppufile.putbyte(byte(rtti.clause));
+        for rv in rtti.options do
+          ppufile.putset(tppuset1(rv));
       end;
 
     destructor tabstractrecorddef.destroy;
@@ -4943,7 +4953,7 @@ implementation
         { records don't support the inherit clause but shouldn't
           give an error either if used (for Delphi compatibility), 
           so we silently enforce the clause as explicit. }
-        rtti.clause:=vcexplicit;
+        rtti.clause:=ec_explicit;
         rtti.options:=dir.options;
       end;
 
@@ -4952,11 +4962,11 @@ implementation
       begin
         case vis of
           vis_private,
-          vis_strictprivate:   result:=vcprivate in rtti.options[option];
+          vis_strictprivate:   result:=rv_private in rtti.options[option];
           vis_protected,
-          vis_strictprotected: result:=vcprotected in rtti.options[option];
-          vis_public:          result:=vcpublic in rtti.options[option];
-          vis_published:       result:=vcpublished in rtti.options[option];
+          vis_strictprotected: result:=rv_protected in rtti.options[option];
+          vis_public:          result:=rv_public in rtti.options[option];
+          vis_published:       result:=rv_published in rtti.options[option];
           otherwise
             result:=false;
         end;
@@ -4966,22 +4976,22 @@ implementation
     function tabstractrecorddef.rtti_visibilities_for_option(option: trtti_option): tvisibilities;
       begin
         result:=[];
-        if vcprivate in rtti.options[option] then
+        if rv_private in rtti.options[option] then
           include(result,vis_private);
-        if vcprotected in rtti.options[option] then
+        if rv_protected in rtti.options[option] then
           include(result,vis_protected);
-        if vcpublic in rtti.options[option] then
+        if rv_public in rtti.options[option] then
           include(result,vis_public);
-        if vcpublished in rtti.options[option] then
+        if rv_published in rtti.options[option] then
           include(result,vis_published);
       end;
 
 
     function tabstractrecorddef.has_extended_rtti: boolean;
       begin
-        result := (rtti.options[roFields]<>[]) or
-                  (rtti.options[roMethods]<>[]) or
-                  (rtti.options[roProperties]<>[]);
+        result := (rtti.options[ro_fields]<>[]) or
+                  (rtti.options[ro_methods]<>[]) or
+                  (rtti.options[ro_properties]<>[]);
       end;
 
 {$ifdef DEBUG_NODE_XML}
@@ -8526,11 +8536,11 @@ implementation
       begin
         rtti.clause:=dir.clause;
         rtti.options:=dir.options;
-        if (dir.clause=vcInherit) and assigned(childof) and (childof.rtti.clause<>vcNone) then
+        if (dir.clause=ec_inherit) and assigned(childof) and (childof.rtti.clause<>ec_none) then
           begin
-            rtti.options[roMethods]:=rtti.options[roMethods]+childof.rtti.options[roMethods];
-            rtti.options[roFields]:=rtti.options[roFields]+childof.rtti.options[roFields];
-            rtti.options[roProperties]:=rtti.options[roProperties]+childof.rtti.options[roProperties];
+            rtti.options[ro_methods]:=rtti.options[ro_methods]+childof.rtti.options[ro_methods];
+            rtti.options[ro_fields]:=rtti.options[ro_fields]+childof.rtti.options[ro_fields];
+            rtti.options[ro_properties]:=rtti.options[ro_properties]+childof.rtti.options[ro_properties];
           end;
       end;
 

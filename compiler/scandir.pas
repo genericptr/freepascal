@@ -1326,6 +1326,7 @@ unit scandir;
 
     procedure dir_rtti;
 
+      // TODO: placeholder for new error messages to be created
       procedure rtti_error(msg: string);
         begin
           writeln(msg);
@@ -1342,13 +1343,14 @@ unit scandir;
           if current_scanner.readpreprocset(tsetdef(sym.typedef),value) then
             begin
               result:=prtti_visibilities(@value)^;
-              if (vcPrivate) in result then
+              // TODO: testing the directive, remove later
+              if (rv_private) in result then
                 writeln('🐟 vcPrivate');
-              if (vcProtected) in result then
+              if (rv_protected) in result then
                 writeln('🐟 vcProtected');
-              if (vcPublic) in result then
+              if (rv_public) in result then
                 writeln('🐟 vcPublic');
-              if (vcPublished) in result then
+              if (rv_published) in result then
                 writeln('🐟 vcPublished');
             end;
         end;
@@ -1358,18 +1360,18 @@ unit scandir;
         mac: tmacro;
         dir: trtti_directive;
       begin
-        dir.clause:=vcNone;
-        dir.options[roMethods]:=[];
-        dir.options[roFields]:=[];
-        dir.options[roProperties]:=[];
+        dir.clause:=ec_none;
+        dir.options[ro_methods]:=[];
+        dir.options[ro_fields]:=[];
+        dir.options[ro_properties]:=[];
 
         current_scanner.skipspace;
         id:=current_scanner.readid;
         case id of
           'INHERIT':
-            dir.clause:=vcInherit;
+            dir.clause:=ec_inherit;
           'EXPLICIT':
-            dir.clause:=vcExplicit;
+            dir.clause:=ec_explicit;
           otherwise
             rtti_error('invalid rtti clause '+id);
         end;
@@ -1377,17 +1379,17 @@ unit scandir;
         current_scanner.skipspace;
         id:=current_scanner.readid;
         { the inherit clause doesn't require any options but explicit does }
-        if (id='') and (dir.clause=vcExplicit) then
+        if (id='') and (dir.clause=ec_explicit) then
           rtti_error('explicit clause requires at least one option');
         while id<>'' do
           begin
             case id of
               'METHODS':
-                dir.options[roMethods]:=read_rtti_options;
+                dir.options[ro_methods]:=read_rtti_options;
               'PROPERTIES':
-                dir.options[roProperties]:=read_rtti_options;
+                dir.options[ro_properties]:=read_rtti_options;
               'FIELDS':
-                dir.options[roFields]:=read_rtti_options;
+                dir.options[ro_fields]:=read_rtti_options;
               otherwise
                 rtti_error('invalid rtti option '+id);
             end;

@@ -540,7 +540,7 @@ implementation
 
          count:=0;
          _class.symtable.SymList.ForEachCall(@do_count_published_methods,@count);
-         if (count>0) or (_class.rtti.options[romethods]<>[]) then
+         if (count>0) or (_class.rtti.options[ro_methods]<>[]) then
            begin
               { in the list of the published methods (from objpas.inc):
                   tmethodnamerec = packed record
@@ -620,7 +620,7 @@ implementation
              end;
           end;
 
-        if (fieldcount>0) or (_class.rtti.options[rofields]<>[]) then
+        if (fieldcount>0) or (_class.rtti.options[ro_fields]<>[]) then
           begin
             if (tf_requires_proper_alignment in target_info.flags) then
               packrecords:=0
