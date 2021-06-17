@@ -231,7 +231,7 @@ interface
           procedure readtoken(allowrecordtoken:boolean);
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
-          function  readpreprocset(conforms_to:tsetdef;var value:tnormalset):boolean;
+          function  readpreprocset(conform_to:tsetdef;var value:tnormalset):boolean;
           function  asmgetchar:char;
        end;
 
@@ -2095,22 +2095,35 @@ type
                               case srsym.typ of
                                 constsym:
                                   begin
-                                    result.free;
-                                    result:=texprvalue.create_const(tconstsym(srsym));
+                                    { const def must conform to the set type }
+                                    if (conform_to<>nil) and 
+                                      (conform_to.typ=setdef) and
+                                      (tconstsym(srsym).constdef.typ=setdef) and
+                                      (compare_defs(tsetdef(tconstsym(srsym).constdef).elementdef,tsetdef(conform_to).elementdef,nothingn)<>te_exact) then
+                                        begin
+                                          result.free;
+                                          result:=nil;
+                                          // TODO: better error?
+                                          Message(scan_e_error_in_preproc_expr);
+                                        end;
+                                    if result<>nil then
+                                      begin
+                                        result.free;
+                                        result:=texprvalue.create_const(tconstsym(srsym));
+                                      end;
                                   end;
                                 enumsym:
                                   begin
-                                    { the enum must be belong to the set type }
-                                    if (conform_to<>nil) and (conform_to.typ=setdef) then
-                                      begin
-                                        // TODO: te_exact or lower?
-                                        if compare_defs(tenumsym(srsym).definition,tsetdef(conform_to).elementdef,nothingn)<>te_exact then
-                                          begin
-                                            result.free;
-                                            result:=nil;
-                                            Message(scan_e_error_in_preproc_expr);
-                                          end;
-                                      end;
+                                    { enum definition must conform to the set type }
+                                    if (conform_to<>nil) and 
+                                      (conform_to.typ=setdef) and
+                                      (compare_defs(tenumsym(srsym).definition,tsetdef(conform_to).elementdef,nothingn)<>te_exact) then
+                                        begin
+                                          result.free;
+                                          result:=nil;
+                                          // TODO: better error?
+                                          Message(scan_e_error_in_preproc_expr);
+                                        end;
                                     if result<>nil then
                                       begin
                                         result.free;
@@ -2126,6 +2139,7 @@ type
                           begin
                             result.free;
                             result:=nil;
+                            // TODO: better error?
                             Message(scan_e_error_in_preproc_expr);
                           end;
                       end
@@ -5833,11 +5847,11 @@ exit_label:
       end;
 
 
-    function tscannerfile.readpreprocset(conforms_to:tsetdef;var value:tnormalset):boolean;
+    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tnormalset):boolean;
       var
         hs : texprvalue;
       begin
-        hs:=preproc_comp_expr(conforms_to);
+        hs:=preproc_comp_expr(conform_to);
         if hs.def.typ=setdef then
           begin
             value:=hs.asSet;
@@ -5845,7 +5859,7 @@ exit_label:
           end
         else
           begin
-            // TODO: what error message?
+            // TODO: do we even need this error or should it be in preproc_comp_expr?
             hs.error('Set','?');
             result:=false;
           end;
