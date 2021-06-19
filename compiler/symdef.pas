@@ -4951,7 +4951,7 @@ implementation
         { records don't support the inherit clause but shouldn't
           give an error either if used (for Delphi compatibility), 
           so we silently enforce the clause as explicit. }
-        rtti.clause:=ec_explicit;
+        rtti.clause:=rtc_explicit;
         rtti.options:=dir.options;
       end;
 
@@ -8534,7 +8534,7 @@ implementation
       begin
         rtti.clause:=dir.clause;
         rtti.options:=dir.options;
-        if (dir.clause=ec_inherit) and assigned(childof) and (childof.rtti.clause<>ec_none) then
+        if (dir.clause=rtc_inherit) and assigned(childof) and (childof.rtti.clause<>rtc_none) then
           begin
             rtti.options[ro_methods]:=rtti.options[ro_methods]+childof.rtti.options[ro_methods];
             rtti.options[ro_fields]:=rtti.options[ro_fields]+childof.rtti.options[ro_fields];

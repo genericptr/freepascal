@@ -145,9 +145,9 @@ interface
 
        { extended rtti directive }
        trtti_clause = (
-         ec_none,
-         ec_inherit,
-         ec_explicit
+         rtc_none,
+         rtc_inherit,
+         rtc_explicit
        );
        trtti_visibility = (
          rv_private,

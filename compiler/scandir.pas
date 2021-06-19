@@ -1362,21 +1362,17 @@ unit scandir;
 
       var
         id: string;
-        mac: tmacro;
         dir: trtti_directive;
       begin
-        dir.clause:=ec_none;
-        dir.options[ro_methods]:=[];
-        dir.options[ro_fields]:=[];
-        dir.options[ro_properties]:=[];
+        dir:=default(trtti_directive);
 
         current_scanner.skipspace;
         id:=current_scanner.readid;
         case id of
           'INHERIT':
-            dir.clause:=ec_inherit;
+            dir.clause:=rtc_inherit;
           'EXPLICIT':
-            dir.clause:=ec_explicit;
+            dir.clause:=rtc_explicit;
           otherwise
             rtti_error('invalid rtti clause '+id);
         end;
@@ -1384,7 +1380,7 @@ unit scandir;
         current_scanner.skipspace;
         id:=current_scanner.readid;
         { the inherit clause doesn't require any options but explicit does }
-        if (id='') and (dir.clause=ec_explicit) then
+        if (id='') and (dir.clause=rtc_explicit) then
           rtti_error('explicit clause requires at least one option');
         while id<>'' do
           begin

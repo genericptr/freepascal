@@ -1573,7 +1573,7 @@ implementation
            { write extended rtti }
            if rt=fullrtti then
              begin
-               // TODO: write_extended_field_table is crashing sysctl.pp while compiling the RTL
+               // TODO: write_extended_field_table is crashing sysctl.pp while compiling the RTL (sysctl.pp)
                write_extended_field_table(tcb,def,defaultpacking);
                write_extended_method_table(tcb,def,defaultpacking);
                write_extended_property_table;
