@@ -146,7 +146,7 @@ general_t_unitscope=01027_T_Using unit scope: $1
 #
 # Scanner
 #
-# 02109 is the last used one
+# 02110 is the last used one
 #
 % \section{Scanner messages.}
 % This section lists the messages that the scanner emits. The scanner takes
@@ -435,7 +435,8 @@ scan_n_changecputype=02105_N_Changed CPU type to be consistent with specified co
 scan_e_emptymacroname=02106_E_A macro/compiler variable name cannot be empty
 scan_e_invalid_rtti_clause=02107_E_A Invalid RTTI clause (expected Explicit or Inherit)
 scan_e_incomplete_rtti_clause=02108_E_A Explicit clause requires at least one option (Methods, Properties or Fields)
-scan_e_invalid_rtti_option=02109_E_A Invalid RTTI option (expected Methods, Properties or Fields)
+scan_e_invalid_rtti_option=02109_E_A Invalid RTTI option "$1" (expected Methods, Properties or Fields)
+scan_e_duplicate_rtti_option=02110_E_A Duplicate RTTI option "$1"
 % \end{description}
 #
 # Parser

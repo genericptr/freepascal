@@ -57,7 +57,7 @@ unit scandir;
     uses
       SysUtils,
       cutils,cfileutl,
-      globals,widestr,cpuinfo,
+      globals,widestr,cpuinfo,tokens,
       verbose,comphook,ppu,
       scanner,switches,
       fmodule,
@@ -1337,26 +1337,32 @@ unit scandir;
             begin
               result:=prtti_visibilities(@value)^;
               // TODO: testing the directive, remove later
-              if rv_private in result then
-                writeln('🐟 vcPrivate');
-              if rv_protected in result then
-                writeln('🐟 vcProtected');
-              if rv_public in result then
-                writeln('🐟 vcPublic');
-              if rv_published in result then
-                writeln('🐟 vcPublished');
+              //if rv_private in result then
+              //  writeln('🐟 vcPrivate');
+              //if rv_protected in result then
+              //  writeln('🐟 vcProtected');
+              //if rv_public in result then
+              //  writeln('🐟 vcPublic');
+              //if rv_published in result then
+              //  writeln('🐟 vcPublished');
             end;
         end;
 
       var
-        id: string;
         dir: trtti_directive;
+        option: trtti_option;
+        options: array[trtti_option] of boolean;
       begin
         dir:=default(trtti_directive);
 
+        options[ro_fields]:=false;
+        options[ro_methods]:=false;
+        options[ro_properties]:=false;
+
+        { read the clause }
         current_scanner.skipspace;
-        id:=current_scanner.readid;
-        case id of
+        current_scanner.readid;
+        case pattern of
           'INHERIT':
             dir.clause:=rtc_inherit;
           'EXPLICIT':
@@ -1365,25 +1371,33 @@ unit scandir;
             Message(scan_e_invalid_rtti_clause);
         end;
 
+        { read the visibility options}
         current_scanner.skipspace;
-        id:=current_scanner.readid;
+        current_scanner.readid;
         { the inherit clause doesn't require any options but explicit does }
-        if (id='') and (dir.clause=rtc_explicit) then
+        if (pattern='') and (dir.clause=rtc_explicit) then
           Message(scan_e_incomplete_rtti_clause);
-        while id<>'' do
+        while pattern<>'' do
           begin
-            case id of
-              'METHODS':
-                dir.options[ro_methods]:=read_rtti_options;
-              'PROPERTIES':
-                dir.options[ro_properties]:=read_rtti_options;
-              'FIELDS':
-                dir.options[ro_fields]:=read_rtti_options;
+            case pattern of
+              'METHODS': option:=ro_methods;
+              'PROPERTIES': option:=ro_properties;
+              'FIELDS': option:=ro_fields;
               otherwise
-                Message(scan_e_invalid_rtti_option);
+                begin
+                  if current_scanner.preproc_token=_ID then
+                    Message1(scan_e_invalid_rtti_option,pattern);
+                  break;
+                end;
             end;
-            current_scanner.skipspace;
-            id:=current_scanner.readid;
+            { the option has already been used }
+            if options[option] then
+              begin
+                Message1(scan_e_duplicate_rtti_option,pattern);
+                break;
+              end;
+            dir.options[option]:=read_rtti_options;
+            options[option]:=true;
           end;
 
         { set the directive in the module }

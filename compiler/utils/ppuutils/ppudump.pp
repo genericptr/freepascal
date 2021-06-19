@@ -3241,45 +3241,56 @@ type
     str  : string[10];
   end;
 const
-  visopt : array[1..ord(high(trtti_visibility))] of tvisopt=(
+  visopt : array[0..ord(high(trtti_visibility))] of tvisopt=(
      (mask:rv_private;    str:'Private'),
      (mask:rv_protected;  str:'Protected'),
      (mask:rv_public;     str:'Public'),
      (mask:rv_published;  str:'Published')
   );
+type
+  toptionopt=record
+    mask : trtti_option;
+    str  : string[10];
+  end;
+const
+  voptionopt : array[0..ord(high(trtti_option))] of toptionopt=(
+     (mask:ro_methods;    str:'Methods'),
+     (mask:ro_fields;     str:'Fields'),
+     (mask:ro_properties; str:'Properties')
+  );
 var
   clause: string;
-  ro: trtti_option;
-  option: tppuset1;
+  visibilities: trtti_visibilities;
+  first: boolean;
+  i, ro: integer;
 begin
-  {
-   trtti_visibility = (
-     rv_private,
-     rv_protected,
-     rv_public,
-     rv_published
-
-   trtti_clause = (
-     rtc_none,
-     rtc_inherit,
-     rtc_explicit
-
-   rtti.clause:=trtti_clause(ppufile.getbyte);
-   for ro in trtti_option do
-     ppufile.getset(tppuset1(rtti.options[ro]));
-  }
   clause:='';
   case trtti_clause(ppufile.getbyte) of
     rtc_none: clause:='None';
     rtc_inherit: clause:='Inherit';
     rtc_explicit: clause:='Explicit';
   end;
-  writeln([space,'   Clause : ',clause]);
+  writeln([space,'       Clause : ',clause]);
 
-  for ro in trtti_option do
+  for ro:=0 to high(voptionopt) do
     begin
-      ppufile.getset(option);
-      //ppufile.getset(tppuset1(rtti.options[ro]));
+      ppufile.getset(tppuset1(visibilities));
+      if visibilities<>[] then
+        begin
+          write([space,'       ',voptionopt[ro].str,' : ']);
+          first:=true;
+          for i:=0 to high(visopt) do
+            if visopt[i].mask in visibilities then
+              begin
+                if first then
+                  first:=false
+                else
+                  write(', ');
+                write(visopt[i].str);
+              end;
+          if not first then
+            writeln;
+        end;
     end;
 end;
 
@@ -4459,6 +4470,7 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             writeln([space,'    Extended RTTI : ']);
              readextendedrtti;
              if (df_copied_def in defoptions) then
                begin
@@ -4498,6 +4510,7 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             writeln([space,'    Extended RTTI : ']);
              readextendedrtti;
              otb:=getbyte;
              write  ([space,'             Type : ']);

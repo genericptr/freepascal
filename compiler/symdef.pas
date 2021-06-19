@@ -4562,7 +4562,7 @@ implementation
 
     procedure tabstractrecorddef.ppuwrite(ppufile: tcompilerppufile);
       var
-        rv: trtti_visibilities;
+        ro: trtti_option;
       begin
         inherited ppuwrite(ppufile);
         ppufile.putstring(objrealname^);
@@ -4572,8 +4572,8 @@ implementation
           ppufile.putstring('');
         ppufile.putset(tppuset4(objectoptions));
         ppufile.putbyte(byte(rtti.clause));
-        for rv in rtti.options do
-          ppufile.putset(tppuset1(rv));
+        for ro in trtti_option do
+          ppufile.putset(tppuset1(rtti.options[ro]));
       end;
 
     destructor tabstractrecorddef.destroy;
