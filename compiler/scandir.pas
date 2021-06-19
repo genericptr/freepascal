@@ -1326,18 +1326,6 @@ unit scandir;
 
     procedure dir_rtti;
 
-      // TODO: placeholder for new error messages to be created
-      {
-        rtti_error('invalid rtti clause '+id);
-        rtti_error('explicit clause requires at least one option');
-        rtti_error('expected end of rtti directive');
-      }
-      procedure rtti_error(msg: string);
-        begin
-          writeln(msg);
-          internalerror(0);
-        end;
-
       function read_rtti_options: trtti_visibilities;
         var
           sym: ttypesym;
@@ -1345,17 +1333,17 @@ unit scandir;
         begin
           result:=[];
           sym:=search_system_type('TVISIBILITYCLASSES');
-          if current_scanner.readpreprocset(tsetdef(sym.typedef),value) then
+          if current_scanner.readpreprocset(tsetdef(sym.typedef),value,'RTTI') then
             begin
               result:=prtti_visibilities(@value)^;
               // TODO: testing the directive, remove later
-              if (rv_private) in result then
+              if rv_private in result then
                 writeln('🐟 vcPrivate');
-              if (rv_protected) in result then
+              if rv_protected in result then
                 writeln('🐟 vcProtected');
-              if (rv_public) in result then
+              if rv_public in result then
                 writeln('🐟 vcPublic');
-              if (rv_published) in result then
+              if rv_published in result then
                 writeln('🐟 vcPublished');
             end;
         end;
@@ -1374,14 +1362,14 @@ unit scandir;
           'EXPLICIT':
             dir.clause:=rtc_explicit;
           otherwise
-            rtti_error('invalid rtti clause '+id);
+            Message(scan_e_invalid_rtti_clause);
         end;
 
         current_scanner.skipspace;
         id:=current_scanner.readid;
         { the inherit clause doesn't require any options but explicit does }
         if (id='') and (dir.clause=rtc_explicit) then
-          rtti_error('explicit clause requires at least one option');
+          Message(scan_e_incomplete_rtti_clause);
         while id<>'' do
           begin
             case id of
@@ -1392,15 +1380,11 @@ unit scandir;
               'FIELDS':
                 dir.options[ro_fields]:=read_rtti_options;
               otherwise
-                rtti_error('invalid rtti option '+id);
+                Message(scan_e_invalid_rtti_option);
             end;
             current_scanner.skipspace;
             id:=current_scanner.readid;
           end;
-
-        { make sure the directive is terminated }
-        if (id='') and (c<>'}') then
-          rtti_error('expected end of rtti directive');
 
         { set the directive in the module }
         current_module.rtti_directive:=dir;

@@ -231,7 +231,7 @@ interface
           procedure readtoken(allowrecordtoken:boolean);
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
-          function  readpreprocset(conform_to:tsetdef;var value:tnormalset):boolean;
+          function  readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
           function  asmgetchar:char;
        end;
 
@@ -2185,7 +2185,6 @@ type
                  if current_scanner.preproc_token = _COMMA then
                    preproc_consume(_COMMA);
                end;
-               // TODO: Add check of setElemType, this is done in preproc_factor correctly now?
                preproc_consume(_RECKKLAMMER);
                if result=nil then
                  result:=texprvalue.create_set(ns);
@@ -5847,7 +5846,7 @@ exit_label:
       end;
 
 
-    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tnormalset):boolean;
+    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
       var
         hs : texprvalue;
       begin
@@ -5859,8 +5858,7 @@ exit_label:
           end
         else
           begin
-            // TODO: do we even need this error or should it be in preproc_comp_expr?
-            hs.error('Set','?');
+            hs.error('Set',place);
             result:=false;
           end;
         hs.free;
