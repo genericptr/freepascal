@@ -3234,6 +3234,56 @@ begin
 end;
 
 
+procedure readextendedrtti;
+type
+  tvisopt=record
+    mask : trtti_visibility;
+    str  : string[10];
+  end;
+const
+  visopt : array[1..ord(high(trtti_visibility))] of tvisopt=(
+     (mask:rv_private;    str:'Private'),
+     (mask:rv_protected;  str:'Protected'),
+     (mask:rv_public;     str:'Public'),
+     (mask:rv_published;  str:'Published')
+  );
+var
+  clause: string;
+  ro: trtti_option;
+  option: tppuset1;
+begin
+  {
+   trtti_visibility = (
+     rv_private,
+     rv_protected,
+     rv_public,
+     rv_published
+
+   trtti_clause = (
+     rtc_none,
+     rtc_inherit,
+     rtc_explicit
+
+   rtti.clause:=trtti_clause(ppufile.getbyte);
+   for ro in trtti_option do
+     ppufile.getset(tppuset1(rtti.options[ro]));
+  }
+  clause:='';
+  case trtti_clause(ppufile.getbyte) of
+    rtc_none: clause:='None';
+    rtc_inherit: clause:='Inherit';
+    rtc_explicit: clause:='Explicit';
+  end;
+  writeln([space,'   Clause : ',clause]);
+
+  for ro in trtti_option do
+    begin
+      ppufile.getset(option);
+      //ppufile.getset(tppuset1(rtti.options[ro]));
+    end;
+end;
+
+
 procedure readprocimploptions(const space: string; out implprocoptions: timplprocoptions);
 type
   tpiopt=record
@@ -4409,6 +4459,7 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             readextendedrtti;
              if (df_copied_def in defoptions) then
                begin
                  Include(TPpuRecordDef(def).Options, ooCopied);
@@ -4447,6 +4498,7 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             readextendedrtti;
              otb:=getbyte;
              write  ([space,'             Type : ']);
              case tobjecttyp(otb) of
