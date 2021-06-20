@@ -1380,9 +1380,12 @@ unit scandir;
         while pattern<>'' do
           begin
             case pattern of
-              'METHODS': option:=ro_methods;
-              'PROPERTIES': option:=ro_properties;
-              'FIELDS': option:=ro_fields;
+              'METHODS': 
+                option:=ro_methods;
+              'PROPERTIES': 
+                option:=ro_properties;
+              'FIELDS': 
+                option:=ro_fields;
               otherwise
                 begin
                   if current_scanner.preproc_token=_ID then

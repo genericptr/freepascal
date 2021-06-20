@@ -1488,7 +1488,7 @@ type
   const
     preproc_operators=[_EQ,_NE,_LT,_GT,_LTE,_GTE,_MINUS,_PLUS,_STAR,_SLASH,_OP_DIV,_OP_MOD,_OP_SHL,_OP_SHR,_OP_IN,_OP_AND,_OP_OR,_OP_XOR];
 
-    function preproc_comp_expr(conform_to:tdef=nil):texprvalue;
+    function preproc_comp_expr(conform_to:tdef):texprvalue;
 
         function preproc_sub_expr(pred_level:Toperator_precedence;eval:Boolean):texprvalue; forward;
 
@@ -2286,7 +2286,7 @@ type
       var
         hs: texprvalue;
       begin
-        hs:=preproc_comp_expr;
+        hs:=preproc_comp_expr(nil);
         if hs.isBoolean then
           result:=hs.asBool
         else
@@ -2465,7 +2465,7 @@ type
         if c='=' then
           begin
              current_scanner.readchar;
-             exprvalue:=preproc_comp_expr;
+             exprvalue:=preproc_comp_expr(nil);
              if not is_boolean(exprvalue.def) and
                 not is_integer(exprvalue.def) then
                exprvalue.error('Boolean, Integer', 'SETC');
@@ -5831,7 +5831,7 @@ exit_label:
       var
         hs : texprvalue;
       begin
-        hs:=preproc_comp_expr;
+        hs:=preproc_comp_expr(nil);
         if hs.isInt then
           begin
             value:=hs.asInt64;
