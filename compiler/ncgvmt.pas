@@ -532,7 +532,7 @@ implementation
          datatcb: ttai_typedconstbuilder;
          packrecords: longint;
       begin
-        // TODO: is extended method table packed?
+        // TODO(ryan): is extended method table packed?
         if (tf_requires_proper_alignment in target_info.flags) then
           packrecords:=0
         else
@@ -609,7 +609,7 @@ implementation
                (sym.visibility=vis_published) then
              begin
                 { legacy fields can be objectdef only }
-                { TODO: show the internal error IF the extended RTTI for published fields is not set
+                { TODO(ryan): show the internal error IF the extended RTTI for published fields is not set
                   because this loop will encounter both legacy and extended RTTI }
                 if tfieldvarsym(sym).vardef.typ<>objectdef then
                   continue;

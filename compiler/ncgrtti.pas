@@ -114,7 +114,7 @@ implementation
 
     function visibility_to_rtti(vis: tvisibility): trtti_visibility;
       begin
-        // TODO: make an extra "strict" bit in the rtti visibility field
+        // TODO(ryan): make an extra "strict" bit in the rtti visibility field
         case vis of
           vis_private,
           vis_strictprivate:
@@ -1573,7 +1573,7 @@ implementation
            { write extended rtti }
            if rt=fullrtti then
              begin
-               // TODO: write_extended_field_table is crashing sysctl.pp while compiling the RTL (sysctl.pp)
+               // TODO(ryan): write_extended_field_table is crashing sysctl.pp while compiling the RTL (sysctl.pp)
                write_extended_field_table(tcb,def,defaultpacking);
                write_extended_method_table(tcb,def,defaultpacking);
                write_extended_property_table;
