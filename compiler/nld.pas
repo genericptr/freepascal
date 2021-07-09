@@ -1113,6 +1113,7 @@ implementation
         hdef  : tdef;
         hp    : tarrayconstructornode;
         len   : longint;
+        diff,
         varia : boolean;
         eq    : tequaltype;
         hnodetype : tnodetype;
@@ -1136,6 +1137,7 @@ implementation
         hnodetype:=errorn;
         len:=0;
         varia:=false;
+        diff:=false;
         if assigned(left) then
          begin
            hp:=self;
@@ -1164,6 +1166,10 @@ implementation
                    end
                  else
                    eq:=compare_defs(hdef,hp.left.resultdef,hp.left.nodetype);
+                 { the element is not compatible with the previous element
+                   which means the constructor is array of const }
+                 if eq=te_incompatible then
+                   diff:=true;
                  if (not varia) and (eq<te_equal) then
                    begin
                      { If both are integers we need to take the type that can hold both
@@ -1194,6 +1200,8 @@ implementation
          include(tarraydef(resultdef).arrayoptions,ado_IsConstructor);
          if varia then
            include(tarraydef(resultdef).arrayoptions,ado_IsVariant);
+         if diff then
+           include(tarraydef(resultdef).arrayoptions,ado_IsArrayOfConst);
          tarraydef(resultdef).elementdef:=hdef;
       end;
 
