@@ -3863,7 +3863,7 @@ implementation
                      ensure that it is }
                    procdefinition.register_def;
                    if procdefinition.is_specialization and (procdefinition.typ=procdef) then
-                     maybe_add_pending_specialization(procdefinition);
+                     maybe_add_pending_specialization(procdefinition,candidates.unnamed_syms);
 
                    candidates.free;
                  end; { end of procedure to call determination }

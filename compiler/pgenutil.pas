@@ -651,7 +651,7 @@ uses
         i : integer;
         sym : tsym;
       begin
-        for i := 0 to unnamed_syms.count-1 do
+        for i:=0 to unnamed_syms.count-1 do
           begin
             sym:=tsym(unnamed_syms[i]);
             sym.ChangeOwnerAndName(owner.symlist,sym.realname);
@@ -665,13 +665,13 @@ uses
       { hash key for generic parameter lookups }
       function generic_param_hash(def:tdef): string; inline;
         begin
-          result := def.typename;
+          result:=def.typename;
         end;
 
       { returns true if the def a literal array such as [1,2,3] and not a shortstring }
       function is_array_literal(def:tdef): boolean;
         begin
-          result := (def.typ=arraydef) and not is_conststring_array(def);
+          result:=(def.typ=arraydef) and not is_conststring_array(def);
         end;
 
       { makes the specialization context from the generic proc def and generic params }
@@ -1141,11 +1141,9 @@ uses
           result:=genericparams.count=genericdef.genericparas.count;
 
           { cleanup }
+          paras.free;
           if not result then
-            begin
-              genericparams.free;
-              paras.free;
-            end;
+            genericparams.free;
         end;
 
       { make an ordered list of parameters from the caller }
