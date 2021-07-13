@@ -569,18 +569,25 @@ unit TypInfo;
 {$endif}
       end;
 
+      PPropDataEx = ^TPropDataEx;
+
       PClassData = ^TClassData;
+
+      { TClassData }
+
       TClassData =
       {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
       packed
       {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
       record
       private
+        function GetExPropertyTable: PPropDataEx;
         function GetUnitName: ShortString; inline;
         function GetPropertyTable: PPropData; inline;
       public
         property UnitName: ShortString read GetUnitName;
         property PropertyTable: PPropData read GetPropertyTable;
+        property ExRTTITable: PPropDataEx read GetExPropertyTable;
       public
         {$ifdef PROVIDE_ATTR_TABLE}
         AttributeTable : PAttributeTable;
@@ -703,7 +710,15 @@ unit TypInfo;
                ParentInfoRef : TypeInfoPtr;
                PropCount : SmallInt;
                UnitName : ShortString;
-               // here the properties follow as array of TPropInfo
+               // here the properties follow as array of TPropInfo:
+               {
+               PropData: TPropData;
+               // Extended RTTI
+               PropDataEx: TPropDataEx;
+               ClassAttrData: TAttrData;
+               ArrayPropCount: Word;
+               ArrayPropData: array[1..ArrayPropCount] of TArrayPropInfo;
+               }
               );
             tkRecord:
               (
@@ -801,6 +816,38 @@ unit TypInfo;
         property Tail: Pointer read GetTail;
       end;
 
+      { TPropDataEx }
+      PPropInfoEx = ^TPropInfoEx;
+
+      TPropDataEx = {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}packed {$ENDIF} record
+      private
+        function GetPropEx(Index: Word): PPropInfoEx;
+        function GetTail: Pointer; inline;
+      Public
+        PropCount: Word;
+        PropList: record alignmentdummy: ptrint; end;
+        {PropList: array[1..PropCount] of TPropInfoEx}
+        property Prop[Index: Word]: PPropInfoex read GetPropEx;
+        property Tail: Pointer read GetTail;
+      end;
+
+
+      { TPropInfoEx }
+
+      TPropInfoEx = {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}packed {$ENDIF} record
+      private
+        function GetTail: Pointer;
+      public
+        Flags: Byte;
+        Info: PPropInfo;
+        // AttrData: TAttrData
+        Property Tail : Pointer Read GetTail;
+      end;
+
+      PPropListEx = ^TPropListEx;
+      TPropListEx = array[0..{$ifdef cpu16}(32768 div sizeof(PPropInfo))-2{$else}65535{$endif}] of PPropInfoEx;
+
+
 {$PACKRECORDS 1}
       TPropInfo = packed record
       private
@@ -867,6 +914,13 @@ Function GetPropList(TypeInfo: PTypeInfo; TypeKinds: TTypeKinds; PropList: PProp
 Function GetPropList(TypeInfo: PTypeInfo; out PropList: PPropList): SizeInt;
 function GetPropList(AClass: TClass; out PropList: PPropList): Integer;
 function GetPropList(Instance: TObject; out PropList: PPropList): Integer;
+
+Function GetPropInfosEx(TypeInfo: PTypeInfo; PropList: PPropListEx; Visibilities : TVisibilityClasses = []) : Integer;
+Function GetPropListEx(TypeInfo: PTypeInfo; TypeKinds: TTypeKinds; PropList: PPropListEx; Sorted: boolean = true; Visibilities : TVisibilityClasses = []): longint;
+Function GetPropListEx(TypeInfo: PTypeInfo; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): SizeInt;
+function GetPropListEx(AClass: TClass; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): Integer;
+function GetPropListEx(Instance: TObject; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): Integer;
+
 
 
 // Property information routines.
@@ -1585,6 +1639,116 @@ begin
   end;
 end;
 
+Function GetPropInfosEx(TypeInfo: PTypeInfo; PropList: PPropListEx; Visibilities : TVisibilityClasses = []) : Integer;
+
+Var
+  TD : PPropDataEx;
+  TP : PPropListEx;
+  Offset,I,Count : Longint;
+begin
+  Result:=0;
+  // Clear list
+  repeat
+    TD:=PClassData(GetTypeData(TypeInfo))^.ExRTTITable;
+    FillChar(PropList^,TD^.PropCount*sizeof(TPropInfoEx),0);
+    Count:=TD^.PropCount;
+    // Now point TP to first propinfo record.
+    Inc(Pointer(TP),SizeOF(Word));
+    tp:=aligntoptr(tp);
+    For I:=0 to Count-1 do
+      if ([]=Visibilities) or (TVisibilityClass(PropList^[Result]^.Flags) in Visibilities) then
+        begin
+        // When passing nil, we just need the count
+        if Assigned(PropList) then
+          PropList^[Result]:=TD^.Prop[i];
+        Inc(Result);
+        end;
+    if PClassData(GetTypeData(TypeInfo))^.Parent<>Nil then
+      TypeInfo:=Nil
+    else
+      TypeInfo:=PClassData(GetTypeData(TypeInfo))^.Parent^;
+  until TypeInfo=nil;
+end;
+
+
+Procedure InsertPropEx (PL : PProplistEx;PI : PPropInfoEx; Count : longint);
+Var
+  I : Longint;
+begin
+  I:=0;
+  While (I<Count) and (PI^.Info^.Name>PL^[I]^.Info^.Name) do
+    Inc(I);
+  If I<Count then
+    Move(PL^[I], PL^[I+1], (Count - I) * SizeOf(Pointer));
+  PL^[I]:=PI;
+end;
+
+Procedure InsertPropnosortEx (PL : PProplistEx;PI : PPropInfoEx; Count : longint);
+begin
+  PL^[Count]:=PI;
+end;
+
+
+Function GetPropListEx(TypeInfo: PTypeInfo; TypeKinds: TTypeKinds; PropList: PPropListEx; Sorted: boolean = true; Visibilities : TVisibilityClasses = []): longint;
+
+Type
+   TInsertPropEx = Procedure (PL : PProplistEx;PI : PPropInfoex; Count : longint);
+{
+  Store Pointers to property information OF A CERTAIN KIND in the list pointed
+  to by proplist. PRopList must contain enough space to hold ALL
+  properties.
+}
+
+Var
+  TempList : PPropListEx;
+  PropInfo : PPropinfoEx;
+  I,Count : longint;
+  DoInsertPropEx : TInsertPropEx;
+begin
+  if sorted then
+    DoInsertPropEx:=@InsertPropEx
+  else
+    DoInsertPropEx:=@InsertPropnosortEx;
+  Result:=0;
+  Count:=GetPropListEx(TypeInfo,TempList,Visibilities);
+  Try
+     For I:=0 to Count-1 do
+       begin
+       PropInfo:=TempList^[i];
+       If PropInfo^.Info^.PropType^.Kind in TypeKinds then
+         begin
+         If (PropList<>Nil) then
+           DoInsertPropEx(PropList,PropInfo,Result);
+         Inc(Result);
+         end;
+       end;
+  finally
+    FreeMem(TempList,Count*SizeOf(Pointer));
+  end;
+end;
+
+Function GetPropListEx(TypeInfo: PTypeInfo; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): SizeInt;
+begin
+  // When passing nil, we get the count
+  result:=GetPropInfosEx(TypeInfo,Nil,Visibilities);
+  if result>0 then
+    begin
+      getmem(PropList,result*sizeof(pointer));
+      GetPropInfosEx(TypeInfo,PropList);
+    end
+  else
+    PropList:=Nil;
+end;
+
+function GetPropListEx(AClass: TClass; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): Integer;
+begin
+  Result:=GetPropListEx(PTypeInfo(aClass.ClassInfo),PropList);
+end;
+
+function GetPropListEx(Instance: TObject; out PropList: PPropListEx; Visibilities : TVisibilityClasses = []): Integer;
+begin
+  Result:=GetPropListEx(Instance.ClassType,PropList);
+end;
 
 Procedure GetPropInfos(TypeInfo : PTypeInfo;PropList : PPropList);
 {
@@ -3126,6 +3290,39 @@ begin
   Result:=IsStoredProp(instance,FindPropInfo(Instance,PropName));
 end;
 
+{ TPropInfoEx }
+
+function TPropInfoEx.GetTail: Pointer;
+begin
+  Result := PByte(@Flags) + SizeOf(Self);
+end;
+
+
+{ TPropDataEx }
+
+function TPropDataEx.GetPropEx(Index: Word): PPropInfoEx;
+begin
+  if Index >= PropCount then
+      Result := Nil
+    else
+      begin
+        Result := PPropInfoEx(aligntoptr(PByte(@PropCount) + SizeOf(PropCount)));
+        while Index > 0 do
+          begin
+            Result := aligntoptr(Result^.Tail);
+            Dec(Index);
+          end;
+      end;
+end;
+
+function TPropDataEx.GetTail: Pointer;
+begin
+  if PropCount = 0 then
+    Result := PByte(@PropCount) + SizeOf(PropCount)
+  else
+    Result := Prop[PropCount - 1]^.Tail;
+end;
+
 { TParameterLocation }
 
 function TParameterLocation.GetReference: Boolean;
@@ -3369,6 +3566,12 @@ begin
 end;
 
 { TClassData }
+
+function TClassData.GetExPropertyTable: PPropDataEx;
+
+begin
+  Result:=aligntoptr(PPropDataEx(GetPropertyTable^.GetTail));
+end;
 
 function TClassData.GetUnitName: ShortString;
 begin

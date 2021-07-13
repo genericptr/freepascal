@@ -18,9 +18,9 @@
 {$DEFINE SMALLRTTI}
 {$ENDIF}
 
-{ sadly MinEnumSize is not handled by Push/Pop :'( }
+
+{$PUSH}
 {$MINENUMSIZE 1   this saves a lot of memory }
-{$PACKSET 1}
 
 type
   { If you change one of the following enumeration types you have also to
@@ -33,11 +33,14 @@ type
               tkClass,tkObject,tkWChar,tkBool,tkInt64,tkQWord,
               tkDynArray,tkInterfaceRaw,tkProcVar,tkUString,tkUChar,
               tkHelper,tkFile,tkClassRef,tkPointer);
-  
-  TVisibilityClasses = set of (vcPrivate, vcProtected, vcPublic, vcPublished);
 
-{$MINENUMSIZE DEFAULT}
+{$POP}
 
+  TVisibilityClass = (vcPrivate, vcProtected, vcPublic, vcPublished);
+  TVisibilityClasses = set of TVisibilityClass;
+ 
+ {$MINENUMSIZE DEFAULT}
+ 
 const
 {$IFNDEF SMALLRTTI}
   DefaultFieldRttiVisibility = [vcPrivate..vcPublished];
